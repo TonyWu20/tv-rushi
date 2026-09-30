@@ -12,8 +12,9 @@ It hands off to `rushi-tui` for full interaction.
    chdirs into DIR before the source command runs. The source then scans
    `.` recursively. Omitting DIR scans the CWD. Passing `/` scans the full
    disk.
-2. Distribution: copy-install. The repo copy is the source of truth.
-   `cp rushi-sessions.toml ~/.config/television/cable/` installs it.
+2. Distribution: the repo copy is the source of truth. Install it with
+   `cp rushi-sessions.toml ~/.config/television/cable/`, or let
+   nixos-config install it from this repo's flake (see Install).
 3. The list shows the last `loop_phase` (wait/tools/...) per session.
 4. Actions: `open` (rushi-tui), `tail` (follow events), `kill` (SIGTERM the
    loop pid). Full interaction stays in rushi-tui. This channel is a peek.
@@ -71,9 +72,31 @@ tv rushi-sessions /                  # full disk (slow)
 
 ## Install / re-sync
 
+### Manual (copy)
+
 ```sh
 cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
 ```
+
+### Nix flake (nixos-config)
+
+This repo is a flake. It exposes the channel as a single-file package:
+
+```sh
+nix build .#rushi-sessions-channel   # -> a store path holding the TOML
+```
+
+nixos-config adds this repo as an input and installs the file with
+home-manager. The module `television/default.nix` wires:
+
+```nix
+home.file.".config/television/cable/rushi-sessions.toml".source =
+  inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-channel;
+```
+
+The input pins nixpkgs with `follows`, so it reuses the config's own
+nixpkgs. Each activation links the store file into the cable dir. This
+replaces the manual `cp`. The channel stays pure data in the store.
 
 ## Verified
 
@@ -89,6 +112,9 @@ cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
 - `kill` also hit a real session by mistake during testing. The loop died
   and restarted. The session log stayed intact. The user restarted that
   loop by hand.
+- Flake: `nix build .#rushi-sessions-channel` yields a store path that
+  is byte-identical to the repo TOML. A consumer flake with the
+  `nixpkgs.follows` edge builds it identically.
 
 ## Caveats
 
