@@ -1,0 +1,213 @@
+# rushi-sessions — a television channel that peeks at rushi sessions.
+#
+# Source of truth: /home/tony/programming/tv-rushi/rushi-sessions.toml
+# Installed copy : ~/.config/television/cable/rushi-sessions.toml
+# Reinstall      : cp /home/tony/programming/tv-rushi/rushi-sessions.toml \
+#                     ~/.config/television/cable/rushi-sessions.toml
+#
+# Usage:
+#   tv rushi-sessions [DIR]
+#     DIR is television's [PATH] argument. tv chdirs into DIR before the
+#     source command runs, so the scan root is:
+#       - your current directory when DIR is omitted
+#       - DIR when given, e.g. tv rushi-sessions ~/programming or /
+#
+# The source command recursively finds rushi session directories under the
+# scan root (a session dir holds events.jsonl / loop.pid / cwd) and prints
+# one tab-separated line per session:
+#   0 status  ACTIVE (live loop.pid) or IDLE
+#   1 name    session name
+#   2 repo    parent dir of the sessions/ dir
+#   3 phase   last loop_phase from events.jsonl
+#   4 last    last activity, mm-dd HH:MM
+#   5 epoch   last activity, unix seconds (hidden sort key)
+#   6 abs     absolute path to the session dir (used by preview/actions)
+#
+# The list shows status, repo/name, phase, last activity. The preview shows
+# a status card and the last few events. Full interaction happens in
+# rushi-tui (the open action), which is the design intent: this channel is
+# a read-only peek plus stop/tail.
+#
+# shell = "bash" is set on every command. television detects the login
+# shell from $SHELL (fish here) and would otherwise run these POSIX
+# scripts under fish, which breaks the while/for and $(...) constructs.
+#
+# NOTE on escaping: inside the triple-quoted strings below, \t is a real
+# tab at runtime (TOML escape). string-pipeline templates use that real tab
+# as the split delimiter, matching the tab-separated source output. The
+# embedded python script uses no literal braces on purpose: television runs
+# every command string through a template engine, and a brace that is not
+# a known operation falls back to a raw substitution that would mangle
+# dict literals and format strings.
+
+[metadata]
+name = "rushi-sessions"
+description = "Peek at rushi sessions: status, loop phase, last activity"
+requirements = ["fd", "rg", "python3"]
+
+[source]
+shell = "bash"
+command = """
+fd --no-ignore -t d -E target -E .git -E node_modules -E scratch sessions . 2>/dev/null |
+while IFS= read -r sdir; do
+  sdir=${sdir%/}
+  for s in "$sdir"/*/; do
+    [ -d "$s" ] || continue
+    s=${s%/}
+    [ -f "$s/events.jsonl" ] || [ -f "$s/loop.pid" ] || [ -f "$s/cwd" ] || continue
+    pid=$(cat "$s/loop.pid" 2>/dev/null)
+    st=IDLE
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then st=ACTIVE; fi
+    ph=?
+    if [ -f "$s/events.jsonl" ]; then
+      ph=$(tail -c 300000 "$s/events.jsonl" 2>/dev/null | awk '
+        /"id":"loop_phase"/ && /"value":"/ {
+          v=$0; sub(/^.*"value":"/, "", v); sub(/".*$/, "", v)
+          if (v != "") phase=v
+        }
+        END { printf "%s", (phase==""?"?":phase) }
+      ')
+    fi
+    ref="$s/events.jsonl"
+    [ -f "$ref" ] || ref="$s/loop.pid"
+    [ -f "$ref" ] || ref="$s/cwd"
+    ep=$(stat -c %Y "$ref" 2>/dev/null)
+    [ -n "$ep" ] || ep=0
+    la=$(stat -c %y "$ref" 2>/dev/null)
+    la=$(printf '%s' "$la" | cut -c6-16)
+    [ -n "$la" ] || la=never
+    repo=$(basename "$(dirname "$sdir")")
+    name=$(basename "$s")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$st" "$name" "$repo" "$ph" "$la" "$ep" "$s"
+  done
+done | sort -t "$(printf '\t')" -k1,1 -k6,6nr
+"""
+display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}"
+output = "{split:\t:6}"
+frecency = false
+
+[preview]
+shell = "bash"
+cached = false
+command = """
+python3 - '{split:\t:6}' <<'PY'
+import json, os, sys
+path = sys.argv[1]
+pid = ""
+try:
+    pid = open(os.path.join(path, "loop.pid")).read().strip()
+except Exception:
+    pass
+alive = False
+if pid:
+    try:
+        os.kill(int(pid), 0)
+        alive = True
+    except Exception:
+        pass
+epath = os.path.join(path, "events.jsonl")
+phase = "?"
+think = "?"
+last_user = ""
+rows = []
+if os.path.exists(epath):
+    with open(epath, errors="replace") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                o = json.loads(line)
+            except Exception:
+                continue
+            t = o.get("type")
+            if t == "ext_status":
+                if o.get("id") == "loop_phase":
+                    phase = str(o.get("value", "?"))
+                elif o.get("id") == "model_thinking":
+                    think = str(o.get("value", "?"))
+            if t == "user_message":
+                last_user = o.get("content") or ""
+            rows.append(o)
+KEEP = ("loop_phase", "model_thinking", "goal_paused", "goal_active", "run.refire")
+def brief(o):
+    t = o.get("type", "?")
+    if t == "tool_call":
+        a = o.get("arguments")
+        if a is None:
+            a = dict()
+        s = a.get("command") if isinstance(a, dict) else ""
+        if not s:
+            s = json.dumps(a)
+        return ((o.get("name") or "?") + " " + s).replace(chr(10), " ")
+    if t == "tool_result":
+        b = o.get("bytes")
+        s = "error" if o.get("is_error") else "ok"
+        if b is not None:
+            s = s + " " + str(b) + "b"
+        return s
+    if t == "ext_status":
+        i = str(o.get("id", "status"))
+        v = o.get("value")
+        if isinstance(v, (dict, list)):
+            return None
+        if i not in KEEP and not i.endswith(".error") and i != "hook.exhausted.handle":
+            return None
+        if v is None:
+            return i
+        if isinstance(v, str):
+            return i + "=" + v
+        return i + "=" + json.dumps(v)
+    c = o.get("content") or ""
+    return c.replace(chr(10), " ")
+shown = []
+for o in rows[-60:]:
+    b = brief(o)
+    if b is None:
+        continue
+    if len(b) > 70:
+        b = b[:70] + "..."
+    shown.append("%-8s %-17s %s" % ((o.get("ts") or "")[11:19], o.get("type", "?"), b))
+out = []
+out.append("=== rushi session: " + os.path.basename(path) + " ===")
+out.append("STATUS : " + ("ACTIVE (pid " + pid + ")" if alive else "IDLE"))
+out.append("PHASE  : " + phase)
+out.append("THINK  : level " + think)
+out.append("LAST USER MSG : " + (last_user[:120].replace(chr(10), " ") if last_user else "none"))
+if shown:
+    out.append("--- last events ---")
+    for ln in shown[-8:]:
+        out.append(ln)
+print(chr(10).join(out))
+PY
+"""
+
+[ui.preview_panel]
+size = 50
+
+[keybindings]
+ctrl-e = "actions:open"
+ctrl-t = "actions:tail"
+ctrl-k = "actions:kill"
+
+[actions.open]
+description = "Open this session in rushi-tui (full interaction, forked)"
+shell = "bash"
+mode = "fork"
+command = """
+sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cdw" ] || [ ! -d "$cdw" ]; then cdw=$(dirname "$(dirname "$s")"); fi; cd "$cdw" && rushi-tui "$n"' sh '{split:\t:6}'
+"""
+
+[actions.tail]
+description = "Follow the session event log (Ctrl-C returns to tv)"
+shell = "bash"
+mode = "fork"
+command = "tail -f '{split:\t:6}/events.jsonl'"
+
+[actions.kill]
+description = "Stop the session loop (SIGTERM to the loop pid)"
+shell = "bash"
+mode = "fork"
+command = """
+sh -c 'p=$(cat "$1/loop.pid" 2>/dev/null); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$1")")"; else echo "no live loop for "$(basename "$1")" (stale or absent pid)"; fi' sh '{split:\t:6}'
+"""
