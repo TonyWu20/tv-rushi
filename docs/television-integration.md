@@ -21,21 +21,23 @@ It hands off to `rushi-tui` for full interaction.
 
 ## How it works
 
-- Source command: `fd` plus a shell pipeline, forced `shell = "bash"`.
-  The login shell is fish, which breaks the pipeline. It finds
-  `sessions/` dirs under the scan root. It skips `target`, `.git`,
-  `node_modules`, `scratch`. It emits one TSV line per session dir that
-  has `events.jsonl`, `loop.pid`, or `cwd`.
+- Source command: one `python3` process, forced `shell = "bash"`. The
+  login shell is fish, which breaks the script. One `fd` call finds
+  `sessions/` dirs under the scan root (the `tv` CWD).
+- Python does the per-session work in process. It forks no subprocess per
+  session. It skips `target`, `.git`, `node_modules`, `scratch`. It
+  emits one TSV line per session dir that has `events.jsonl`,
+  `loop.pid`, or `cwd`.
   Fields: `status`, `name`, `repo`, `phase`, `last`, `epoch`, `abs-path`.
-- `status`: `ACTIVE` when `loop.pid` names a live pid (`kill -0`).
+- `status`: `ACTIVE` when `loop.pid` names a live pid (`kill(pid, 0)`).
   Otherwise `IDLE`.
-- `phase`: last `loop_phase` value from the tail of `events.jsonl`.
+- `phase`: last `loop_phase` value in the tail 100KB of `events.jsonl`.
 - `last` and `epoch`: mtime of `events.jsonl`. Fallback is `loop.pid`.
 - Sort: ACTIVE first, then newest activity first. `frecency = false`.
-- Preview: brace-free embedded python. television runs every command string
-  through its template engine. A brace that is not a known operation falls
-  back to raw substitution. That would mangle dict literals. So the script
-  avoids `{}` entirely.
+- The source and preview commands are brace-free python. television runs
+  every command string through its template engine. An unknown brace token
+  falls back to raw substitution and corrupts the script. So both scripts
+  avoid literal braces.
 - Preview output: a status card and the last 8 meaningful events. Hook
   plumbing with dict values is filtered out. `cached = false` so live
   sessions refresh.
@@ -53,6 +55,7 @@ It hands off to `rushi-tui` for full interaction.
 ```sh
 tv rushi-sessions                    # scan CWD
 tv rushi-sessions ~/programming      # scan a given dir
+tv rushi-sessions ../                # relative dirs work too
 tv rushi-sessions /                  # full disk (slow)
 ```
 
@@ -64,11 +67,13 @@ cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
 
 ## Verified
 
-- Source: 264 sessions from `~/programming`. ACTIVE lines sort first.
+- Source: 268 sessions from `~/programming` in 0.16s. ACTIVE lines sort
+  first. Phases populate for live and idle sessions.
 - Preview: renders the card and filtered events for a live and an idle
   session.
-- `tv rushi-sessions ~/programming` pty smoke test: list and preview
-  render. Esc exits. No errors.
+- `tv rushi-sessions ~/programming` and `tv rushi-sessions ../` pty smoke
+  tests: entries appear in about 0.2s. The preview renders. Esc exits.
+  No errors.
 - `open` (stubbed `rushi-tui`), `tail`, and `kill` are verified.
   `kill` was tested with a stale pid and a live pid in a fake session dir.
 - `kill` also hit a real session by mistake during testing. The loop died
@@ -77,9 +82,8 @@ cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
 
 ## Caveats
 
-- Paths are relative to the scan root (the `tv` CWD). Actions resolve them
-  at run time from the same CWD. They work when run from the directory you
-  scanned.
+- Session paths in the list are absolute. Actions resolve them directly.
+  They work from any CWD.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
   confirms before pressing ctrl-k.

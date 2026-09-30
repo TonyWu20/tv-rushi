@@ -43,44 +43,90 @@
 [metadata]
 name = "rushi-sessions"
 description = "Peek at rushi sessions: status, loop phase, last activity"
-requirements = ["fd", "rg", "python3"]
+requirements = ["fd", "python3"]
 
 [source]
 shell = "bash"
+# One fd call finds the session roots (fast). One python3 process does the
+# rest in-process: liveness via kill(pid, 0), last loop_phase from a tail
+# read of events.jsonl, mtime for last-activity. No per-session forks.
 command = """
-fd --no-ignore -t d -E target -E .git -E node_modules -E scratch sessions . 2>/dev/null |
-while IFS= read -r sdir; do
-  sdir=${sdir%/}
-  for s in "$sdir"/*/; do
-    [ -d "$s" ] || continue
-    s=${s%/}
-    [ -f "$s/events.jsonl" ] || [ -f "$s/loop.pid" ] || [ -f "$s/cwd" ] || continue
-    pid=$(cat "$s/loop.pid" 2>/dev/null)
-    st=IDLE
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then st=ACTIVE; fi
-    ph=?
-    if [ -f "$s/events.jsonl" ]; then
-      ph=$(tail -c 300000 "$s/events.jsonl" 2>/dev/null | awk '
-        /"id":"loop_phase"/ && /"value":"/ {
-          v=$0; sub(/^.*"value":"/, "", v); sub(/".*$/, "", v)
-          if (v != "") phase=v
-        }
-        END { printf "%s", (phase==""?"?":phase) }
-      ')
-    fi
-    ref="$s/events.jsonl"
-    [ -f "$ref" ] || ref="$s/loop.pid"
-    [ -f "$ref" ] || ref="$s/cwd"
-    ep=$(stat -c %Y "$ref" 2>/dev/null)
-    [ -n "$ep" ] || ep=0
-    la=$(stat -c %y "$ref" 2>/dev/null)
-    la=$(printf '%s' "$la" | cut -c6-16)
-    [ -n "$la" ] || la=never
-    repo=$(basename "$(dirname "$sdir")")
-    name=$(basename "$s")
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$st" "$name" "$repo" "$ph" "$la" "$ep" "$s"
-  done
-done | sort -t "$(printf '\t')" -k1,1 -k6,6nr
+python3 - <<'PY'
+import json, os, subprocess, sys, time
+root = os.getcwd()
+prune = ["target", ".git", "node_modules", "scratch", ".nix"]
+args = ["fd", "--no-ignore", "-t", "d"]
+for p in prune:
+    args.append("-E")
+    args.append(p)
+args.append("sessions")
+args.append(root)
+roots = []
+try:
+    r = subprocess.run(args, capture_output=True, text=True, timeout=300)
+    roots = [l for l in r.stdout.splitlines() if l.strip()]
+except Exception:
+    roots = []
+def alive(pid_s):
+    if not pid_s:
+        return False
+    try:
+        os.kill(int(pid_s), 0)
+        return True
+    except Exception:
+        return False
+def last_phase(path):
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            f.seek(max(0, size - 100000))
+            data = f.read().decode("utf-8", "replace")
+    except Exception:
+        return "?"
+    i = data.rfind('"id":"loop_phase"')
+    if i < 0:
+        return "?"
+    j = data.find('"value":"', i)
+    if j < 0:
+        return "?"
+    k = data.find('"', j + 9)
+    if k < 0:
+        return "?"
+    return data[j + 9 : k]
+rows = []
+for sdir in roots:
+    base = sdir.rstrip("/")
+    try:
+        names = os.listdir(base)
+    except Exception:
+        continue
+    repo = os.path.basename(os.path.dirname(base))
+    for name in names:
+        p = base + "/" + name
+        if not os.path.isdir(p):
+            continue
+        ev = p + "/events.jsonl"
+        pidf = p + "/loop.pid"
+        cwf = p + "/cwd"
+        if not (os.path.exists(ev) or os.path.exists(pidf) or os.path.exists(cwf)):
+            continue
+        pid = ""
+        try:
+            pid = open(pidf).read().strip()
+        except Exception:
+            pass
+        status = "ACTIVE" if alive(pid) else "IDLE"
+        phase = last_phase(ev) if os.path.exists(ev) else "?"
+        ref = ev
+        if not os.path.exists(ref):
+            ref = pidf if os.path.exists(pidf) else cwf
+        m = os.stat(ref).st_mtime
+        la = time.strftime("%m-%d %H:%M", time.localtime(m))
+        rows.append((status, name, repo, phase, la, str(int(m)), p))
+rows.sort(key=lambda r: (r[0] != "ACTIVE", -int(r[5])))
+for r in rows:
+    print("\t".join(r))
+PY
 """
 display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}"
 output = "{split:\t:6}"
