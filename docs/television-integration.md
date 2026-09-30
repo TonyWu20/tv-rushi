@@ -18,6 +18,9 @@ It hands off to `rushi-tui` for full interaction.
 4. Actions: `open` (rushi-tui), `tail` (follow events), `kill` (SIGTERM the
    loop pid). Full interaction stays in rushi-tui. This channel is a peek.
 5. Design notes live in this repo's `docs/`.
+6. Preview: a structured TOML card, syntax-highlighted by `bat` when
+   available. It shows the last user and last assistant messages. `bat`
+   is optional. The card prints plain without it.
 
 ## How it works
 
@@ -38,9 +41,16 @@ It hands off to `rushi-tui` for full interaction.
   every command string through its template engine. An unknown brace token
   falls back to raw substitution and corrupts the script. So both scripts
   avoid literal braces.
-- Preview output: a status card and the last 8 meaningful events. Hook
-  plumbing with dict values is filtered out. `cached = false` so live
-  sessions refresh.
+- Preview output: a structured TOML card. It has a `[rushi-session]`
+  header (name, repo, status, pid, phase, think, updated). It has a
+  `[last-user-message]` and a `[last-assistant-message]`. It has a
+  `[[recent-event]]` array of the last 5 meaningful events.
+- The card is syntax-highlighted by `bat` when it is on PATH. The default
+  theme is `Catppuccin Macchiato` to match the dark catppuccin tv theme.
+  Set `RUSHI_PREVIEW_THEME` to override it. When `bat` is absent, the card
+  prints as plain text.
+- Hook plumbing with dict values is filtered out. `cached = false` so
+  live sessions refresh.
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
   so tv resumes after each.
   - `ctrl-e` open: `cd` into the session's `cwd` file value. Fallback is
