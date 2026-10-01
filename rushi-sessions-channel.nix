@@ -17,8 +17,8 @@ let
   sourceCommand = "rushi-sessions source";
 
   previewCommand = untab ''
-rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
-'';
+    rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
+  '';
 in
 {
   metadata = {
@@ -26,7 +26,10 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
-    requirements = [ "fd" "rushi-sessions" ];
+    requirements = [
+      "fd"
+      "rushi-sessions"
+    ];
   };
 
   source = {
@@ -43,7 +46,12 @@ in
     command = previewCommand;
   };
 
-  ui.preview_panel.size = 50;
+  ui = {
+    preview_panel = {
+      size = 50;
+      word_wrap = true;
+    };
+  };
 
   keybindings = {
     "ctrl-e" = "actions:open";
@@ -56,8 +64,8 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cdw" ] || [ ! -d "$cdw" ]; then cdw=$(dirname "$(dirname "$s")"); fi; cd "$cdw" && rushi-tui "$n"' sh '{split:@TAB@:6}'
-'';
+      sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cdw" ] || [ ! -d "$cdw" ]; then cdw=$(dirname "$(dirname "$s")"); fi; cd "$cdw" && rushi-tui "$n"' sh '{split:@TAB@:6}'
+    '';
   };
 
   actions.tail = {
@@ -72,7 +80,7 @@ sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cd
     shell = "bash";
     mode = "fork";
     command = untab ''
-sh -c 'p=$(cat "$1/loop.pid" 2>/dev/null); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$1")")"; else echo "no live loop for "$(basename "$1")" (stale or absent pid)"; fi' sh '{split:@TAB@:6}'
-'';
+      sh -c 'p=$(cat "$1/loop.pid" 2>/dev/null); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$1")")"; else echo "no live loop for "$(basename "$1")" (stale or absent pid)"; fi' sh '{split:@TAB@:6}'
+    '';
   };
 }
