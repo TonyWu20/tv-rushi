@@ -35,7 +35,7 @@
           ];
 
           # One data file, the manual install path into the cable dir.
-          channelFile = pkgLib.writeText "rushi-sessions-television-channel" toml;
+          channelFile = pkgs.writeText "rushi-sessions-television-channel" toml;
 
           # The `rushi-sessions` backend binary. The source honors
           # .gitignore (sessions/ and target/ stay out of the store).
@@ -71,6 +71,7 @@
       packages = {
         x86_64-linux = perSystem "x86_64-linux";
         aarch64-linux = perSystem "aarch64-linux";
+        aarch64-darwin = perSystem "aarch64-darwin";
       };
 
       # The home-manager module wires the channel into
@@ -78,7 +79,13 @@
       # home.packages. It is partially applied with the per-system binary
       # derivation, so the module is self-contained: importing it is the
       # whole integration.
-      homeManagerModules = pkgLib.genAttrs [ "x86_64-linux" "aarch64-linux" ] (system: {
+      #
+      # The set is keyed by system, so a consumer picks its own:
+      #   tv-rushi.homeManagerModules."x86_64-linux".default
+      #   tv-rushi.homeManagerModules."aarch64-darwin".default
+      # There is deliberately no bare `default`: it would have to pick one
+      # system's binary and would silently install the wrong one elsewhere.
+      homeManagerModules = pkgLib.genAttrs [ "x86_64-linux" "aarch64-linux" "aarch64-darwin" ] (system: {
         default = (import ./home-module.nix) {
           bin = (perSystem system)."rushi-sessions";
         };

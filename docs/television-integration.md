@@ -36,6 +36,12 @@ It hands off to `rushi-tui` for full interaction.
    (`homeManagerModules.<system>.default`). It sets
    `programs.television.channels."rushi-sessions"` and adds the binary to
    `home.packages`. Importing the module is the whole integration.
+11. Added `aarch64-darwin` support: `packages` and `homeManagerModules`
+   expose `x86_64-linux`, `aarch64-linux`, and `aarch64-darwin`.
+   `homeManagerModules` stays keyed by system. There is no bare
+   `default`. A bare default would pick one system's binary and would
+   install the wrong binary elsewhere. The Mac config uses
+   `homeManagerModules."aarch64-darwin".default`.
 
 ## How it works
 

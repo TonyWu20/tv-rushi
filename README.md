@@ -59,6 +59,14 @@ home-manager.users.tony = {
 The host config must also load the television home-manager module. The module
 serializes the channel to `~/.config/television/cable/rushi-sessions.toml`.
 
+The module set is keyed by system. Supported systems: `x86_64-linux`,
+`aarch64-linux`, and `aarch64-darwin`. Pick the key for your system. There
+is no bare `default`. A Mac uses this form:
+
+```nix
+homeModules = [ inputs.tv-rushi.homeManagerModules."aarch64-darwin".default ];
+```
+
 ### Manual copy
 
 ```sh
