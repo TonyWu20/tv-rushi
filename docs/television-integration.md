@@ -23,25 +23,41 @@ It hands off to `rushi-tui` for full interaction.
    available. It shows the last user and last assistant messages. `bat`
    is optional. The card prints plain without it.
 
+## Decisions (user, 2026-10-01)
+
+7. The backend is now the `rushi-sessions` Rust binary. The `source` and
+   `preview` commands run it. It replaces the inline `python3` scripts.
+8. The binary hard-depends on `fd` for the directory walk. The channel
+   requirements are `fd` and `rushi-sessions`. `python3` is no longer
+   needed.
+9. This repo owns the channel and its backend. The kernel no longer carries
+   the TV channel.
+10. This repo provides a home-manager module
+   (`homeManagerModules.<system>.default`). It sets
+   `programs.television.channels."rushi-sessions"` and adds the binary to
+   `home.packages`. Importing the module is the whole integration.
+
 ## How it works
 
-- Source command: one `python3` process, forced `shell = "bash"`. The
-  login shell is fish, which breaks the script. One `fd` call finds
-  `sessions/` dirs under the scan root (the `tv` CWD).
-- Python does the per-session work in process. It forks no subprocess per
-  session. It skips `target`, `.git`, `node_modules`, `scratch`. It
-  emits one TSV line per session dir that has `events.jsonl`,
-  `loop.pid`, or `cwd`.
+- Source command: one `rushi-sessions source` process, forced
+  `shell = "bash"`. The login shell is fish, which breaks shell scripts, so
+  every command forces bash.
+- The binary calls one `fd` walk to find `sessions/` dirs under the scan
+  root (the CWD). `fd` is a hard dependency of the channel.
+- The binary does the per-session work in process. It forks no subprocess
+  per session. It skips hidden dirs and `target`, `.git`, `node_modules`,
+  `scratch`, `.nix`. It emits one TSV line per session dir that has
+  `events.jsonl`, `loop.pid`, or `cwd`.
   Fields: `status`, `name`, `repo`, `phase`, `last`, `epoch`, `abs-path`.
 - `status`: `ACTIVE` when `loop.pid` names a live pid (`kill(pid, 0)`).
   Otherwise `IDLE`.
 - `phase`: last `loop_phase` value in the tail 100KB of `events.jsonl`.
 - `last` and `epoch`: mtime of `events.jsonl`. Fallback is `loop.pid`.
 - Sort: ACTIVE first, then newest activity first. `frecency = false`.
-- The source and preview commands are brace-free python. television runs
-  every command string through its template engine. An unknown brace token
-  falls back to raw substitution and corrupts the script. So both scripts
-  avoid literal braces.
+- The source and preview commands are the two `rushi-sessions` subcommands.
+  television runs every command string through its template engine. The
+  `{split:\t:N}` tokens carry a real tab. The binary output supplies the
+  seven tab-separated fields they split on.
 - Preview output: a structured TOML card. It has a `[rushi-session]`
   header (name, repo, status, pid, phase, think, updated). It has a
   `[last-user-message]` and a `[last-assistant-message]`. It has a
@@ -72,22 +88,44 @@ tv rushi-sessions /                  # full disk (slow)
 
 ## Install / re-sync
 
+### home-manager module (declarative)
+
+This repo exposes a home-manager module:
+
+```nix
+inputs.tv-rushi.url = "github:TonyWu20/tv-rushi";
+# ...
+home-manager.users.tony = {
+  # the host config must also load the television home-manager module
+  homeModules = [ inputs.tv-rushi.homeManagerModules."x86_64-linux".default ];
+  programs."rushi-sessions".enable = true;
+};
+```
+
+The module adds the `rushi-sessions` binary to `home.packages` and sets
+`programs.television.channels."rushi-sessions"`. The television module
+serializes that attrset to `~/.config/television/cable/rushi-sessions.toml`.
+
 ### Manual (copy)
 
 ```sh
 cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
 ```
 
-### Nix flake (nixos-config)
+The manual copy needs `fd` and the `rushi-sessions` binary on PATH. The
+binary builds from this repo (`cargo build --release` or the flake).
+
+### Nix flake (nixos-config, data file only)
 
 This repo is a flake. It exposes the channel as a single-file package:
 
 ```sh
 nix build .#rushi-sessions-channel   # -> a store path holding the TOML
+nix build .#rushi-sessions           # -> the backend binary
 ```
 
 nixos-config adds this repo as an input and installs the file with
-home-manager. The module `television/default.nix` wires:
+home-manager:
 
 ```nix
 home.file.".config/television/cable/rushi-sessions.toml".source =
@@ -102,6 +140,10 @@ replaces the manual `cp`. The channel stays pure data in the store.
 
 - Source: 268 sessions from `~/programming` in 0.16s. ACTIVE lines sort
   first. Phases populate for live and idle sessions.
+- Binary parity: `rushi-sessions source` matches the old `fd`+`python3`
+  pipeline byte-for-byte (same 7-field TSV) at `~/` and at repo roots.
+- Binary timing: about 0.10s at `~/` scale, beating the old pipeline
+  (about 0.17s). The `fd` walk is the fast path.
 - Preview: renders the card and filtered events for a live and an idle
   session.
 - `tv rushi-sessions ~/programming` and `tv rushi-sessions ../` pty smoke
@@ -113,8 +155,8 @@ replaces the manual `cp`. The channel stays pure data in the store.
   and restarted. The session log stayed intact. The user restarted that
   loop by hand.
 - Flake: `nix build .#rushi-sessions-channel` yields a store path that
-  is byte-identical to the repo TOML. A consumer flake with the
-  `nixpkgs.follows` edge builds it identically.
+  is byte-identical to the repo TOML. `nix build .#rushi-sessions` yields
+  the backend binary.
 
 ## Caveats
 

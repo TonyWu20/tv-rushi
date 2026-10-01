@@ -3,3 +3,6 @@ sessions/
 
 # nix build result symlink
 result
+
+# cargo build artifacts
+/target
