@@ -11,8 +11,9 @@ the last user and assistant messages and the recent events.
 - List rushi sessions under a directory. Active sessions sort first.
 - Show a status card in the preview panel. `bat` colors it when present.
 - Open a session in `rushi-tui` with ctrl-e.
-- Tail the event log with ctrl-t.
-- Stop the session loop with ctrl-k (SIGTERM).
+- Edit a message in `$EDITOR` (fallback `nvim`) and send it with ctrl-t.
+  Idle: the loop starts detached. Live: `--no-run` appends.
+- Stop the session loop with ctrl-shift-k (SIGTERM).
 
 ## Requirements
 
@@ -20,6 +21,12 @@ the last user and assistant messages and the recent events.
 - `fd`, a hard dependency of the backend binary
 - the `rushi-sessions` binary, which this repo builds
 - `bat`, optional. The preview prints plain TOML without it.
+- `rushi` and `rushi-tui` on PATH, for the `send_message` and `open`
+  actions. Nix builds and installs these with the `rushi` package.
+- `setsid` and `stty`, which `send_message` uses to detach the loop and
+  to restore the terminal. Both ship in the standard Unix base.
+- `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`
+  uses for the editor, temp file, and empty check. These resolve on PATH.
 
 ## Usage
 
@@ -34,11 +41,11 @@ before the source command runs. Omit it to scan the current directory.
 
 Keybindings:
 
-| key    | action                                              |
-| ------ | --------------------------------------------------- |
-| ctrl-e | Open the session in `rushi-tui`                     |
-| ctrl-t | Tail `events.jsonl` (Ctrl-C returns to tv)          |
-| ctrl-k | Send SIGTERM to the session loop                    |
+| key            | action                                              |
+| -------------- | --------------------------------------------------- |
+| ctrl-e         | Open the session in `rushi-tui`                     |
+| ctrl-t         | Edit a message in `$EDITOR` (fallback `nvim`), then send it |
+| ctrl-shift-k   | Send SIGTERM to the session loop                    |
 
 ## Install
 

@@ -42,6 +42,25 @@ It hands off to `rushi-tui` for full interaction.
    `default`. A bare default would pick one system's binary and would
    install the wrong binary elsewhere. The Mac config uses
    `homeManagerModules."aarch64-darwin".default`.
+12. The `tail` action was not useful. Replaced it with `send_message`
+   (bound to `ctrl-t`): it prompts for a message on the terminal, then runs
+   `rushi run <session> <msg>`. When the session is idle it starts the loop.
+   When the loop is live it appends with `--no-run` (lock-free, returns
+   immediately). Empty input cancels. This makes the channel a peek plus a
+   one-line poke, not just read-only.
+13. The idle branch of `send_message` now detaches the loop. It runs
+   `rushi run` under `setsid`, in the background, with stdio redirected to
+   `/dev/null`. tv resumes at once. The loop registers itself in `loop.pid`,
+   so the next send takes the live path.
+14. The prompt for `send_message` is now `$EDITOR` (fallback `nvim`) on a
+   `mktemp` file. It is not a new ratatui binary, and not the earlier
+   in-terminal read loop. No new dependencies. The user edits with their own
+   editor. The stty save/restore now brackets the editor launch. An empty or
+   whitespace-only file cancels the send.
+ 15. The command avoids shell `${...}` expansions. Nix string interpolation
+    consumes a `$` before a `{` inside the `''...''` body, which corrupted
+    the generated command. The shipped script uses plain `$VAR` reads with
+    explicit fallbacks (`d=$TMPDIR; [ -n "$d" ] || d=/tmp`).
 
 ## How it works
 
@@ -72,16 +91,20 @@ It hands off to `rushi-tui` for full interaction.
   theme is `Catppuccin Macchiato` to match the dark catppuccin tv theme.
   Set `RUSHI_PREVIEW_THEME` to override it. When `bat` is absent, the card
   prints as plain text.
-- Hook plumbing with dict values is filtered out. `cached = false` so
-  live sessions refresh.
+- Hook plumbing with dict values is filtered out. `cached = true`, so the
+  preview card re-renders only when the selected entry changes.
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
   so tv resumes after each.
   - `ctrl-e` open: `cd` into the session's `cwd` file value. Fallback is
     the repo root derived from the path. Then run `rushi-tui <session>`.
-  - `ctrl-t` tail: `tail -f events.jsonl`. Ctrl-C returns to tv.
-  - `ctrl-k` kill: SIGTERM the `loop.pid`. Prints "no live loop" when the
-    pid is stale. A SIGTERMed loop restarts. State stays in the session
-    log.
+  - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
+    file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
+    loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
+    Live: it appends with `--no-run`. An empty file cancels. The command
+    saves and restores the stty state around the editor launch.
+  - `ctrl-shift-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
+    when the pid is stale. A SIGTERMed loop restarts. State stays in the
+    session log.
 
 ## Usage
 
@@ -155,8 +178,16 @@ replaces the manual `cp`. The channel stays pure data in the store.
 - `tv rushi-sessions ~/programming` and `tv rushi-sessions ../` pty smoke
   tests: entries appear in about 0.2s. The preview renders. Esc exits.
   No errors.
-- `open` (stubbed `rushi-tui`), `tail`, and `kill` are verified.
-  `kill` was tested with a stale pid and a live pid in a fake session dir.
+- `open`, `send_message`, and `kill` were verified in pty tests using a
+  stubbed `rushi` and `rushi-tui`.
+- `send_message` (editor flow, pty test with a stubbed `$EDITOR` and a
+  stubbed `rushi`): live branch passes `--no-run`. Idle branch starts the
+  loop detached in its own session. A stale `loop.pid` is replaced by the
+  new detached start. Empty or whitespace-only editor file cancels.
+  Terminal state restored.
+- `kill` was tested with a stale pid and a live pid in a fake session dir.
+- The `--no-run` path was verified against the real `rushi` binary. It
+  wrote one `user_message` event and left no `loop.pid`.
 - `kill` also hit a real session by mistake during testing. The loop died
   and restarted. The session log stayed intact. The user restarted that
   loop by hand.
@@ -170,5 +201,11 @@ replaces the manual `cp`. The channel stays pure data in the store.
   They work from any CWD.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
-  confirms before pressing ctrl-k.
+  confirms before pressing ctrl-shift-k.
+- `send_message` on an idle session starts the loop detached, so tv
+  resumes at once. The loop's stdout and stderr go to `/dev/null`, so
+  watch progress in the preview panel. The loop writes its own `loop.pid`
+  on start, so the next send takes the live path.
+- `send_message` opens `$EDITOR` (fallback `nvim`) on a temp file. An empty
+  or whitespace-only file cancels the send.
 - Full-disk scans are slow. Prefer a repo or `~/programming`.

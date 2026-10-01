@@ -28,12 +28,17 @@
 #
 # The list shows status, repo/name, phase, last activity. The preview shows
 # a status card and the last few events. Full interaction happens in
-# rushi-tui (the open action), which is the design intent: this channel is
-# a read-only peek plus stop/tail.
+# rushi-tui (the open action). The channel is a peek plus a message poke:
+# send_message (ctrl-t) opens $EDITOR, then sends to the session: detached
+# `rushi run` when idle, `--no-run` append when the loop is live.
 #
 # Requirements: `fd` (hard, the binary's walk) and `rushi-sessions`
 # (the backend binary, built by this repo's flake). `bat` is optional:
-# the preview falls back to plain TOML when bat is absent.
+# the preview falls back to plain TOML when bat is absent. The interactive
+# actions call binaries resolved on PATH, which are not listed as core
+# requirements: `rushi` and `rushi-tui` for send_message/open.
+# send_message uses `mktemp`, `stty`, `setsid`, `tr` and $EDITOR
+# (fallback `nvim`), all in the standard Unix base.
 #
 # shell = "bash" is set on every command. television detects the login
 # shell from $SHELL (fish here) and would otherwise run these commands
@@ -58,7 +63,7 @@ frecency = false
 
 [preview]
 shell = "bash"
-cached = false
+cached = true
 # Structured TOML card, syntax-highlighted by bat when it is on PATH
 # (theme override: RUSHI_PREVIEW_THEME, default "Catppuccin Macchiato"
 # to match the catppuccin tv theme). Falls back to plain text when
@@ -67,11 +72,12 @@ command = "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '
 
 [ui.preview_panel]
 size = 50
+word_wrap = true
 
 [keybindings]
 ctrl-e = "actions:open"
-ctrl-t = "actions:tail"
-ctrl-k = "actions:kill"
+ctrl-t = "actions:send_message"
+ctrl-shift-k = "actions:kill"
 
 [actions.open]
 description = "Open this session in rushi-tui (full interaction, forked)"
@@ -81,11 +87,15 @@ command = """
 sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cdw" ] || [ ! -d "$cdw" ]; then cdw=$(dirname "$(dirname "$s")"); fi; cd "$cdw" && rushi-tui "$n"' sh '{split:\t:6}'
 """
 
-[actions.tail]
-description = "Follow the session event log (Ctrl-C returns to tv)"
+[actions.send_message]
+description = """
+Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.
+"""
 shell = "bash"
 mode = "fork"
-command = "tail -f '{split:\t:6}/events.jsonl'"
+command = """
+sh -c 's="$1"; p=$(cat "$s/loop.pid" 2>/dev/null); live=no; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && live=yes; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ] && { echo "No message entered, nothing sent."; exit 0; }; if [ "$live" = yes ]; then rushi run "$s" "$m" --no-run; else setsid rushi run "$s" "$m" </dev/null >/dev/null 2>&1 & fi' sh '{split:\t:6}'
+"""
 
 [actions.kill]
 description = "Stop the session loop (SIGTERM to the loop pid)"

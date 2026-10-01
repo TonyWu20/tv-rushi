@@ -26,6 +26,10 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
+    # (The interactive actions call binaries resolved on PATH, which are
+    # not listed as core requirements: `rushi` and `rushi-tui` for
+    # send_message/open. send_message uses `mktemp`, `stty`, `setsid`,
+    # `tr` and $EDITOR (fallback `nvim`), all in the standard Unix base.)
     requirements = [
       "fd"
       "rushi-sessions"
@@ -55,7 +59,7 @@ in
 
   keybindings = {
     "ctrl-e" = "actions:open";
-    "ctrl-t" = "actions:tail";
+    "ctrl-t" = "actions:send_message";
     "ctrl-shift-k" = "actions:kill";
   };
 
@@ -68,11 +72,13 @@ in
     '';
   };
 
-  actions.tail = {
-    description = "Follow the session event log (Ctrl-C returns to tv)";
+  actions.send_message = {
+    description = "Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.";
     shell = "bash";
     mode = "fork";
-    command = "tail -f '{split:\t:6}/events.jsonl'";
+    command = untab ''
+      sh -c 's="$1"; p=$(cat "$s/loop.pid" 2>/dev/null); live=no; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && live=yes; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ] && { echo "No message entered, nothing sent."; exit 0; }; if [ "$live" = yes ]; then rushi run "$s" "$m" --no-run; else setsid rushi run "$s" "$m" </dev/null >/dev/null 2>&1 & fi' sh '{split:@TAB@:6}'
+    '';
   };
 
   actions.kill = {
