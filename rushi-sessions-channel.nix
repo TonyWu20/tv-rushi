@@ -26,7 +26,7 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
-    requirements = [ "fd", "rushi-sessions" ];
+    requirements = [ "fd" "rushi-sessions" ];
   };
 
   source = {
@@ -39,7 +39,7 @@ in
 
   preview = {
     shell = "bash";
-    cached = false;
+    cached = true;
     command = previewCommand;
   };
 
@@ -48,7 +48,7 @@ in
   keybindings = {
     "ctrl-e" = "actions:open";
     "ctrl-t" = "actions:tail";
-    "ctrl-k" = "actions:kill";
+    "ctrl-shift-k" = "actions:kill";
   };
 
   actions.open = {
