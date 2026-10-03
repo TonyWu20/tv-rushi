@@ -71,14 +71,14 @@ cached = true
 command = "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'"
 
 [ui.preview_panel]
-size = 50
+size = 75
 word_wrap = true
 
 [keybindings]
 ctrl-e = "actions:open"
-ctrl-d = "actions:open_dir"
+alt-d = "actions:open_dir"
 ctrl-t = "actions:send_message"
-ctrl-shift-k = "actions:kill"
+alt-k = "actions:kill"
 
 [actions.open]
 # The TUI resolves a bare session name against a *relative* sessions_root,

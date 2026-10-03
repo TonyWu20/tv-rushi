@@ -52,7 +52,7 @@ in
 
   ui = {
     preview_panel = {
-      size = 50;
+      size = 75;
       word_wrap = true;
     };
   };
