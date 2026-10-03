@@ -64,11 +64,16 @@ in
   };
 
   actions.open = {
-    description = "Open this session in rushi-tui (full interaction, forked)";
+    # The TUI resolves a bare session name against a *relative*
+    # sessions_root, so it must start in the directory that contains the
+    # sessions tree: dirname(dirname(session_dir)). The session's tool
+    # cwd file is where tools run, not where the TUI resolves the session,
+    # so it is deliberately NOT used as the launch dir.
+    description = "Open this session in rushi-tui (full interaction, forked; launched from the sessions root so the relative session name resolves)";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; n=$(basename "$s"); cdw=$(cat "$s/cwd" 2>/dev/null); if [ -z "$cdw" ] || [ ! -d "$cdw" ]; then cdw=$(dirname "$(dirname "$s")"); fi; cd "$cdw" && rushi-tui "$n"' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; n=$(basename "$s"); cd "$(dirname "$(dirname "$s")")" && rushi-tui "$n"' sh '{split:@TAB@:6}'
     '';
   };
 

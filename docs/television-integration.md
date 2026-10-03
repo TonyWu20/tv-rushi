@@ -95,13 +95,22 @@ It hands off to `rushi-tui` for full interaction.
   preview card re-renders only when the selected entry changes.
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
   so tv resumes after each.
-  - `ctrl-e` open: `cd` into the session's `cwd` file value. Fallback is
-    the repo root derived from the path. Then run `rushi-tui <session>`.
+  - `ctrl-e` open: `cd` into the directory that holds the sessions tree,
+    `dirname(dirname(session_dir))`, then run `rushi-tui <session>`. The
+    TUI resolves a bare name against a relative `sessions_root`, so it
+    must start in that base dir. The session's tool `cwd` file is where
+    tools run, not where the TUI resolves the session, so it is not used
+    as the launch dir.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
     file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
     loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
     Live: it appends with `--no-run`. An empty file cancels. The command
     saves and restores the stty state around the editor launch.
+    Two separate locks are involved. The loop holds an exclusive
+    `.loop.lock` for its whole life. Log appends take only a brief
+    `events.jsonl` line lock. So `--no-run` appends into a live session
+    without touching `.loop.lock` and without writing `loop.pid`. The
+    live loop's pid lock stays in place for the TUI to read.
   - `ctrl-shift-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
     when the pid is stale. A SIGTERMed loop restarts. State stays in the
     session log.
@@ -197,8 +206,11 @@ replaces the manual `cp`. The channel stays pure data in the store.
 
 ## Caveats
 
-- Session paths in the list are absolute. Actions resolve them directly.
-  They work from any CWD.
+- Session paths in the list are absolute. `send_message` and `kill`
+  resolve them directly, from any CWD. `open` cd's into the
+  directory that holds the sessions tree, then runs `rushi-tui` with
+  the session name. The TUI resolves a bare name against a relative
+  `sessions_root`, so the CWD must be that base dir.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
   confirms before pressing ctrl-shift-k.
