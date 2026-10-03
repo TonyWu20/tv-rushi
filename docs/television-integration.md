@@ -208,4 +208,9 @@ replaces the manual `cp`. The channel stays pure data in the store.
   on start, so the next send takes the live path.
 - `send_message` opens `$EDITOR` (fallback `nvim`) on a temp file. An empty
   or whitespace-only file cancels the send.
+- Action command strings pass through television's string-pipeline templater.
+  A literal shell brace group such as `{ echo x }` breaks the whole parse.
+  television then falls back to raw pass-through and leaves the `{split:...}`
+  placeholder un-substituted. The command reaches the shell with the literal
+  placeholder text. Keep `sh -c` bodies brace-free (use `if/then/fi`).
 - Full-disk scans are slow. Prefer a repo or `~/programming`.
