@@ -59,8 +59,9 @@ in
 
   keybindings = {
     "ctrl-e" = "actions:open";
+    "alt-o" = "actions:open_dir";
     "ctrl-t" = "actions:send_message";
-    "ctrl-shift-k" = "actions:kill";
+    "alt-k" = "actions:kill";
   };
 
   actions.open = {
@@ -74,6 +75,22 @@ in
     mode = "fork";
     command = untab ''
       sh -c 's="$1"; n=$(basename "$s"); cd "$(dirname "$(dirname "$s")")" && rushi-tui "$n"' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.open_dir = {
+    # Exit tv and land in a shell at the session's project dir: the
+    # directory that contains the sessions tree,
+    # dirname(dirname(session_dir)). Uses mode = "execute" so tv quits
+    # and the command takes over the terminal; a fork would cd in a dead
+    # child and tv would just resume. Falls back to bash when $SHELL is
+    # unset. The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them.
+    description = "Exit tv and cd into the session's project dir; a $SHELL shell (bash fallback) takes over the terminal";
+    shell = "bash";
+    mode = "execute";
+    command = untab ''
+      sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; cd "$r" && exec "$sh2"' sh '{split:@TAB@:6}'
     '';
   };
 

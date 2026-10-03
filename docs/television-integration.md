@@ -61,6 +61,11 @@ It hands off to `rushi-tui` for full interaction.
     consumes a `$` before a `{` inside the `''...''` body, which corrupted
     the generated command. The shipped script uses plain `$VAR` reads with
     explicit fallbacks (`d=$TMPDIR; [ -n "$d" ] || d=/tmp`).
+  16. Added `open_dir` (bound to `ctrl-d`), requested by the user. It exits
+     tv and cds into the session's project dir (`dirname(dirname(session_dir))`),
+     then execs `$SHELL` (falling back to `bash`) so the shell owns the
+     terminal. It runs in `execute` mode: a forked `cd` dies with the child,
+     so only `execute` hands the terminal over. `open` stays as is.
 
 ## How it works
 
@@ -94,13 +99,19 @@ It hands off to `rushi-tui` for full interaction.
 - Hook plumbing with dict values is filtered out. `cached = true`, so the
   preview card re-renders only when the selected entry changes.
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
-  so tv resumes after each.
+  so tv resumes after each. `open_dir` is the exception: it runs in
+  `execute` mode, so tv exits and the command takes over the terminal.
   - `ctrl-e` open: `cd` into the directory that holds the sessions tree,
     `dirname(dirname(session_dir))`, then run `rushi-tui <session>`. The
     TUI resolves a bare name against a relative `sessions_root`, so it
     must start in that base dir. The session's tool `cwd` file is where
     tools run, not where the TUI resolves the session, so it is not used
     as the launch dir.
+  - `ctrl-d` open_dir: exit tv and land in a shell at the session's
+    project dir (`dirname(dirname(session_dir))`). The command cds there,
+    then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
+    shell that launched tv. This mode matters: a forked `cd` dies with
+    the child, so only `execute` mode can hand the terminal over.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
     file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
     loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
