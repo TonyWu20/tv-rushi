@@ -76,6 +76,87 @@ It hands off to `rushi-tui` for full interaction.
     the list between all found sessions and live-loop sessions only. The
     binary flag keeps the filter in the backend. The channel adds no pipe.
 
+## Diagnosis: tmux residue and post-exit recovery (user report 2026-10-04)
+
+The user reported two symptoms for `open` inside a tmux pane and asked
+who is to blame. Findings below come from source reading plus live tmux
+reproductions (tmux 3.7b, television 0.15.9, real `tv` and `rushi-tui`
+in detached scratch sessions). `tmux capture-pane` was the ground truth.
+
+Symptom 1: residue of the tv UI inside `rushi-tui` (confirmed).
+
+- tv runs fullscreen on tmux's alternate screen. tmux saves the shell's
+  main screen and clears the alt screen on entry.
+- The forked `open` action runs `sh -c ... rushi-tui` while tv is still on
+  that alt screen. tv keeps its own UI on that screen. It clears only on
+  resume, after the child exits. The path is
+  `run_external_command_fork`: Pause, `child.wait()`, Resume. The
+  `RenderingTask::Resume` handler in `television` `render.rs` calls
+  `tui.enter()`, which re-sends `1049h` and clears.
+- `rushi-tui`'s own `EnterAlternateScreen` (`CSI ?1049h`) is a no-op in
+  tmux. `screen_alternate_on` in tmux 3.7b `screen.c` returns early when
+  the pane is already in alternate mode. No re-save and no clear. On a
+  direct terminal, xterm semantics clear the alt screen on entry. That is
+  why the residue only appears under tmux.
+- `rushi-tui` never clears on startup. `bin/tui/src/main.rs` has no
+  `term.clear()` after `Terminal::new`. Clears exist only in the
+  suspend-resume and exit paths. Its first ratatui frame is a diff
+  against an empty internal buffer. Only the cells the UI paints get
+  written. tv's leftover text stays visible in the unpainted cells, such
+  as the one-column side margins and the transcript area.
+- A pane resize clears the residue. SIGWINCH triggers ratatui
+  `autoresize`, which calls `clear_viewport()`. That is the workaround
+  the user found.
+- Verified live: the residue reproduces with the real `tv` and the real
+  `rushi-tui`. Adding one `term.clear()` after `Terminal::new` in
+  `rushi-tui` removes it completely. That fix is `rushi-tui` commit
+  `203e556`.
+
+Blame split for symptom 1:
+
+- tmux: the trigger. Nested `1049h` is a no-op under tmux 3.7b. A child
+  started inside a tmux pane does not get a clean alternate screen.
+- tv: the main cause. It leaves its own UI on the shared alt screen while
+  the child runs. The child starts on a dirty screen.
+- `rushi-tui`: the last line of defense. It owns the screen it draws
+  into and should clear it on entry. The cleanest self-contained fix is
+  the `rushi-tui` clear on startup.
+
+Symptom 2: long blank after a long `rushi-tui` run (not reproduced).
+
+- The user reports the pane stays blank for a long time after a long
+  `rushi-tui` run. The delay seems proportional to the run length.
+- Measured in this environment, not reproduced. Runs of 4, 9, and 14
+  minutes were tested, with idle and streaming event feeds and one
+  mid-run pane resize. The TUI exit path took about 2.1 s. That is the
+  bounded extension-group stop grace. The tv UI was back within 1 s of
+  the child exit. The blank window was under 1 s in every case.
+- The resume paths are all bounded in code. tv renderer Resume:
+  re-enter plus clear, immediate. The next `Render` tick lands within
+  `RENDERING_INTERVAL` = 25 ticks at 50 Hz, so 0.5 s. tmux alternate
+  enter/exit is O(viewport), no time-proportional cost. tmux history is
+  disabled while in the alt screen, so nothing accumulates over time.
+  `history_size` stayed 0 across all long runs.
+- Conclusion: no component here (tmux, tv, `rushi-tui`) explains a
+  proportional delay. If the user still sees it, the cause is outside
+  these three. Likely the outer terminal or client side during a long
+  run. Or a much longer, hour-scale run.
+
+Open question for the user: during a long blank, does
+`tmux capture-pane -p -t <tv pane>` already show the tv UI? If yes, only
+the user's terminal is stale. If no, the pane content is still blank.
+
+Decisions (user, 2026-10-04):
+
+- Commit the `rushi-tui` `term.clear()` fix only. Done as
+  `rushi-tui` commit `203e556` (`fix(tui): clear the alternate
+  screen on startup`).
+- Do not file the upstream `tv` clear-before-fork issue. The
+  `rushi-tui` fix covers the `open` action. No tmux action needed.
+- Symptom 2 stays open. The user should capture
+  `tmux capture-pane -p -t <tv pane>` during a long blank to
+  separate server-side state from terminal-side state.
+
 ## How it works
 
 - The source command is a list of two named commands. television runs
