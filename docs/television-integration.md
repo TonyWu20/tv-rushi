@@ -75,6 +75,19 @@ It hands off to `rushi-tui` for full interaction.
     key (default `ctrl-s`) switches between the two. Each press toggles
     the list between all found sessions and live-loop sessions only. The
     binary flag keeps the filter in the backend. The channel adds no pipe.
+18. The `open` action now detects tmux. When tv runs inside a tmux pane,
+    the action's fork inherits `$TMUX`. It creates a new pane in the
+    current window, starts it in the session's repo dir, and runs
+    `rushi-tui <session>` in that pane. The repo dir is
+    `dirname(dirname(session_dir))`, passed to `tmux split-window -c`.
+    The new pane closes when rushi-tui exits. Outside tmux, or without
+    the `tmux` binary on PATH, it keeps the old behavior. It runs `cd`
+    to the sessions root, then rushi-tui in the fork. The shell body
+    stays brace-free. A stray brace group would break the
+    `{split:\t:6}` template.
+19. `alt-o` is the correct keybinding for `open_dir`. The TOML file had
+    it as `alt-d`. The docs had it as `ctrl-d`. Both are now aligned
+    with the Nix file.
 
 ## Diagnosis: tmux residue and post-exit recovery (user report 2026-10-04)
 
@@ -194,13 +207,17 @@ Decisions (user, 2026-10-04):
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
   so tv resumes after each. `open_dir` is the exception: it runs in
   `execute` mode, so tv exits and the command takes over the terminal.
-  - `ctrl-e` open: `cd` into the directory that holds the sessions tree,
-    `dirname(dirname(session_dir))`, then run `rushi-tui <session>`. The
-    TUI resolves a bare name against a relative `sessions_root`, so it
-    must start in that base dir. The session's tool `cwd` file is where
-    tools run, not where the TUI resolves the session, so it is not used
-    as the launch dir.
-  - `ctrl-d` open_dir: exit tv and land in a shell at the session's
+  - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -c`.
+    The new pane sits in the current window. It starts in the directory
+    that holds the sessions tree (`dirname(dirname(session_dir))`). It
+    runs `rushi-tui <session>` in that pane. The pane closes on exit.
+    Outside tmux, or without the `tmux` binary, the fork runs `cd` to
+    that base dir, then rushi-tui, as before. The TUI resolves a bare
+    name against a relative `sessions_root`, so the pane or fork must
+    start in that base dir. The session's tool `cwd` file is where
+    tools run, not where the TUI resolves the session, so it is not
+    used as the launch dir.
+  - `alt-o` open_dir: exit tv and land in a shell at the session's
     project dir (`dirname(dirname(session_dir))`). The command cds there,
     then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
     shell that launched tv. This mode matters: a forked `cd` dies with
@@ -318,10 +335,11 @@ replaces the manual `cp`. The channel stays pure data in the store.
 ## Caveats
 
 - Session paths in the list are absolute. `send_message` and `kill`
-  resolve them directly, from any CWD. `open` cd's into the
-  directory that holds the sessions tree, then runs `rushi-tui` with
-  the session name. The TUI resolves a bare name against a relative
-  `sessions_root`, so the CWD must be that base dir.
+  resolve them directly, from any CWD. `open` starts `rushi-tui` from
+  the directory that holds the sessions tree. Inside tmux, it does so
+  in a new pane of the current window. Outside tmux, it does so in the
+  fork. The TUI resolves a bare name against a relative `sessions_root`,
+  so the CWD must be that base dir.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
   confirms before pressing ctrl-shift-k.

@@ -43,10 +43,13 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
+    # `tmux` is optional; open uses it only when tv runs inside a tmux
+    # session (it detects $TMUX and falls back to the plain fork).
     # (The interactive actions call binaries resolved on PATH, which are
     # not listed as core requirements: `rushi` and `rushi-tui` for
-    # send_message/open. send_message uses `mktemp`, `stty`, `setsid`,
-    # `tr` and $EDITOR (fallback `nvim`), all in the standard Unix base.)
+    # send_message/open, and `tmux` for open. send_message uses `mktemp`,
+    # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`), all in the
+    # standard Unix base.)
     requirements = [
       "fd"
       "rushi-sessions"
@@ -91,11 +94,23 @@ in
     # sessions tree: dirname(dirname(session_dir)). The session's tool
     # cwd file is where tools run, not where the TUI resolves the session,
     # so it is deliberately NOT used as the launch dir.
-    description = "Open this session in rushi-tui (full interaction, forked; launched from the sessions root so the relative session name resolves)";
+    #
+    # tv forks this action, so the fork inherits the pane environment.
+    # When tv runs inside tmux, TMUX is set: create a new pane in the
+    # current window, start it in the repo dir (-c), and run rushi-tui
+    # there. The pane closes when rushi-tui exits. Outside tmux, or when
+    # the tmux binary is missing, fall back to the original behavior: cd
+    # to the sessions root and run rushi-tui in this fork.
+    #
+    # The shell body stays brace-free: television's string pipeline
+    # treats a stray {group} as a template token and then leaves the
+    # split placeholder unsubstituted. That is why the check reads
+    # plain $TMUX instead of ${TMUX:-}.
+    description = "Open this session in rushi-tui. Inside tmux, a new pane in the current window runs it from the session's repo dir. Outside tmux, it runs in this fork.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; n=$(basename "$s"); cd "$(dirname "$(dirname "$s")")" && rushi-tui "$n"' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:@TAB@:6}'
     '';
   };
 
