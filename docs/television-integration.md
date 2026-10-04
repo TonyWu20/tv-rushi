@@ -67,11 +67,23 @@ It hands off to `rushi-tui` for full interaction.
      terminal. It runs in `execute` mode: a forked `cd` dies with the child,
      so only `execute` hands the terminal over. `open` stays as is.
 
+## Decisions (user, 2026-10-04)
+
+17. The source command is now a list of two named commands. `All` runs
+    `rushi-sessions source`. `Active` runs `rushi-sessions source
+    --active-only`. television runs `All` on startup. The `cycle_sources`
+    key (default `ctrl-s`) switches between the two. Each press toggles
+    the list between all found sessions and live-loop sessions only. The
+    binary flag keeps the filter in the backend. The channel adds no pipe.
+
 ## How it works
 
-- Source command: one `rushi-sessions source` process, forced
-  `shell = "bash"`. The login shell is fish, which breaks shell scripts, so
-  every command forces bash.
+- The source command is a list of two named commands. television runs
+  `All` on startup. The `cycle_sources` key (default `ctrl-s`) switches
+  to `Active`, and a second press goes back. `All` runs `rushi-sessions
+  source`. `Active` adds the `--active-only` flag, and the list keeps
+  live-loop sessions only. Forced `shell = "bash"`: the login shell is
+  fish, which breaks shell scripts, so every command forces bash.
 - The binary calls one `fd` walk to find `sessions/` dirs under the scan
   root (the CWD). `fd` is a hard dependency of the channel.
 - The binary does the per-session work in process. It forks no subprocess
@@ -214,6 +226,13 @@ replaces the manual `cp`. The channel stays pure data in the store.
 - Flake: `nix build .#rushi-sessions-channel` yields a store path that
   is byte-identical to the repo TOML. `nix build .#rushi-sessions` yields
   the backend binary.
+- `--active-only`: a fixture tree with one live and two stale sessions
+  prints only the live row. With zero live sessions it prints no rows and
+  exits 0.
+- Source cycling (tmux pty test, tv 0.15.9): the `All` view lists three
+  fixture sessions. `ctrl-s` switches to `Active`, which keeps only the
+  live session. A second `ctrl-s` returns to `All`. The header shows the
+  source name and the `ctrl-s` hint.
 
 ## Caveats
 

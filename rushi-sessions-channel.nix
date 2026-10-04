@@ -9,12 +9,29 @@
 # flake builds (packages.<system>.rushi-sessions) and which the home module
 # adds to `home.packages`. The binary hard-depends on `fd` for the directory
 # walk and on `bat` optionally for preview coloring.
+#
+# The source command is a list of two named commands. television runs the
+# first on startup and cycles between them on `cycle_sources` (Ctrl+S):
+# "All" lists every found session, "Active" the live-loop ones only.
 
 let
   tab = "\t";
   untab = s: builtins.replaceStrings [ "@TAB@" ] [ tab ] s;
 
-  sourceCommand = "rushi-sessions source";
+  # Two source commands for the channel. television cycles between them with
+  # the `cycle_sources` keybinding (default: Ctrl+S): only the first one
+  # runs on startup. "All" lists every found session; "Active" keeps the
+  # sessions whose loop pid is alive (the binary's `--active-only` filter).
+  sourceCommands = [
+    {
+      name = "All";
+      run = "rushi-sessions source";
+    }
+    {
+      name = "Active";
+      run = "rushi-sessions source --active-only";
+    }
+  ];
 
   previewCommand = untab ''
     rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
@@ -38,7 +55,11 @@ in
 
   source = {
     shell = "bash";
-    command = sourceCommand;
+    # A list of named source commands. television runs the first one on
+    # startup and cycles to the next on `cycle_sources` (Ctrl+S by
+    # default). "All" -> "Active" -> "All", so each press swaps the list
+    # between every found session and the live-loop sessions only.
+    command = sourceCommands;
     display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}";
     output = "{split:\t:6}";
     frecency = false;

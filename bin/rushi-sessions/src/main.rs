@@ -7,6 +7,8 @@
 //!   Scan for rushi session directories under the CWD and print one TSV row
 //!   per session: `status<TAB>name<TAB>repo<TAB>phase<TAB>last<TAB>mtime<TAB>path`.
 //!   The television channel's `display`/`output` split on that tab.
+//!   `--active-only` keeps only the sessions whose loop pid is alive
+//!   (ACTIVE). The channel exposes it as a second, cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
 //!   Render the TOML preview card for one session: the last user/assistant
@@ -46,7 +48,11 @@ struct Args {
 #[derive(Subcommand)]
 enum Command {
     /// Scan for rushi sessions under the CWD and print TSV rows.
-    Source,
+    Source {
+        /// Print only sessions whose loop pid is alive (ACTIVE status).
+        #[arg(long)]
+        active_only: bool,
+    },
     /// Render the TOML preview card for one session.
     Preview {
         status: String,
@@ -76,7 +82,7 @@ fn main() {
 
     let args = Args::parse();
     match args.command {
-        Command::Source => source(),
+        Command::Source { active_only } => source(active_only),
         Command::Preview {
             status,
             name,
@@ -104,7 +110,7 @@ struct Row {
     path: String,
 }
 
-fn source() {
+fn source(active_only: bool) {
     let mut rows: Vec<Row> = Vec::new();
     for sdir in find_sessions() {
         let base = sdir.trim_end_matches('/').to_string();
@@ -153,6 +159,10 @@ fn source() {
                 path: p,
             });
         }
+    }
+    // The active-only source view: keep the sessions with a live loop.
+    if active_only {
+        rows.retain(|r| r.status == "ACTIVE");
     }
     // ACTIVE first, then by mtime descending (the old sort key).
     rows.sort_by(|a, b| {

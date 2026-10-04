@@ -12,8 +12,8 @@
 #       - your current directory when DIR is omitted
 #       - DIR when given, e.g. tv rushi-sessions ~/programming or /
 #
-# The source command runs the `rushi-sessions` binary (one process). One
-# `fd` call finds the session roots, then the same process does the rest:
+# The source commands run the `rushi-sessions` binary (one process per run).
+# One `fd` call finds the session roots, then the same process does the rest:
 # liveness via kill(pid, 0), last loop_phase from a tail read of
 # events.jsonl, mtime for last-activity. No per-session forks. The scan
 # root is the CWD (the binary reads it itself). The binary prints one
@@ -53,13 +53,25 @@ requirements = ["fd", "rushi-sessions"]
 
 [source]
 shell = "bash"
-# One rushi-sessions process. Internally: one fd call finds the session
-# roots (fast, parallel walk), then per-session liveness, phase and mtime
-# in-process. No per-session forks.
-command = "rushi-sessions source"
+# One rushi-sessions process per run. Internally: one fd call finds the
+# session roots (fast, parallel walk), then per-session liveness, phase
+# and mtime in-process. No per-session forks.
+#
+# Two named source commands: television runs "All" on startup and cycles
+# to "Active" on Ctrl+S (the `cycle_sources` keybinding), then back to
+# "All". Each press swaps the list between every found session and the
+# live-loop sessions only.
 display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}"
 output = "{split:\t:6}"
 frecency = false
+
+[[source.command]]
+name = "All"
+run = "rushi-sessions source"
+
+[[source.command]]
+name = "Active"
+run = "rushi-sessions source --active-only"
 
 [preview]
 shell = "bash"
