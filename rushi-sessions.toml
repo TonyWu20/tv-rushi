@@ -12,11 +12,20 @@
 #       - your current directory when DIR is omitted
 #       - DIR when given, e.g. tv rushi-sessions ~/programming or /
 #
+# The binary takes optional scan roots: `rushi-sessions source ROOT...`.
+# Add roots to the two `run` lines under [source] to watch fixed trees.
+# Home-manager users set the `programs."rushi-sessions".sourceRoots`
+# option instead. It feeds the `rushi-sessions-all` channel, which
+# scans the configured trees (registered only when the list is
+# non-empty). This main channel stays CWD-driven: `tv rushi-sessions
+# DIR` scans DIR.
+#
 # The source commands run the `rushi-sessions` binary (one process per run).
 # One `fd` call finds the session roots, then the same process does the rest:
 # liveness via kill(pid, 0), last loop_phase from a tail read of
 # events.jsonl, mtime for last-activity. No per-session forks. The scan
-# root is the CWD (the binary reads it itself). The binary prints one
+# roots are the ones the source command passes (below); without roots
+# the binary scans the CWD. The binary prints one
 # tab-separated line per session:
 #   0 status  ACTIVE (live loop.pid) or IDLE
 #   1 name    session name
@@ -69,6 +78,8 @@ frecency = false
 
 [[source.command]]
 name = "All"
+# No scan roots: the binary scans the CWD. To watch fixed trees, add
+# the roots to this line (the binary takes any number).
 run = "rushi-sessions source"
 
 [[source.command]]

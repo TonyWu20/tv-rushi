@@ -3,12 +3,17 @@
 //! Replaces the inline Python embedded in the `rushi-sessions` television
 //! channel (`rushi-sessions-channel.nix` in this repo). Two subcommands:
 //!
-//! - `rushi-sessions source`
-//!   Scan for rushi session directories under the CWD and print one TSV row
-//!   per session: `status<TAB>name<TAB>repo<TAB>phase<TAB>last<TAB>mtime<TAB>path`.
-//!   The television channel's `display`/`output` split on that tab.
-//!   `--active-only` keeps only the sessions whose loop pid is alive
-//!   (ACTIVE). The channel exposes it as a second, cycling source command.
+//! - `rushi-sessions source [ROOT...]`
+//!   Scan for rushi session directories under the given roots and print
+//!   one TSV row per session:
+//!   `status<TAB>name<TAB>repo<TAB>phase<TAB>last<TAB>mtime<TAB>path`.
+//!   The roots are directories. Omit them to scan the CWD. Relative
+//!   roots join the CWD. Missing roots are skipped with a warning on
+//!   stderr. Overlapping roots (one inside another) dedupe by
+//!   canonical path. The television channel's `display`/`output` split
+//!   on that tab. `--active-only` keeps only the sessions whose loop
+//!   pid is alive (ACTIVE). The channel exposes it as a second,
+//!   cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
 //!   Render the TOML preview card for one session: the last user/assistant
@@ -47,11 +52,15 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Scan for rushi sessions under the CWD and print TSV rows.
+    /// Scan for rushi sessions under the given roots and print TSV rows.
+    /// Without roots, the CWD is the only root.
     Source {
         /// Print only sessions whose loop pid is alive (ACTIVE status).
         #[arg(long)]
         active_only: bool,
+        /// Roots to scan for session directories.
+        #[arg(value_name = "ROOT")]
+        roots: Vec<PathBuf>,
     },
     /// Render the TOML preview card for one session.
     Preview {
@@ -82,7 +91,7 @@ fn main() {
 
     let args = Args::parse();
     match args.command {
-        Command::Source { active_only } => source(active_only),
+        Command::Source { active_only, roots } => source(active_only, roots),
         Command::Preview {
             status,
             name,
@@ -110,9 +119,10 @@ struct Row {
     path: String,
 }
 
-fn source(active_only: bool) {
+fn source(active_only: bool, roots: Vec<PathBuf>) {
+    let roots = resolve_roots(roots);
     let mut rows: Vec<Row> = Vec::new();
-    for sdir in find_sessions() {
+    for sdir in find_sessions(&roots) {
         let base = sdir.trim_end_matches('/').to_string();
         let entries = match fs::read_dir(&base) {
             Ok(e) => e,
@@ -185,17 +195,44 @@ fn source(active_only: bool) {
     }
 }
 
-/// Find every directory named `sessions` under the CWD by calling `fd`
-/// (hard dependency), returned as **absolute** paths like
-/// `/home/u/repo/sessions` (the old pipeline's `fd` output, which was
-/// given an absolute start point). `fd` skips hidden directories by
-/// default (no `--no-hidden`), matching the old call. The flag set
-/// mirrors the old pipeline exactly: `--no-ignore -td`, the five `-E`
-/// prunes, the pattern, and the absolute start point. A missing or
-/// failing `fd` yields an empty list (the channel's `requirements` show
-/// `fd` as missing to the user).
-fn find_sessions() -> Vec<String> {
+/// Resolve the requested scan roots into an absolute list. No roots
+/// means the CWD (the original single-root behavior). Relative roots
+/// join the CWD. A root that is missing or not a directory is skipped
+/// with a warning on stderr; the remaining roots still scan.
+fn resolve_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    if roots.is_empty() {
+        return vec![cwd];
+    }
+    let mut out: Vec<PathBuf> = Vec::new();
+    for r in roots {
+        let p = if r.is_absolute() { r } else { cwd.join(r) };
+        if !p.is_dir() {
+            eprintln!("rushi-sessions: skipping missing root: {}", p.display());
+            continue;
+        }
+        out.push(p);
+    }
+    out
+}
+
+/// Find every directory named `sessions` under the roots by calling
+/// `fd` (hard dependency) once with all roots as start points,
+/// returned as **absolute** paths (fd is given absolute start points).
+/// `fd` skips hidden directories by default (no `--no-hidden`),
+/// matching the old call. The flag set mirrors the old pipeline
+/// exactly: `--no-ignore -td`, the five `-E` prunes, the pattern, and
+/// the start points. A missing or failing `fd` yields an empty list
+/// (the channel's `requirements` show `fd` as missing to the user).
+/// Overlapping roots can find the same directory twice, so the lines
+/// are deduped by canonical path.
+fn find_sessions(roots: &[PathBuf]) -> Vec<String> {
+    // No roots at all (every requested root missing): scan nothing.
+    // The CWD fallback lives in `resolve_roots`, not here. A bare fd
+    // call with no start points would walk the CWD by itself.
+    if roots.is_empty() {
+        return Vec::new();
+    }
     let out = std::process::Command::new("fd")
         .arg("--no-ignore")
         .arg("-t")
@@ -206,17 +243,36 @@ fn find_sessions() -> Vec<String> {
         .args(["-E", "scratch"])
         .args(["-E", ".nix"])
         .arg("sessions")
-        .arg(&cwd)
+        .args(roots.iter().map(|p| p.as_os_str()))
         .output();
     let Ok(out) = out else {
         return Vec::new();
     };
-    String::from_utf8_lossy(&out.stdout)
+    let lines = String::from_utf8_lossy(&out.stdout)
         .lines()
         .map(str::trim)
         .filter(|l| !l.is_empty())
         .map(str::to_string)
-        .collect()
+        .collect::<Vec<_>>();
+    dedup_paths(lines)
+}
+
+/// Drop lines that name a directory already listed (overlapping
+/// roots, or two spellings of the same directory). The canonical path
+/// is the key. A line that cannot be canonicalized (a broken
+/// symlink, a race) keys on itself.
+fn dedup_paths(lines: Vec<String>) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::new();
+    for line in lines {
+        let key = fs::canonicalize(&line).unwrap_or_else(|_| PathBuf::from(line.clone()));
+        let key = key.to_string_lossy().into_owned();
+        if seen.insert(key) {
+            out.push(line);
+        }
+    }
+    out
 }
 
 /// The repo a `sessions` directory belongs to: the basename of the
@@ -627,5 +683,49 @@ mod tests {
         assert_eq!(repo_of("sessions"), ".");
         assert_eq!(repo_of("repo/sessions"), "repo");
         assert_eq!(repo_of("/home/u/repo/sessions"), "repo");
+    }
+
+    #[test]
+    fn resolve_roots_empty_falls_back_to_cwd() {
+        let roots = resolve_roots(Vec::new());
+        assert_eq!(roots, vec![std::env::current_dir().unwrap()]);
+    }
+
+    #[test]
+    fn resolve_roots_joins_relative_to_cwd() {
+        let cwd = std::env::current_dir().unwrap();
+        let roots = resolve_roots(vec![PathBuf::from(".")]);
+        assert_eq!(roots, vec![cwd.join(".")]);
+    }
+
+    #[test]
+    fn resolve_roots_skips_missing() {
+        let cwd = std::env::current_dir().unwrap();
+        // A missing root is skipped; a present absolute root is kept.
+        let roots = resolve_roots(vec![PathBuf::from("/no/rushi/such/dir"), cwd.clone()]);
+        assert_eq!(roots, vec![cwd]);
+    }
+
+    #[test]
+    fn find_sessions_no_roots_no_walk() {
+        // With zero roots, no fd walk happens (no CWD fallback here).
+        assert!(find_sessions(&[]).is_empty());
+    }
+
+    #[test]
+    fn dedup_paths_drops_repeats() {
+        let t = std::env::temp_dir();
+        let s = t.to_string_lossy().into_owned();
+        let out = dedup_paths(vec![s.clone(), s.clone(), s.clone()]);
+        assert_eq!(out, vec![s]);
+    }
+
+    #[test]
+    fn dedup_paths_keeps_distinct() {
+        let t = std::env::temp_dir();
+        let a = t.join("dedup-a").to_string_lossy().into_owned();
+        let b = t.join("dedup-b").to_string_lossy().into_owned();
+        let out = dedup_paths(vec![a.clone(), b.clone(), a.clone()]);
+        assert_eq!(out.len(), 2);
     }
 }

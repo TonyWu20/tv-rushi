@@ -39,6 +39,28 @@ tv rushi-sessions /                # full disk scan (slow)
 The directory is television's `[PATH]` argument. television changes into it
 before the source command runs. Omit it to scan the current directory.
 
+To watch a fixed set of trees, set the home-manager option
+`programs."rushi-sessions".sourceRoots`:
+
+```nix
+programs."rushi-sessions" = {
+  enable = true;
+  sourceRoots = [ "/export" "/home/tony/programming" "~/Downloads" ];
+};
+```
+
+That registers a `rushi-sessions-all` channel (the
+`programs."rushi-sessions".allChannel` option, default `true`). It
+scans the configured trees and is registered only when `sourceRoots`
+is non-empty. The main channel stays CWD-driven, so `tv rushi-sessions
+DIR` still scans DIR.
+
+The binary alone takes any number of roots:
+
+```sh
+rushi-sessions source /export ~/programming
+```
+
 Keybindings:
 
 | key            | action                                              |
@@ -59,7 +81,10 @@ inputs.tv-rushi.url = "github:TonyWu20/tv-rushi";
 # ...
 home-manager.users.tony = {
   homeModules = [ inputs.tv-rushi.homeManagerModules."x86_64-linux".default ];
-  programs."rushi-sessions".enable = true;
+  programs."rushi-sessions" = {
+    enable = true;
+    sourceRoots = [ ]; # empty: no rushi-sessions-all channel
+  };
 };
 ```
 
