@@ -83,6 +83,7 @@ in
 
   keybindings = {
     "ctrl-e" = "actions:open";
+    "ctrl-v" = "actions:open_v";
     "alt-o" = "actions:open_dir";
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
@@ -97,20 +98,34 @@ in
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
-    # current window, start it in the repo dir (-c), and run rushi-tui
-    # there. The pane closes when rushi-tui exits. Outside tmux, or when
-    # the tmux binary is missing, fall back to the original behavior: cd
-    # to the sessions root and run rushi-tui in this fork.
+    # current window. The pane sits to the right of tv (-h, a vertical
+    # split) and starts in the repo dir (-c). It runs rushi-tui there.
+    # The pane closes when rushi-tui exits. Outside tmux, or when the
+    # tmux binary is missing, keep the original behavior: it runs `cd`
+    # to the sessions root, then rushi-tui in this fork.
     #
     # The shell body stays brace-free: television's string pipeline
     # treats a stray {group} as a template token and then leaves the
     # split placeholder unsubstituted. That is why the check reads
     # plain $TMUX instead of ${TMUX:-}.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane in the current window runs it from the session's repo dir. Outside tmux, it runs in this fork.";
+    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of tv runs it from the session's repo dir. Outside tmux, it runs in this fork.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.open_v = {
+    # Same as open, but the new pane stacks below tv instead of sitting
+    # to the right. tmux's flags are easy to mix up: -v puts the new
+    # pane below the current one (a horizontal divider). Outside tmux,
+    # the behavior is the same plain fork as open.
+    description = "Open this session in rushi-tui. Inside tmux, a new pane below tv runs it from the session's repo dir. Outside tmux, it runs in this fork.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:@TAB@:6}'
     '';
   };
 

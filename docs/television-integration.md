@@ -89,6 +89,17 @@ It hands off to `rushi-tui` for full interaction.
     it as `alt-d`. The docs had it as `ctrl-d`. Both are now aligned
     with the Nix file.
 
+## Decisions (user, 2026-10-05)
+
+20. The `open` pane is now a vertical split. The new pane sits to the
+    right of tv, side by side. The command passes `-h` to
+    `tmux split-window`. That flag means the new pane goes to the
+    right of the current one, despite its name.
+21. Added a second open action, `open_v`, bound to `ctrl-v`. It
+    opens the session with `tmux split-window -v`, so the new pane
+    stacks below tv. The user picks the split direction on purpose.
+    `open` keeps `-h`. Outside tmux, both run the plain fork.
+
 ## Diagnosis: tmux residue and post-exit recovery (user report 2026-10-04)
 
 The user reported two symptoms for `open` inside a tmux pane and asked
@@ -207,9 +218,10 @@ Decisions (user, 2026-10-04):
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
   so tv resumes after each. `open_dir` is the exception: it runs in
   `execute` mode, so tv exits and the command takes over the terminal.
-  - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -c`.
-    The new pane sits in the current window. It starts in the directory
-    that holds the sessions tree (`dirname(dirname(session_dir))`). It
+  - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -h -c`.
+    The new pane sits to the right of tv, in the same window. It starts
+    in the directory that holds the sessions tree
+    (`dirname(dirname(session_dir))`). It
     runs `rushi-tui <session>` in that pane. The pane closes on exit.
     Outside tmux, or without the `tmux` binary, the fork runs `cd` to
     that base dir, then rushi-tui, as before. The TUI resolves a bare
@@ -217,6 +229,11 @@ Decisions (user, 2026-10-04):
     start in that base dir. The session's tool `cwd` file is where
     tools run, not where the TUI resolves the session, so it is not
     used as the launch dir.
+  - `ctrl-v` open_v: same as open, but the new pane stacks below tv.
+    It runs `tmux split-window -v -c` in the fork. The pane sits
+    below the tv pane, in the same window. It starts in the same base
+    dir and runs `rushi-tui <session>` there. Outside tmux, it is the
+    plain fork, like open.
   - `alt-o` open_dir: exit tv and land in a shell at the session's
     project dir (`dirname(dirname(session_dir))`). The command cds there,
     then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
@@ -337,7 +354,7 @@ replaces the manual `cp`. The channel stays pure data in the store.
 - Session paths in the list are absolute. `send_message` and `kill`
   resolve them directly, from any CWD. `open` starts `rushi-tui` from
   the directory that holds the sessions tree. Inside tmux, it does so
-  in a new pane of the current window. Outside tmux, it does so in the
+  in a new pane to the right of tv. Outside tmux, it does so in the
   fork. The TUI resolves a bare name against a relative `sessions_root`,
   so the CWD must be that base dir.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
