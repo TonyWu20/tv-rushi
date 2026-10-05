@@ -64,13 +64,14 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
-    # `tmux` is optional; open uses it only when tv runs inside a tmux
-    # session (it detects $TMUX and falls back to the plain fork).
+    # `tmux` is optional; open, open_v and open_dir use it only when tv
+    # runs inside a tmux session (each detects $TMUX and falls back to
+    # the plain fork).
     # (The interactive actions call binaries resolved on PATH, which are
     # not listed as core requirements: `rushi` and `rushi-tui` for
-    # send_message/open, and `tmux` for open. send_message uses `mktemp`,
-    # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`), all in the
-    # standard Unix base.)
+    # send_message/open/open_v, and `tmux` for open, open_v and
+    # open_dir. send_message uses `mktemp`, `stty`, `setsid`, `tr` and
+    # $EDITOR (fallback `nvim`), all in the standard Unix base.)
     requirements = [
       "fd"
       "rushi-sessions"
@@ -151,18 +152,30 @@ in
   };
 
   actions.open_dir = {
-    # Exit tv and land in a shell at the session's project dir: the
-    # directory that contains the sessions tree,
-    # dirname(dirname(session_dir)). Uses mode = "execute" so tv quits
-    # and the command takes over the terminal; a fork would cd in a dead
-    # child and tv would just resume. Falls back to bash when $SHELL is
-    # unset. The command keeps $vars plain (no ${...}) so the Nix
-    # single-quote string does not interpolate them.
-    description = "Exit tv and cd into the session's project dir; a $SHELL shell (bash fallback) takes over the terminal";
+    # Open a shell at the session's project dir: the directory that
+    # contains the sessions tree, dirname(dirname(session_dir)). The
+    # shell is $SHELL, with a bash fallback when $SHELL is unset.
+    #
+    # tv forks this action, so the fork inherits the pane environment.
+    # When tv runs inside tmux, TMUX is set: create a new pane in the
+    # current window. The pane sits to the right of tv (-h, a vertical
+    # split) and starts in the repo dir (-c). It runs the shell there.
+    # The pane closes when the shell exits. tmux runs the pane command
+    # through its default shell, so the pane command is the plain shell
+    # path. Outside tmux, or when the tmux binary is missing, the fork
+    # cds to the repo dir and execs the shell; tv resumes when the
+    # shell exits.
+    #
+    # The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them. The body stays
+    # brace-free for the same reason as open: a stray {group} would
+    # break the television template and leave the split placeholder
+    # unsubstituted.
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits.";
     shell = "bash";
-    mode = "execute";
+    mode = "fork";
     command = untab ''
-      sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; cd "$r" && exec "$sh2"' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
     '';
   };
 
