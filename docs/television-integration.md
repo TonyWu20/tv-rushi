@@ -99,6 +99,38 @@ It hands off to `rushi-tui` for full interaction.
     opens the session with `tmux split-window -v`, so the new pane
     stacks below tv. The user picks the split direction on purpose.
     `open` keeps `-h`. Outside tmux, both run the plain fork.
+22. The `source` subcommand now takes any number of roots:
+    `rushi-sessions source ROOT...`. Without roots it keeps the old
+    behavior (the CWD is the single root). One `fd` call takes all
+    roots as start points. Overlapping roots (one inside another, or
+    the same dir spelled twice) dedupe by canonical path. A missing
+    root is skipped with a stderr warning; the other roots still
+    scan. The roots come from the channel's source commands (see 23).
+23. The scan roots are a home-manager option, not channel data.
+    `programs."rushi-sessions".sourceRoots` is a list of strings,
+    default empty. It feeds the `sourceRoots` argument of
+    `rushi-sessions-channel.nix` (now a function, not a bare attrset).
+    An empty list runs `rushi-sessions source` with no roots (the CWD).
+    A non-empty list appends the roots to both source commands. The
+    unquoted join keeps shell expansion of `~/...` roots. The shipped
+    TOML manual copy stays rootless. Its `run` lines take roots by
+    hand. The option keeps each user's trees out of the channel data.
+24. `tv [PATH]` cannot override `sourceRoots` on the same channel.
+    television 0.15.9 exposes the argument to no channel surface. It
+    only chdirs the process. A source read and an env dump of a probe
+    channel found no env var, token, or config field for it. A DIR-
+    less launch from any dir is indistinguishable from `tv DIR`. The
+    module therefore registers a second channel `rushi-sessions-cwd`
+    (the `programs."rushi-sessions".cwdChannel` option, default
+    enabled). It scans the CWD only, so `tv rushi-sessions-cwd DIR`
+    is the override. The main channel keeps its roots.
+25. The user preferred the split the other way. The main channel
+    `rushi-sessions` keeps the CWD behavior: no roots, it scans the
+    CWD (the `tv [PATH]` argument). The configured trees move to a
+    `rushi-sessions-all` channel fed by `sourceRoots` (the
+    `programs."rushi-sessions".allChannel` option, default enabled,
+    registered only when `sourceRoots` is non-empty). Supersedes the
+    channel split of 24.
 
 ## Diagnosis: tmux residue and post-exit recovery (user report 2026-10-04)
 
@@ -186,11 +218,21 @@ Decisions (user, 2026-10-04):
 - The source command is a list of two named commands. television runs
   `All` on startup. The `cycle_sources` key (default `ctrl-s`) switches
   to `Active`, and a second press goes back. `All` runs `rushi-sessions
-  source`. `Active` adds the `--active-only` flag, and the list keeps
-  live-loop sessions only. Forced `shell = "bash"`: the login shell is
-  fish, which breaks shell scripts, so every command forces bash.
-- The binary calls one `fd` walk to find `sessions/` dirs under the scan
-  root (the CWD). `fd` is a hard dependency of the channel.
+  source` with the scan roots. `Active` adds the `--active-only`
+  flag, and the list keeps live-loop sessions only. Forced
+  `shell = "bash"`: the login shell is fish, which breaks shell
+  scripts, so every command forces bash.
+- The binary calls one `fd` walk to find `sessions/` dirs under the
+  scan roots. The roots come from the home-manager option
+  `programs."rushi-sessions".sourceRoots` (default empty). They feed
+  the `rushi-sessions-all` channel. The main channel has no roots and
+  scans the CWD. `fd` is a hard dependency of the channel.
+- The main channel `rushi-sessions` always scans the CWD (the `tv
+  [PATH]` argument), so `tv rushi-sessions DIR` scans DIR.
+- A second channel `rushi-sessions-all` (module option
+  `programs."rushi-sessions".allChannel`, default enabled) is
+  registered when `sourceRoots` is non-empty. It scans the configured
+  trees. A DIR argument does not reach it.
 - The binary does the per-session work in process. It forks no subprocess
   per session. It skips hidden dirs and `target`, `.git`, `node_modules`,
   `scratch`, `.nix`. It emits one TSV line per session dir that has
@@ -262,6 +304,19 @@ tv rushi-sessions ../                # relative dirs work too
 tv rushi-sessions /                  # full disk (slow)
 ```
 
+The main channel always scans the CWD (the `tv [PATH]` argument). To
+watch a fixed set of trees, set the home-manager option
+`programs."rushi-sessions".sourceRoots` (a list of directories,
+default empty). It feeds the `rushi-sessions-all` channel (the
+`allChannel` option, default enabled), registered only when the list
+is non-empty. The binary alone
+takes any number of roots:
+
+```sh
+rushi-sessions source            # scan the CWD
+rushi-sessions source /export ~/programming
+```
+
 ## Install / re-sync
 
 ### home-manager module (declarative)
@@ -274,13 +329,20 @@ inputs.tv-rushi.url = "github:TonyWu20/tv-rushi";
 home-manager.users.tony = {
   # the host config must also load the television home-manager module
   homeModules = [ inputs.tv-rushi.homeManagerModules."x86_64-linux".default ];
-  programs."rushi-sessions".enable = true;
+  programs."rushi-sessions" = {
+    enable = true;
+    sourceRoots = [ ]; # empty: the source commands scan the CWD
+  };
 };
 ```
 
 The module adds the `rushi-sessions` binary to `home.packages` and sets
 `programs.television.channels."rushi-sessions"`. The television module
 serializes that attrset to `~/.config/television/cable/rushi-sessions.toml`.
+The `sourceRoots` option (default empty) feeds the
+`rushi-sessions-all` channel, which scans the configured trees. It is
+registered only when the list is non-empty (the `allChannel` option,
+default enabled). The main channel always scans the CWD.
 
 ### Manual (copy)
 
@@ -348,8 +410,30 @@ replaces the manual `cp`. The channel stays pure data in the store.
   fixture sessions. `ctrl-s` switches to `Active`, which keeps only the
   live session. A second `ctrl-s` returns to `All`. The header shows the
   source name and the `ctrl-s` hint.
+- Multi-root source: `rushi-sessions source /export /home/tony/programming
+  ~/Downloads` prints the sum of the per-root row counts (9 + 271 + 1 at
+  first check). Nested or repeated roots dedupe to the same rows
+  (9, not 18). A missing root prints one stderr warning and the other
+  roots still scan. Without roots the CWD is the single root, as before.
+- `sourceRoots` option: full module evaluation (`lib.evalModules` with
+  a stubbed `programs.television` option) with the default empty list
+  yields the main channel rootless (`rushi-sessions source` and
+  `rushi-sessions source --active-only`). With three roots, the
+  `rushi-sessions-all` channel's `run` lines carry them. The
+  generated `All` command ran under `bash -c` and listed sessions from
+  all three trees.
 
-## Caveats
+- `rushi-sessions-all` channel: with the default empty list the module
+  evaluation registers the main channel only. With three roots, both
+  channels register: the main one rootless, and
+  `rushi-sessions-all` with the roots in both `run` lines and
+  `metadata.name` `rushi-sessions-all`. With `allChannel = false`
+  the second channel is absent.
+- `tv [PATH]` exposure (tv 0.15.9): a probe channel env dump with and
+  without the DIR argument differs only in `PWD`. A television source
+  read found the same: one `set_current_dir`, no env var, no config
+  field, no template token for the argument.
+
 
 - Session paths in the list are absolute. `send_message` and `kill`
   resolve them directly, from any CWD. `open` starts `rushi-tui` from

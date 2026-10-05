@@ -13,10 +13,31 @@
 # The source command is a list of two named commands. television runs the
 # first on startup and cycles between them on `cycle_sources` (Ctrl+S):
 # "All" lists every found session, "Active" the live-loop ones only.
+#
+# The channel takes one argument: `sourceRoots`, a list of directories the
+# source commands scan. The home-manager option
+# `programs."rushi-sessions".sourceRoots` feeds it. The module calls
+# this file twice: the main channel with no roots (the binary scans the
+# CWD), and the `rushi-sessions-all` channel with the configured roots.
+
+{ sourceRoots ? [ ], ... }:
 
 let
   tab = "\t";
   untab = s: builtins.replaceStrings [ "@TAB@" ] [ tab ] s;
+
+  # The shared root arguments for both source commands. An empty list
+  # means no arguments: the binary scans the CWD. No quoting, so the
+  # shell expands `~/...` roots. Roots with spaces are not supported.
+  roots = builtins.concatStringsSep " " sourceRoots;
+  allRun =
+    if sourceRoots == [ ]
+    then "rushi-sessions source"
+    else "rushi-sessions source ${roots}";
+  activeRun =
+    if sourceRoots == [ ]
+    then "rushi-sessions source --active-only"
+    else "rushi-sessions source ${roots} --active-only";
 
   # Two source commands for the channel. television cycles between them with
   # the `cycle_sources` keybinding (default: Ctrl+S): only the first one
@@ -25,11 +46,11 @@ let
   sourceCommands = [
     {
       name = "All";
-      run = "rushi-sessions source";
+      run = allRun;
     }
     {
       name = "Active";
-      run = "rushi-sessions source --active-only";
+      run = activeRun;
     }
   ];
 
