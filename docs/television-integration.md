@@ -140,7 +140,16 @@ It hands off to `rushi-tui` for full interaction.
     longer quits. The mode move is required: `execute` would quit tv
     before the split. The split direction is `-h`, matching `open`.
     The `-h` choice and the non-tmux resume behavior are implementation
-    defaults, pending user confirmation.
+    defaults, pending user confirmation. Superseded by 27.
+27. `open_dir` keeps its original `execute` behavior. Two new fork
+    actions do the tmux pane split instead. `open_dir_tmux_h` opens
+    a pane to the right of tv (-h). `open_dir_tmux_v` opens a pane
+    below tv (-v). Each pane starts `$SHELL` (fallback `bash`) in the
+    session's repo dir. tv stays open. The pane closes when the shell
+    exits. Outside tmux, each action falls back to the plain fork: cd
+    to the repo dir, exec the shell, tv resumes. The alt-d and alt-v
+    keybindings and the plain-fork fallback are implementation
+    defaults, pending user confirmation. Supersedes 26.
 
 ## Diagnosis: tmux residue and post-exit recovery (user report 2026-10-04)
 
@@ -268,8 +277,8 @@ Decisions (user, 2026-10-04):
 - Hook plumbing with dict values is filtered out. `cached = true`, so the
   preview card re-renders only when the selected entry changes.
 - Actions use `{split:\t:6}` (abs session path). All use `mode = "fork"`
-  so tv resumes after each. `open_dir` moved to `fork` with the tmux
-  change (decision 26): it was the `execute` exception.
+  so tv resumes after each. `open_dir` is the exception: it runs in
+  `execute` mode, so tv exits and the command takes over the terminal.
   - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -h -c`.
     The new pane sits to the right of tv, in the same window. It starts
     in the directory that holds the sessions tree
@@ -286,14 +295,21 @@ Decisions (user, 2026-10-04):
     below the tv pane, in the same window. It starts in the same base
     dir and runs `rushi-tui <session>` there. Outside tmux, it is the
     plain fork, like open.
-  - `alt-o` open_dir: open a shell ($SHELL, fallback `bash`) at the
-    session's project dir (`dirname(dirname(session_dir))`). Inside
-    tmux, the fork runs `tmux split-window -h -c` and the new pane, to
-    the right of tv, starts the shell in that dir. tv stays open. The
-    pane closes when the shell exits. Outside tmux, the fork cds to
-    the dir and execs the shell; tv resumes when the shell exits. It
-    runs in `fork` mode (it was `execute`, which quit tv; the tmux
-    split needs tv to survive).
+  - `alt-o` open_dir: exit tv and land in a shell at the session's
+    project dir (`dirname(dirname(session_dir))`). The command cds there,
+    then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
+    shell that launched tv. This mode matters: a forked `cd` dies with
+    the child, so only `execute` mode can hand the terminal over.
+  - `alt-d` open_dir_tmux_h: open a shell ($SHELL, fallback `bash`) at
+    the session's project dir, in a tmux pane. The fork runs
+    `tmux split-window -h -c`. The new pane sits to the right of tv,
+    in the same window. It starts the shell in the repo dir. tv stays
+    open. The pane closes when the shell exits. Outside tmux, the fork
+    cds to the dir and execs the shell. tv resumes when the shell exits.
+  - `alt-v` open_dir_tmux_v: same, but the new pane stacks below tv.
+    It runs `tmux split-window -v -c`. The pane sits below the tv pane,
+    in the same window. It starts the shell in the same repo dir.
+    Outside tmux, it is the plain fork, like open_dir_tmux_h.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
     file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
     loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
@@ -428,17 +444,22 @@ replaces the manual `cp`. The channel stays pure data in the store.
   first check). Nested or repeated roots dedupe to the same rows
   (9, not 18). A missing root prints one stderr warning and the other
   roots still scan. Without roots the CWD is the single root, as before.
-- open_dir tmux fork (2026-10-05): E2E in a scratch tmux session.
-  A scratch HOME points tv at the repo TOML. tv lists the fixture
-  session. Press `alt-o` to fork the action. tv keeps running in its
-  own pane. A new pane appears to the right of tv.
-- open_dir tmux fork, continued: that pane starts `$SHELL` in the
+- open_dir_tmux_h E2E (2026-10-05): scratch tmux session, scratch HOME
+  points tv at the repo TOML. tv lists the fixture session. Press
+  `alt-d`. tv keeps running in its own pane. A new pane appears to
+  the right of tv.
+- open_dir_tmux_h E2E, continued: that pane starts `$SHELL` in the
   session's repo dir. The pane cwd and live content confirm it.
   Type `exit` in the shell pane. The pane closes. The tv pane and
   its UI stay unchanged.
-- open_dir non-tmux branch (2026-10-05): verified at the shell level.
-  The fork cds to the repo dir and execs the shell. The parent, a
-  tv-fork stand-in, resumes after the shell exits.
+- open_dir_tmux_v E2E (2026-10-05): press `alt-v`. The new pane
+  stacks below the tv pane. The pane sizes confirm it. Both panes
+  keep the full window width, each half the height.
+- open_dir execute mode (2026-10-05): press `alt-o`. tv quits. The
+  same pane now runs `$SHELL` at the session's repo dir.
+- open_dir_tmux_h/v non-tmux branch (2026-10-05): verified at the
+  shell level. The fork cds to the repo dir and execs the shell. The
+  parent, a tv-fork stand-in, resumes after the shell exits.
 - `sourceRoots` option: full module evaluation (`lib.evalModules` with
   a stubbed `programs.television` option) with the default empty list
   yields the main channel rootless (`rushi-sessions source` and

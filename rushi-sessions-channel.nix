@@ -64,14 +64,15 @@ in
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
     # optional; the preview falls back to plain TOML when it is absent.
-    # `tmux` is optional; open, open_v and open_dir use it only when tv
-    # runs inside a tmux session (each detects $TMUX and falls back to
-    # the plain fork).
+    # `tmux` is optional; open, open_v, open_dir_tmux_h and
+    # open_dir_tmux_v use it only when tv runs inside a tmux session
+    # (each detects $TMUX and falls back to the plain fork).
     # (The interactive actions call binaries resolved on PATH, which are
     # not listed as core requirements: `rushi` and `rushi-tui` for
-    # send_message/open/open_v, and `tmux` for open, open_v and
-    # open_dir. send_message uses `mktemp`, `stty`, `setsid`, `tr` and
-    # $EDITOR (fallback `nvim`), all in the standard Unix base.)
+    # send_message/open/open_v, and `tmux` for open, open_v,
+    # open_dir_tmux_h and open_dir_tmux_v. send_message uses `mktemp`,
+    # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`), all in the
+    # standard Unix base.)
     requirements = [
       "fd"
       "rushi-sessions"
@@ -107,6 +108,8 @@ in
     "ctrl-e" = "actions:open";
     "ctrl-v" = "actions:open_v";
     "alt-o" = "actions:open_dir";
+    "alt-d" = "actions:open_dir_tmux_h";
+    "alt-v" = "actions:open_dir_tmux_v";
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
   };
@@ -152,9 +155,26 @@ in
   };
 
   actions.open_dir = {
-    # Open a shell at the session's project dir: the directory that
-    # contains the sessions tree, dirname(dirname(session_dir)). The
-    # shell is $SHELL, with a bash fallback when $SHELL is unset.
+    # Exit tv and land in a shell at the session's project dir: the
+    # directory that contains the sessions tree,
+    # dirname(dirname(session_dir)). Uses mode = "execute" so tv quits
+    # and the command takes over the terminal; a fork would cd in a dead
+    # child and tv would just resume. Falls back to bash when $SHELL is
+    # unset. The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them.
+    description = "Exit tv and cd into the session's project dir; a $SHELL shell (bash fallback) takes over the terminal";
+    shell = "bash";
+    mode = "execute";
+    command = untab ''
+      sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; cd "$r" && exec "$sh2"' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.open_dir_tmux_h = {
+    # Open a shell at the session's project dir in a tmux pane: the
+    # directory that contains the sessions tree,
+    # dirname(dirname(session_dir)). The shell is $SHELL, with a bash
+    # fallback when $SHELL is unset.
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
@@ -176,6 +196,22 @@ in
     mode = "fork";
     command = untab ''
       sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.open_dir_tmux_v = {
+    # Same as open_dir_tmux_h, but the new pane stacks below tv instead
+    # of sitting to the right. tmux's flags are easy to mix up: -v puts
+    # the new pane below the current one (a horizontal divider). Outside
+    # tmux, the behavior is the same plain fork as open_dir_tmux_h.
+    #
+    # The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them.
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
     '';
   };
 
