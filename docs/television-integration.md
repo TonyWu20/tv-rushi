@@ -381,6 +381,14 @@ tv rushi-sessions-events DIR         # DIR is a session dir
 tv rushi-sessions-events             # CWD is the session dir
 ```
 
+The events channel reloads its list in television watch mode. The
+top-level `watch` key of the channel file sets the interval in
+seconds (default 5). The home-manager option
+`programs."rushi-sessions".eventWatch` picks the value. A value of 0
+omits the key, so the list does not reload. The flag
+`tv rushi-sessions-events --watch N` overrides the interval for one
+run.
+
 The `CWD` source command always scans the CWD (the `tv [PATH]`
 argument). To watch a fixed set of trees, set the home-manager option
 `programs."rushi-sessions".sourceRoots` (a list of local and remote
@@ -689,3 +697,14 @@ replaces the manual `cp`. The channel stays pure data in the store.
     (for example `mdcat` or `glow`). Pipe filters only: `mdfried` was
     considered and dropped. It is a fullscreen TUI viewer and cannot
     feed the captured preview panel.
+
+38. The events channel refreshes in television watch mode. The
+    channel file carries a top-level `watch` key (seconds, default
+    5) before the first table, the position television requires.
+    The home-manager option `eventWatch` (integer, default 5) sets
+    it. A value of 0 omits the key, so the list does not reload.
+    Each tick reruns `rushi-sessions events`, and a new entry
+    appears without input. The CLI flag `--watch N` overrides the
+    interval for one run. The key covers every launch path: the
+    alt-e action, a direct `tv rushi-sessions-events DIR`, and a
+    tmux pane.

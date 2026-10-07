@@ -92,6 +92,21 @@ reading the document from stdin. Pipe filters only. `mdfried` does not
 fit. It is a fullscreen TUI viewer, and the preview panel captures
 stdout.
 
+The events channel reloads its list every `eventWatch` seconds
+(television watch mode). The default is 5. Set it to 0 to disable the
+reload:
+
+```nix
+programs."rushi-sessions" = {
+  eventWatch = 10;
+};
+```
+
+The value becomes the top-level `watch` key of the channel file.
+television reads that key only before the first table. The CLI flag
+`tv rushi-sessions-events --watch N` overrides the interval for one
+run.
+
 A root may be local or remote. A remote root is `host:/path` or
 `user@host:/path`, where `host` is an ssh alias. The binary runs the
 remote `rushi-sessions` over ssh and marks those rows with a `host:`

@@ -1,3 +1,10 @@
+# Reload the source list every 5 seconds (television watch mode).
+# The key is top-level, so it must come before the first table.
+# The home-manager option programs."rushi-sessions".eventWatch picks
+# the interval in the Nix-built copy; 0 omits the key (no reload).
+# The CLI flag `tv rushi-sessions-events --watch N` overrides it.
+watch = 5
+
 # rushi-sessions-events — a television channel that fuzzy-searches one
 # rushi session's events.jsonl.
 #

@@ -16,12 +16,16 @@
 # `All` lists every entry. Television runs the first command on
 # startup and cycles the rest on Ctrl+S.
 #
-# The channel takes two arguments: `eventPreviewer` and
-# `eventTomlPreviewer`, a string each (default `"bat"`). The preview
-# command pipes the binary's plain document into the renderer. The
-# binary renders markdown for user_message, assistant_message and
+# The channel takes three arguments: `eventPreviewer` and
+# `eventTomlPreviewer`, a string each (default `"bat"`), and
+# `eventWatch` (an integer, default 5). The preview command pipes the
+# binary's plain document into the renderer. The binary renders
+# markdown for user_message, assistant_message and
 # compaction_summary, and toml for tool_call, tool_result and every
-# other entry. Each option controls the renderer of one language.
+# other entry. Each renderer option controls one language.
+# `eventWatch` sets the top-level `watch` key: television reloads the
+# source list every N seconds (watch mode). The key is top-level, so
+# the attrset puts it first, before the first table. 0 omits it.
 # The default `bat` keeps the per-entry language flag, the
 # RUSHI_PREVIEW_THEME override and the plain-text fallback when bat is
 # absent. Any other value is one command line, run through `sh -c`,
@@ -29,7 +33,7 @@
 # The repo copy rushi-sessions-events.toml carries the default (bat)
 # and is the manual-install baseline.
 
-{ eventPreviewer ? "bat", eventTomlPreviewer ? "bat", ... }:
+{ eventPreviewer ? "bat", eventTomlPreviewer ? "bat", eventWatch ? 5, ... }:
 
 let
   tab = "\t";
@@ -56,7 +60,12 @@ let
     else
       untab ("sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then " + render eventTomlPreviewer "toml" + "; else " + render eventPreviewer "markdown" + "; fi' sh '{split:@TAB@:0}'");
 in
-{
+# The watch key comes first. television reads it only before the
+# first table. A zero interval omits the key (no reload).
+(
+  if eventWatch > 0 then { watch = eventWatch; } else { }
+)
+// {
   metadata = {
     name = "rushi-sessions-events";
     description = "Fuzzy-search one session's events.jsonl entries and preview them";
