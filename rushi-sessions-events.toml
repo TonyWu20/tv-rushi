@@ -85,8 +85,11 @@ command = """
 sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); t=$RUSHI_PREVIEW_THEME; if command -v bat >/dev/null 2>&1; then if [ -n \"$t\" ]; then th=\"--theme $t\"; else th=\"\"; fi; if [ \"$l\" = toml ]; then rushi-sessions event-preview . \"$q\" | bat --color=always -l toml --style=plain $th; else rushi-sessions event-preview . \"$q\" | bat --color=always -l markdown --style=plain $th; fi; else rushi-sessions event-preview . \"$q\"; fi' sh '{split:\t:0}'
 """
 
+[ui]
+orientation = "portrait"
+
 [ui.preview_panel]
-size = 75
+size = 62
 word_wrap = true
 
 [keybindings]

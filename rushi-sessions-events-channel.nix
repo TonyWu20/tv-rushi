@@ -104,8 +104,9 @@ in
   };
 
   ui = {
+    orientation= "portrait";
     preview_panel = {
-      size = 75;
+      size = 62;
       word_wrap = true;
     };
   };

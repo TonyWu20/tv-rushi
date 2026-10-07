@@ -122,8 +122,11 @@ cached = true
 # bat is absent.
 command = "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'"
 
+[ui]
+orientation = "portrait"
+
 [ui.preview_panel]
-size = 75
+size = 62
 word_wrap = true
 
 [keybindings]
