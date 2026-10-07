@@ -398,13 +398,10 @@ tv rushi-sessions-events DIR         # DIR is a session dir
 tv rushi-sessions-events             # CWD is the session dir
 ```
 
-The events channel reloads its list in television watch mode. The
-top-level `watch` key of the channel file sets the interval in
-seconds (default 5). The home-manager option
-`programs."rushi-sessions".eventWatch` picks the value. A value of 0
-omits the key, so the list does not reload. The flag
-`tv rushi-sessions-events --watch N` overrides the interval for one
-run.
+The events channel carries no top-level `watch` key: a reload resets
+the preview panel's scroll position, which blocks reading a rendered
+message. The CLI flag `tv rushi-sessions-events --watch N` enables
+the reload for one run.
 
 The `CWD` source command always scans the CWD (the `tv [PATH]`
 argument). To watch a fixed set of trees, set the home-manager option
@@ -791,3 +788,10 @@ replaces the manual `cp`. The channel stays pure data in the store.
     the remote ssh branches of the four pane actions (the pane stays
     local, so `-l` sizes it). Verified on tmux 3.7b: the new pane
     gets 62% of the usable width or height.
+45. The events channel drops its `watch` key (supersedes 38). A
+    source reload resets the preview panel's scroll position, which
+    blocked the user from reading a rendered message carefully. The
+    channel file carries no top-level `watch` key, and the
+    `eventWatch` home-manager option is dropped with it. The CLI
+    flag `tv rushi-sessions-events --watch N` (a television flag,
+    not channel data) still enables the reload for one run.

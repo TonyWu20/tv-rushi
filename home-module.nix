@@ -18,9 +18,7 @@
 #     default empty). Local and remote roots mix in the same list.
 #   - registers the rushi-sessions-events channel (the fuzzy search
 #     over one session's events.jsonl) and the `eventPreviewer` /
-#     `eventTomlPreviewer` options that pick its renderers and the
-#     `eventWatch` option that sets its reload interval (the top-level
-#     watch key of the channel file).
+#     `eventTomlPreviewer` options that pick its renderers.
 #
 # This module does not declare `programs.television` itself. The host config
 # must also load the television home-manager module (the one that declares
@@ -75,11 +73,6 @@ in
     description = "The pipe command the rushi-sessions-events channel uses to render the toml documents (tool_call, tool_result and every other entry) in the preview panel. It reads the document from stdin. See eventPreviewer for the bat baseline and the custom-value semantics.";
   };
 
-  options.programs."rushi-sessions".eventWatch = lib.mkOption {
-    type = lib.types.int;
-    default = 5;
-    description = "The reload interval, in seconds, of the rushi-sessions-events channel (television watch mode). The value becomes the top-level watch key of the events channel file, which must precede the first table. 0 omits the key, so the list does not reload. The CLI flag tv rushi-sessions-events --watch N overrides the key for one run.";
-  };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ bin ];
@@ -97,7 +90,6 @@ in
       (import ./rushi-sessions-events-channel.nix) {
         eventPreviewer = cfg.eventPreviewer;
         eventTomlPreviewer = cfg.eventTomlPreviewer;
-        eventWatch = cfg.eventWatch;
       };
   };
 }
