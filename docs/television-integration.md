@@ -784,3 +784,10 @@ replaces the manual `cp`. The channel stays pure data in the store.
     `[PATH]` argument; the `browse_events` action starts the
     nested tv there). The body is local only (no `host:` rows in
     this channel) and carries no split placeholder.
+44. Every tmux pane split of the main channel now reserves 62% of
+    the window for the new pane. Each `tmux split-window` call takes
+    `-l "62%"`. That covers the local branches of `open`, `open_v`,
+    `open_dir_tmux_h`, `open_dir_tmux_v` and `browse_events`, and
+    the remote ssh branches of the four pane actions (the pane stays
+    local, so `-l` sizes it). Verified on tmux 3.7b: the new pane
+    gets 62% of the usable width or height.

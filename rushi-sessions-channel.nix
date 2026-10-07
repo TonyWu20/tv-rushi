@@ -174,7 +174,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -187,7 +187,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -240,7 +240,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -258,7 +258,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -304,7 +304,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$rp" "tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$rp" "tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
