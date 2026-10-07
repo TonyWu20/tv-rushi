@@ -5,7 +5,12 @@
 //!
 //! - `rushi-sessions source [ROOT...]`
 //!   Scan for rushi session directories under the given roots and print
-//!   one TSV row per session:
+//!   one TSV row per session. Roots may be local or remote. A remote
+//!   root is `host:/path` or `user@host:/path` (the host is an ssh
+//!   alias). Each distinct host runs the remote `rushi-sessions source`
+//!   over ssh once; its rows join the list with the path column
+//!   prefixed by `host:`. An unreachable host is skipped with a
+//!   stderr warning.:
 //!   `status<TAB>name<TAB>repo<TAB>phase<TAB>last<TAB>mtime<TAB>path`.
 //!   The roots are directories. Omit them to scan the CWD. Relative
 //!   roots join the CWD. Missing roots are skipped with a warning on
@@ -17,7 +22,8 @@
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
 //!   Render the TOML preview card for one session: the last user/assistant
-//!   messages and the most recent events. When `bat` is on PATH the card is
+//!   messages, the context window usage, and the most recent events. When
+//!   `bat` is on PATH the card is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
 //!   "Catppuccin Macchiato"); otherwise plain TOML is printed.
 //!
@@ -100,10 +106,7 @@ fn main() {
             last,
             mtime,
             path,
-        } => {
-            let _ = &mtime;
-            preview(&status, &name, &repo, &phase, &last, &path);
-        }
+        } => preview(&status, &name, &repo, &phase, &last, &mtime, &path),
     }
 }
 
@@ -119,10 +122,12 @@ struct Row {
     path: String,
 }
 
-fn source(active_only: bool, roots: Vec<PathBuf>) {
-    let roots = resolve_roots(roots);
+fn source(active_only: bool, args: Vec<PathBuf>) {
+    let no_args = args.is_empty();
+    let (local_requested, remote_groups) = split_roots(args);
+    let local_roots = resolve_roots(local_requested, no_args);
     let mut rows: Vec<Row> = Vec::new();
-    for sdir in find_sessions(&roots) {
+    for sdir in find_sessions(&local_roots) {
         let base = sdir.trim_end_matches('/').to_string();
         let entries = match fs::read_dir(&base) {
             Ok(e) => e,
@@ -170,6 +175,13 @@ fn source(active_only: bool, roots: Vec<PathBuf>) {
             });
         }
     }
+    for g in &remote_groups {
+        for line in remote_source_lines(g, active_only) {
+            if let Some(row) = parse_remote_line(&line, &g.host) {
+                rows.push(row);
+            }
+        }
+    }
     // The active-only source view: keep the sessions with a live loop.
     if active_only {
         rows.retain(|r| r.status == "ACTIVE");
@@ -196,13 +208,14 @@ fn source(active_only: bool, roots: Vec<PathBuf>) {
 }
 
 /// Resolve the requested scan roots into an absolute list. No roots
-/// means the CWD (the original single-root behavior). Relative roots
-/// join the CWD. A root that is missing or not a directory is skipped
-/// with a warning on stderr; the remaining roots still scan.
-fn resolve_roots(roots: Vec<PathBuf>) -> Vec<PathBuf> {
+/// means the CWD when `cwd_fallback` is set (the original
+/// single-root behavior); otherwise the list stays empty. Relative
+/// roots join the CWD. A root that is missing or not a directory is
+/// skipped with a warning on stderr; the remaining roots still scan.
+fn resolve_roots(roots: Vec<PathBuf>, cwd_fallback: bool) -> Vec<PathBuf> {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     if roots.is_empty() {
-        return vec![cwd];
+        return if cwd_fallback { vec![cwd] } else { Vec::new() };
     }
     let mut out: Vec<PathBuf> = Vec::new();
     for r in roots {
@@ -273,6 +286,191 @@ fn dedup_paths(lines: Vec<String>) -> Vec<String> {
         }
     }
     out
+}
+
+// ── remote (ssh) roots ──────────────────────────────────────────────
+
+/// A remote root written as `host:/path` or `user@host:/path`. The
+/// host is an ssh alias from the user's `~/.ssh/config`. The text
+/// before the first `:` is the host, the rest is the remote path.
+/// Local TSV paths are absolute, so a colon before the first `/` can
+/// only come from a remote prefix.
+fn split_remote(path: &str) -> Option<(&str, &str)> {
+    let (host, rest) = path.split_once(':')?;
+    if host.is_empty() || rest.is_empty() {
+        return None;
+    }
+    if host.contains('/') || host.starts_with('@') || host.matches('@').count() > 1 {
+        return None;
+    }
+    Some((host, rest))
+}
+
+/// The remote roots of one host, in request order.
+struct RemoteGroup {
+    host: String,
+    roots: Vec<String>,
+}
+
+/// Split requested roots into a local list and per-host remote
+/// groups. Group order is first-seen; their roots keep request order.
+fn split_roots(roots: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<RemoteGroup>) {
+    let mut local: Vec<PathBuf> = Vec::new();
+    let mut groups: Vec<RemoteGroup> = Vec::new();
+    for r in roots {
+        let s = r.to_string_lossy().into_owned();
+        if let Some((host, rp)) = split_remote(&s) {
+            let host = host.to_string();
+            let rp = rp.to_string();
+            let mut matched = false;
+            for g in groups.iter_mut() {
+                if g.host == host {
+                    g.roots.push(rp.clone());
+                    matched = true;
+                    break;
+                }
+            }
+            if !matched {
+                groups.push(RemoteGroup { host, roots: vec![rp] });
+            }
+        } else {
+            local.push(r);
+        }
+    }
+    (local, groups)
+}
+
+/// The ssh executable: `ssh`, or the `RUSHI_SESSIONS_SSH` override
+/// (tests use a fake).
+fn ssh_binary() -> String {
+    std::env::var("RUSHI_SESSIONS_SSH").unwrap_or_else(|_| "ssh".into())
+}
+
+/// The remote `rushi-sessions` binary name. A non-interactive ssh
+/// shell does not source shell init files, so a Nix profile binary is
+/// not on PATH. Set `RUSHI_SESSIONS_REMOTE_BIN` to the remote absolute
+/// path when the binary lives in a Nix profile. The value must be a
+/// bare path without shell metacharacters.
+fn remote_binary() -> String {
+    std::env::var("RUSHI_SESSIONS_REMOTE_BIN").unwrap_or_else(|_| "rushi-sessions".into())
+}
+
+/// Single-quote a word for a remote shell command string.
+fn shell_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Run one remote command string over ssh (stdout and stderr captured).
+fn run_remote(host: &str, command: &str) -> std::io::Result<std::process::Output> {
+    std::process::Command::new(ssh_binary())
+        .arg("-T")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=5")
+        .arg(host)
+        .arg(command)
+        .output()
+}
+
+/// Run `source` on a remote host and return its TSV lines. An
+/// unreachable host or a failed remote scan warns on stderr and yields
+/// no lines; the other hosts still scan.
+fn remote_source_lines(group: &RemoteGroup, active_only: bool) -> Vec<String> {
+    // The remote command string, run by the remote login shell. Roots
+    // are bare words, so the remote shell expands a leading `~`
+    // (matching the local channel behavior).
+    let flag = if active_only { "--active-only " } else { "" };
+    let mut cmd = String::new();
+    cmd.push_str(&remote_binary());
+    cmd.push_str(" source ");
+    cmd.push_str(flag);
+    let mut first = true;
+    for r in &group.roots {
+        if !first {
+            cmd.push(' ');
+        }
+        first = false;
+        cmd.push_str(r);
+    }
+    match run_remote(&group.host, &cmd) {
+        Ok(out) => {
+            if !out.status.success() {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!(
+                    "rushi-sessions: skipping host: {} (remote source failed: {})",
+                    group.host,
+                    err.trim()
+                );
+                return Vec::new();
+            }
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::trim_end)
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        }
+        Err(e) => {
+            eprintln!(
+                "rushi-sessions: skipping unreachable host: {} ({})",
+                group.host, e
+            );
+            Vec::new()
+        }
+    }
+}
+
+/// One remote TSV line into a local `Row`, with the `host:` prefix on
+/// the path column. A short line or a bad mtime drops the row. A
+/// status that is not `ACTIVE` normalizes to `IDLE` (an older remote
+/// binary must not break the list).
+fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
+    let f: Vec<&str> = line.split('\t').collect();
+    if f.len() != 7 {
+        return None;
+    }
+    let mtime: i64 = f[5].parse().ok()?;
+    Some(Row {
+        status: if f[0] == "ACTIVE" { "ACTIVE" } else { "IDLE" },
+        name: f[1].to_string(),
+        repo: f[2].to_string(),
+        phase: f[3].to_string(),
+        last: f[4].to_string(),
+        mtime,
+        path: format!("{}:{}", host, f[6]),
+    })
+}
+
+/// The remote preview: run the remote binary's preview over ssh and
+/// stream its card to stdout. A failed ssh warns on stderr.
+fn preview_remote(host: &str, cols: &[&str]) {
+    let mut cmd = String::new();
+    cmd.push_str(&remote_binary());
+    cmd.push_str(" preview");
+    for c in cols {
+        cmd.push(' ');
+        cmd.push_str(&shell_quote(c));
+    }
+    match run_remote(host, &cmd) {
+        Ok(out) => {
+            use std::io::Write;
+            let mut so = std::io::stdout();
+            let _ = so.write_all(&out.stdout);
+            let _ = so.flush();
+            if !out.stderr.is_empty() {
+                let mut se = std::io::stderr();
+                let _ = se.write_all(&out.stderr);
+            }
+            std::process::exit(out.status.code().unwrap_or(1));
+        }
+        Err(e) => {
+            eprintln!(
+                "rushi-sessions: remote preview failed for {} ({e})",
+                host
+            );
+        }
+    }
 }
 
 /// The repo a `sessions` directory belongs to: the basename of the
@@ -357,7 +555,19 @@ fn fmt_local(secs: i64) -> String {
 
 // ── preview ──────────────────────────────────────────────────────────
 
-fn preview(status: &str, name: &str, repo: &str, phase: &str, last: &str, path: &str) {
+fn preview(
+    status: &str,
+    name: &str,
+    repo: &str,
+    phase: &str,
+    last: &str,
+    mtime: &str,
+    path: &str,
+) {
+    if let Some((host, rpath)) = split_remote(path) {
+        preview_remote(host, &[status, name, repo, phase, last, mtime, rpath]);
+        return;
+    }
     let pid = fs::read_to_string(Path::new(path).join("loop.pid"))
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
@@ -414,6 +624,13 @@ fn preview(status: &str, name: &str, repo: &str, phase: &str, last: &str, path: 
         out.push(format!("think   = {}", json_str(&think)));
     }
     out.push(format!("updated = {}", json_str(last)));
+    if let Some((in_tok, out_tok, _cached)) = last_usage(&events) {
+        let used = in_tok.saturating_add(out_tok);
+        out.push(format!(
+            "usage   = {}",
+            json_str(&usage_line(used, context_window()))
+        ));
+    }
     out.push(String::new());
     out.push("[last-user-message]".into());
     out.push(format!("content = {}", json_str(&clip(&last_user, 400))));
@@ -497,6 +714,96 @@ fn read_events(p: &Path) -> Vec<Value> {
         .lines()
         .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
         .collect()
+}
+
+/// The usage of the last `assistant_message` that carries real usage:
+/// `(input_tokens, output_tokens, cached_tokens)`. Messages whose `usage`
+/// is missing, null, or all-zero are skipped.
+fn last_usage(events: &[Value]) -> Option<(u64, u64, u64)> {
+    for o in events.iter().rev() {
+        if o.get("type").and_then(|v| v.as_str()) != Some("assistant_message") {
+            continue;
+        }
+        let u = match o.get("usage") {
+            Some(Value::Object(_)) => o.get("usage").unwrap(),
+            _ => continue,
+        };
+        let f = |k: &str| u.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
+        let in_tok = f("input_tokens");
+        let out_tok = f("output_tokens");
+        let cached = f("cached_tokens");
+        if in_tok == 0 && out_tok == 0 {
+            continue;
+        }
+        return Some((in_tok, out_tok, cached));
+    }
+    None
+}
+
+/// The text of the `usage` line: `used/window tokens (pct%)` when the
+/// context window is known, else `used tokens`.
+fn usage_line(used: u64, window: Option<u64>) -> String {
+    match window {
+        Some(w) if w > 0 => {
+            let pct =
+                (u128::from(used).saturating_mul(100) + u128::from(w) / 2) / u128::from(w);
+            format!("{used}/{w} tokens ({pct}%)")
+        }
+        _ => format!("{used} tokens"),
+    }
+}
+
+/// The context window in tokens. Resolution order: the
+/// `RUSHI_CONTEXT_WINDOW` env var (a positive integer), then the active
+/// config of the `rushi` binary on PATH (`rushi config` stdout): the
+/// active model's `context_tokens`, then `limits.context_budget_tokens`.
+/// None when nothing resolves.
+fn context_window() -> Option<u64> {
+    if let Ok(v) = std::env::var("RUSHI_CONTEXT_WINDOW") {
+        if let Ok(n) = v.trim().parse::<u64>() {
+            if n > 0 {
+                return Some(n);
+            }
+        }
+    }
+    let out = std::process::Command::new("rushi")
+        .arg("config")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    context_window_from_config(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The context window in tokens parsed from `rushi config` output:
+/// `[model."<active>"] context_tokens`, then the base `[model]`
+/// `context_tokens`, then `limits.context_budget_tokens`.
+fn context_window_from_config(text: &str) -> Option<u64> {
+    let v: toml::Value = toml::from_str(text).ok()?;
+    let num = |v: &toml::Value| v.as_integer().filter(|n| *n > 0).map(|n| n as u64);
+    let model = v.get("model");
+    let active = v
+        .get("active")
+        .and_then(|a| a.get("model"))
+        .and_then(|m| m.as_str())
+        .unwrap_or("");
+    if !active.is_empty() {
+        if let Some(n) = model
+            .and_then(|m| m.get(active))
+            .and_then(|p| p.get("context_tokens"))
+            .and_then(|v| num(v))
+        {
+            return Some(n);
+        }
+    }
+    if let Some(n) = model.and_then(|m| m.get("context_tokens")).and_then(num) {
+        return Some(n);
+    }
+    v.get("limits")
+        .and_then(|l| l.get("context_budget_tokens"))
+        .and_then(num)
 }
 
 /// `str(o.get("value",""))` — the value of an ext_status as a string.
@@ -687,14 +994,19 @@ mod tests {
 
     #[test]
     fn resolve_roots_empty_falls_back_to_cwd() {
-        let roots = resolve_roots(Vec::new());
+        let roots = resolve_roots(Vec::new(), true);
         assert_eq!(roots, vec![std::env::current_dir().unwrap()]);
+    }
+
+    #[test]
+    fn resolve_roots_empty_without_flag() {
+        assert!(resolve_roots(Vec::new(), false).is_empty());
     }
 
     #[test]
     fn resolve_roots_joins_relative_to_cwd() {
         let cwd = std::env::current_dir().unwrap();
-        let roots = resolve_roots(vec![PathBuf::from(".")]);
+        let roots = resolve_roots(vec![PathBuf::from(".")], true);
         assert_eq!(roots, vec![cwd.join(".")]);
     }
 
@@ -702,8 +1014,65 @@ mod tests {
     fn resolve_roots_skips_missing() {
         let cwd = std::env::current_dir().unwrap();
         // A missing root is skipped; a present absolute root is kept.
-        let roots = resolve_roots(vec![PathBuf::from("/no/rushi/such/dir"), cwd.clone()]);
+        let roots = resolve_roots(vec![PathBuf::from("/no/rushi/such/dir"), cwd.clone()], false);
         assert_eq!(roots, vec![cwd]);
+    }
+
+    #[test]
+    fn split_remote_forms() {
+        assert_eq!(split_remote("host:/x"), Some(("host", "/x")));
+        assert_eq!(split_remote("u@host:/x"), Some(("u@host", "/x")));
+        assert_eq!(split_remote("/a:b"), None);
+        assert_eq!(split_remote("/x"), None);
+        assert_eq!(split_remote("@host:/x"), None);
+        assert_eq!(split_remote("a@b@h:/x"), None);
+        assert_eq!(split_remote("host:"), None);
+        assert_eq!(split_remote(":x"), None);
+        assert_eq!(split_remote("a:b/x"), Some(("a", "b/x")));
+    }
+
+    #[test]
+    fn shell_quote_escapes_single_quotes() {
+        assert_eq!(shell_quote("ab"), "'ab'");
+        assert_eq!(shell_quote("a'b"), "'a'\\''b'");
+    }
+
+    #[test]
+    fn split_roots_groups_by_host() {
+        let (local, groups) = split_roots(vec![
+            PathBuf::from("/local"),
+            PathBuf::from("h1:/a"),
+            PathBuf::from("u@h2:/c"),
+            PathBuf::from("h1:/b"),
+        ]);
+        assert_eq!(local, vec![PathBuf::from("/local")]);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].host, "h1");
+        assert_eq!(groups[0].roots, vec!["/a".to_string(), "/b".to_string()]);
+        assert_eq!(groups[1].host, "u@h2");
+        assert_eq!(groups[1].roots, vec!["/c".to_string()]);
+    }
+
+    #[test]
+    fn parse_remote_line_prefixes_path() {
+        let line = "ACTIVE\tfoo\trepoA\ttools\t10-02 14:11\t1760000000\t/export/repoA/sessions/foo";
+        let row = parse_remote_line(line, "host").unwrap();
+        assert_eq!(row.path, "host:/export/repoA/sessions/foo");
+        assert_eq!(row.status, "ACTIVE");
+        assert_eq!(row.mtime, 1760000000);
+        assert_eq!(row.name, "foo");
+    }
+
+    #[test]
+    fn parse_remote_line_rejects_short_lines() {
+        assert!(parse_remote_line("a\tb", "host").is_none());
+    }
+
+    #[test]
+    fn parse_remote_line_normalizes_status() {
+        let line = "WEIRD\tfoo\trepo\t?\t?\t5\t/p";
+        let row = parse_remote_line(line, "h").unwrap();
+        assert_eq!(row.status, "IDLE");
     }
 
     #[test]
@@ -718,6 +1087,83 @@ mod tests {
         let s = t.to_string_lossy().into_owned();
         let out = dedup_paths(vec![s.clone(), s.clone(), s.clone()]);
         assert_eq!(out, vec![s]);
+    }
+
+    #[test]
+    fn last_usage_picks_last_with_data() {
+        let e1 = serde_json::json!({
+            "type": "assistant_message",
+            "usage": {"input_tokens": 100, "output_tokens": 10, "cached_tokens": 0}
+        });
+        let e2 = serde_json::json!({
+            "type": "assistant_message",
+            "usage": {"input_tokens": 0, "output_tokens": 0}
+        });
+        let e3 = serde_json::json!({
+            "type": "assistant_message",
+            "usage": {"input_tokens": 200, "output_tokens": 20, "cached_tokens": 5}
+        });
+        let evts = vec![e1.clone(), e2.clone(), e3.clone()];
+        assert_eq!(last_usage(&evts), Some((200, 20, 5)));
+        // All-zero and missing usage are skipped.
+        let evts = vec![e2, e1];
+        assert_eq!(last_usage(&evts), Some((100, 10, 0)));
+        let e4 = serde_json::json!({"type": "assistant_message"});
+        assert_eq!(last_usage(&vec![e4]), None);
+        assert_eq!(last_usage(&[]), None);
+    }
+
+    #[test]
+    fn usage_line_formats_with_and_without_window() {
+        assert_eq!(
+            usage_line(109_967, Some(262_144)),
+            "109967/262144 tokens (42%)"
+        );
+        assert_eq!(usage_line(500, None), "500 tokens");
+        // A window smaller than the usage reports over 100%.
+        assert_eq!(usage_line(200, Some(100)), "200/100 tokens (200%)");
+        assert_eq!(usage_line(10_000, Some(0)), "10000 tokens");
+    }
+
+    #[test]
+    fn config_window_prefers_active_model() {
+        let text = r#"
+[active]
+model = "m1"
+[model]
+context_tokens = 111
+[model.m1]
+context_tokens = 222
+[limits]
+context_budget_tokens = 333
+"#;
+        assert_eq!(context_window_from_config(text), Some(222));
+    }
+
+    #[test]
+    fn config_window_falls_backs_down() {
+        // No active model: the base [model] section wins.
+        let text = r#"
+[model]
+context_tokens = 111
+[limits]
+context_budget_tokens = 333
+"#;
+        assert_eq!(context_window_from_config(text), Some(111));
+        // No [model] at all: the limits budget wins.
+        let text = r#"
+[limits]
+context_budget_tokens = 333
+"#;
+        assert_eq!(context_window_from_config(text), Some(333));
+        // Nothing usable: None.
+        let text = r#"
+[limits]
+read_limit = 2000
+"#;
+        assert_eq!(context_window_from_config(text), None);
+        // Invalid TOML: None.
+        assert_eq!(context_window_from_config("not toml [[["), None);
     }
 
     #[test]

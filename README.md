@@ -27,6 +27,11 @@ the last user and assistant messages and the recent events.
   to restore the terminal. Both ship in the standard Unix base.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`
   uses for the editor, temp file, and empty check. These resolve on PATH.
+- `ssh`, only for remote source roots. Each remote host also needs
+  `rushi-sessions`, `rushi` and `tmux` reachable by the non-interactive
+  ssh. A Nix profile on the remote is not on PATH, so set
+  `RUSHI_SESSIONS_REMOTE_BIN` on the remote to name the binary, or use an
+  absolute path.
 
 ## Usage
 
@@ -45,15 +50,22 @@ To watch a fixed set of trees, set the home-manager option
 ```nix
 programs."rushi-sessions" = {
   enable = true;
-  sourceRoots = [ "/export" "/home/tony/programming" "~/Downloads" ];
+  sourceRoots = [ "/export" "build:/export" "~/Downloads" ];
 };
 ```
 
-That registers a `rushi-sessions-all` channel (the
-`programs."rushi-sessions".allChannel` option, default `true`). It
-scans the configured trees and is registered only when `sourceRoots`
-is non-empty. The main channel stays CWD-driven, so `tv rushi-sessions
-DIR` still scans DIR.
+A root may be local or remote. A remote root is `host:/path` or
+`user@host:/path`, where `host` is an ssh alias. The binary runs the
+remote `rushi-sessions` over ssh and marks those rows with a `host:`
+prefix in the path column. The actions read that prefix and act on the
+remote host. In the example, `build:/export` scans the `build` host.
+
+The channel is always registered. It exposes one source command per ROOT
+set, cycled with `Ctrl+S` in the order `Local`, `All`, `CWD`. `CWD`
+(no roots, the current directory) is always present and last. When
+`sourceRoots` is non-empty, two more views are added: `Local` scans the
+local roots and `All` scans the local + remote roots. `tv rushi-sessions
+DIR` still scans DIR via the `CWD` view.
 
 The binary alone takes any number of roots:
 
@@ -83,7 +95,7 @@ home-manager.users.tony = {
   homeModules = [ inputs.tv-rushi.homeManagerModules."x86_64-linux".default ];
   programs."rushi-sessions" = {
     enable = true;
-    sourceRoots = [ ]; # empty: no rushi-sessions-all channel
+    sourceRoots = [ ]; # empty: only the CWD view
   };
 };
 ```

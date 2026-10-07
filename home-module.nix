@@ -8,14 +8,14 @@
 #     the user's PATH (the channel lists `fd` and `rushi-sessions` as
 #     requirements, both resolved on PATH);
 #   - sets `programs.television.channels."rushi-sessions"` to the channel
-#     attrset (rushi-sessions-channel.nix), called with no roots: the main
-#     channel scans the CWD (the tv [PATH] argument). The home-manager
-#     television module serializes it to
+#     attrset (rushi-sessions-channel.nix), called with the configured
+#     `sourceRoots`. The channel exposes one source command per ROOT set,
+#     cycled in the order `Local`, `All`, `CWD`. `CWD` scans no roots and
+#     is always present, last. The home-manager television module
+#     serializes it to
 #     ~/.config/television/cable/rushi-sessions.toml;
-#   - declares `programs."rushi-sessions".sourceRoots` (a list of
-#     directories, default empty) and `programs."rushi-sessions".allChannel`
-#     (bool, default true). When the list is non-empty, a second channel
-#     `rushi-sessions-all` scans the configured trees.
+#   - declares `programs."rushi-sessions".sourceRoots` (a list of paths,
+#     default empty). Local and remote roots mix in the same list.
 #
 # This module does not declare `programs.television` itself. The host config
 # must also load the television home-manager module (the one that declares
@@ -55,32 +55,15 @@ in
   options.programs."rushi-sessions".sourceRoots = lib.mkOption {
     type = lib.types.listOf lib.types.str;
     default = [ ];
-    description = "The directories the rushi-sessions-all channel scans for session trees. Empty means that channel is not registered. The main rushi-sessions channel always scans the CWD (the tv [PATH] argument). Example: [ \"/export\" \"~/Downloads\" ]. The shell expands a leading ~ when the command runs. Roots with spaces are not supported.";
-  };
-
-  options.programs."rushi-sessions".allChannel = lib.mkOption {
-    type = lib.types.bool;
-    default = true;
-    description = "Register a second channel rushi-sessions-all that scans the directories in sourceRoots. It is registered only when sourceRoots is non-empty. The main channel always scans the CWD (the tv [PATH] argument).";
+    description = "The scan roots for the rushi-sessions channel. The channel always exposes a CWD view (no roots). When roots are set it also exposes a Local view (local roots only) and an All view (local + remote roots). An entry can be a local path or a remote path in the form host:/path or user@host:/path. A remote entry must be reachable by an ssh alias. The shell expands a leading ~. Paths with spaces are not supported.";
   };
 
   config = lib.mkIf cfg.enable {
     home.packages = [ bin ];
-    programs.television.channels = {
-      # The main channel always scans the CWD (the tv [PATH] argument).
-      "rushi-sessions" =
-        (import ./rushi-sessions-channel.nix) { sourceRoots = [ ]; };
-    } // lib.optionalAttrs (cfg.allChannel && cfg.sourceRoots != [ ]) {
-      # The -all channel scans the configured trees. It is absent when
-      # sourceRoots is empty: it would then duplicate the main channel.
-      "rushi-sessions-all" = let
-        ch = (import ./rushi-sessions-channel.nix) { sourceRoots = cfg.sourceRoots; };
-      in ch // {
-        metadata = ch.metadata // {
-          name = "rushi-sessions-all";
-          description = "Peek at rushi sessions under the configured sourceRoots";
-        };
-      };
-    };
+    # One channel. Its source commands cover the CWD, local-only, and
+    # local + remote views (see rushi-sessions-channel.nix). It is
+    # registered even with empty roots: it then exposes the CWD view only.
+    programs.television.channels."rushi-sessions" =
+      (import ./rushi-sessions-channel.nix) { sourceRoots = cfg.sourceRoots; };
   };
 }

@@ -111,7 +111,8 @@ It hands off to `rushi-tui` for full interaction.
     default empty. It feeds the `sourceRoots` argument of
     `rushi-sessions-channel.nix` (now a function, not a bare attrset).
     An empty list runs `rushi-sessions source` with no roots (the CWD).
-    A non-empty list appends the roots to both source commands. The
+    A non-empty list sets the roots for the `Local` and `All` source
+    commands (decision 31 unifies the views into one channel). The
     unquoted join keeps shell expansion of `~/...` roots. The shipped
     TOML manual copy stays rootless. Its `run` lines take roots by
     hand. The option keeps each user's trees out of the channel data.
@@ -124,13 +125,14 @@ It hands off to `rushi-tui` for full interaction.
     (the `programs."rushi-sessions".cwdChannel` option, default
     enabled). It scans the CWD only, so `tv rushi-sessions-cwd DIR`
     is the override. The main channel keeps its roots.
+    Superseded by 31.
 25. The user preferred the split the other way. The main channel
     `rushi-sessions` keeps the CWD behavior: no roots, it scans the
     CWD (the `tv [PATH]` argument). The configured trees move to a
     `rushi-sessions-all` channel fed by `sourceRoots` (the
     `programs."rushi-sessions".allChannel` option, default enabled,
     registered only when `sourceRoots` is non-empty). Supersedes the
-    channel split of 24.
+    channel split of 24. Superseded by 31.
 26. `open_dir` now detects tmux, like `open`. It moves from `execute`
     to `fork` mode: inside tmux, the fork runs `tmux split-window -h -c`
     with the session's repo dir and starts `$SHELL` (fallback `bash`)
@@ -244,14 +246,14 @@ Decisions (user, 2026-10-04):
 - The binary calls one `fd` walk to find `sessions/` dirs under the
   scan roots. The roots come from the home-manager option
   `programs."rushi-sessions".sourceRoots` (default empty). They feed
-  the `rushi-sessions-all` channel. The main channel has no roots and
-  scans the CWD. `fd` is a hard dependency of the channel.
-- The main channel `rushi-sessions` always scans the CWD (the `tv
-  [PATH]` argument), so `tv rushi-sessions DIR` scans DIR.
-- A second channel `rushi-sessions-all` (module option
-  `programs."rushi-sessions".allChannel`, default enabled) is
-  registered when `sourceRoots` is non-empty. It scans the configured
-  trees. A DIR argument does not reach it.
+  the `Local` and `All` source commands of the single `rushi-sessions`
+  channel. The `CWD` command scans the CWD. `fd` is a hard dependency
+  of the channel.
+- The `CWD` source command scans the CWD (the `tv [PATH]` argument),
+  so `tv rushi-sessions DIR` scans DIR.
+- When `sourceRoots` is non-empty, the channel adds a `Local` command
+  (the local roots) and an `All` command (the local + remote roots). A
+  DIR argument does not reach them; it only affects the `CWD` command.
 - The binary does the per-session work in process. It forks no subprocess
   per session. It skips hidden dirs and `target`, `.git`, `node_modules`,
   `scratch`, `.nix`. It emits one TSV line per session dir that has
@@ -333,12 +335,12 @@ tv rushi-sessions ../                # relative dirs work too
 tv rushi-sessions /                  # full disk (slow)
 ```
 
-The main channel always scans the CWD (the `tv [PATH]` argument). To
-watch a fixed set of trees, set the home-manager option
-`programs."rushi-sessions".sourceRoots` (a list of directories,
-default empty). It feeds the `rushi-sessions-all` channel (the
-`allChannel` option, default enabled), registered only when the list
-is non-empty. The binary alone
+The `CWD` source command always scans the CWD (the `tv [PATH]`
+argument). To watch a fixed set of trees, set the home-manager option
+`programs."rushi-sessions".sourceRoots` (a list of local and remote
+paths, default empty). When non-empty, the channel adds a `Local`
+command (the local roots) and an `All` command (the local + remote
+roots). The binary alone
 takes any number of roots:
 
 ```sh
@@ -368,10 +370,10 @@ home-manager.users.tony = {
 The module adds the `rushi-sessions` binary to `home.packages` and sets
 `programs.television.channels."rushi-sessions"`. The television module
 serializes that attrset to `~/.config/television/cable/rushi-sessions.toml`.
-The `sourceRoots` option (default empty) feeds the
-`rushi-sessions-all` channel, which scans the configured trees. It is
-registered only when the list is non-empty (the `allChannel` option,
-default enabled). The main channel always scans the CWD.
+The `sourceRoots` option (default empty) feeds the single
+`rushi-sessions` channel. When non-empty, the channel exposes a
+`Local` command (the local roots) and an `All` command (the local +
+remote roots) alongside the always-present `CWD` command.
 
 ### Manual (copy)
 
@@ -462,18 +464,19 @@ replaces the manual `cp`. The channel stays pure data in the store.
   parent, a tv-fork stand-in, resumes after the shell exits.
 - `sourceRoots` option: full module evaluation (`lib.evalModules` with
   a stubbed `programs.television` option) with the default empty list
-  yields the main channel rootless (`rushi-sessions source` and
-  `rushi-sessions source --active-only`). With three roots, the
-  `rushi-sessions-all` channel's `run` lines carry them. The
-  generated `All` command ran under `bash -c` and listed sessions from
-  all three trees.
+  yields the single `rushi-sessions` channel with the one `CWD`
+  command (`rushi-sessions source`). With three roots, the channel
+  adds a `Local` command (the local roots) and an `All` command (all
+  three roots). The generated `All` command ran under `bash -c` and
+  listed sessions from all three trees.
 
-- `rushi-sessions-all` channel: with the default empty list the module
-  evaluation registers the main channel only. With three roots, both
-  channels register: the main one rootless, and
-  `rushi-sessions-all` with the roots in both `run` lines and
-  `metadata.name` `rushi-sessions-all`. With `allChannel = false`
-  the second channel is absent.
+- `rushi-sessions` channel views: with the default empty list the
+  channel exposes the `CWD` command only. With three roots it exposes
+  `Local`, `All` and `CWD`, in that cycle order. The `Local` command
+  takes only the local roots, `All` takes the local + remote roots,
+  and `CWD` scans the current directory. The live `--active-only`
+  command and the `rushi-sessions-all` / `allChannel` surface are
+  dropped (decision 31).
 - `tv [PATH]` exposure (tv 0.15.9): a probe channel env dump with and
   without the DIR argument differs only in `PWD`. A television source
   read found the same: one `set_current_dir`, no env var, no config
@@ -501,3 +504,53 @@ replaces the manual `cp`. The channel stays pure data in the store.
   placeholder un-substituted. The command reaches the shell with the literal
   placeholder text. Keep `sh -c` bodies brace-free (use `if/then/fi`).
 - Full-disk scans are slow. Prefer a repo or `~/programming`.
+
+## Decisions (user, 2026-10-07)
+
+28. Remote roots: `sourceRoots` also accepts `host:/path` and
+    `user@host:/path` entries. The host part is an ssh alias from the
+    user's `~/.ssh/config` (the user confirmed alias reachability).
+    The binary groups remote roots per host. It runs one ssh call per
+    host: `rushi-sessions source ROOT...` on the remote host. The
+    remote binary does the walk, status, and file reads. The local
+    binary prefixes the remote path column with `host:` and merges
+    the rows into one sorted list. An unreachable host or a failed
+    remote scan is skipped with a stderr warning; the other hosts
+    still list. `--active-only` passes through. The remote host must
+    have the `rushi-sessions` binary on its PATH. The user's remotes
+    all run this flake, so the binary is present.
+29. The ssh executable is `ssh`, overridable with the
+    `RUSHI_SESSIONS_SSH` environment variable (tests use a fake).
+    The remote binary name is the `RUSHI_SESSIONS_REMOTE_BIN`
+    environment variable, default `rushi-sessions`. A
+    non-interactive ssh shell does not source shell init files, so a
+    Nix profile binary is not on PATH. Set the variable to the
+    remote absolute path when needed. Flags: `-T`, `BatchMode=yes`,
+    `ConnectTimeout=5`. BatchMode keeps password prompts out of a tv
+    source run.
+30. `preview` and the channel actions branch on the `host:` path
+    prefix. The marker is a colon whose left text has no slash.
+    Local paths are absolute, so only a remote prefix matches. A
+    remote preview runs the remote binary over ssh. The channel
+    actions (open, open_v, open_dir, the open_dir_tmux pair,
+    send_message, kill) detect the same prefix in the path token
+    and act over ssh. A bare path keeps the local behavior.
+
+31. The channel is unified into a single `rushi-sessions` channel.
+    The `rushi-sessions-all` channel and the
+    `programs."rushi-sessions".allChannel` option are dropped. The
+    live `--active-only` source command is dropped (the user judged
+    it unnecessary after use). Source views are ROOT-set subsets of
+    the same binary, not stacked flags: `sourceRoots` is split into
+    local and remote roots, and a Nix regex mirrors the binary
+    `split_remote` test so both sides agree. The `source.command`
+    array is `[ Local?, All?, CWD ]`: `Local` scans the local roots
+    only, `All` scans every configured root (local + remote), and
+    `CWD` scans the current directory (no roots). `CWD` is always
+    present and last. `All` is present when roots are set. `Local`
+    is present only when both local and remote roots exist so it
+    differs from `All` and `CWD`. television runs the first command
+    on startup and cycles the rest on `cycle_sources` (Ctrl+S), so
+    the startup view is `Local` when it is present, else `All`,
+    else `CWD`. The CWD view is blended into the array rather than
+    a separate no-roots fallback. The binary is unchanged.

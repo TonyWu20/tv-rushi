@@ -13,12 +13,11 @@
 #       - DIR when given, e.g. tv rushi-sessions ~/programming or /
 #
 # The binary takes optional scan roots: `rushi-sessions source ROOT...`.
-# Add roots to the two `run` lines under [source] to watch fixed trees.
+# Each source command under [source] passes a different ROOT set to the
+# same binary, so no flags are stacked. `CWD` passes no roots (the binary
+# scans the CWD). Add `Local` and `All` commands to watch fixed trees.
 # Home-manager users set the `programs."rushi-sessions".sourceRoots`
-# option instead. It feeds the `rushi-sessions-all` channel, which
-# scans the configured trees (registered only when the list is
-# non-empty). This main channel stays CWD-driven: `tv rushi-sessions
-# DIR` scans DIR.
+# option instead; the module generates these commands for them.
 #
 # The source commands run the `rushi-sessions` binary (one process per run).
 # One `fd` call finds the session roots, then the same process does the rest:
@@ -52,6 +51,15 @@
 # send_message uses `mktemp`, `stty`, `setsid`, `tr` and $EDITOR
 # (fallback `nvim`), all in the standard Unix base.
 #
+# Remote roots: a source root may be `host:/path` or `user@host:/path`
+# (an ssh alias). The binary runs the remote `rushi-sessions` over ssh
+# and prefixes those rows' path column with `host:`. The actions branch
+# on that prefix and act remotely. This needs `ssh` plus the same
+# `rushi-sessions`, `rushi` and `tmux` on the remote host. A
+# non-interactive ssh does not source the shell init, so a Nix profile
+# on the remote is not on PATH. Set RUSHI_SESSIONS_REMOTE_BIN on the
+# remote to name the binary, or use an absolute path.
+#
 # shell = "bash" is set on every command. television detects the login
 # shell from $SHELL (fish here) and would otherwise run these commands
 # under fish. The binary output carries real tabs; the string-pipeline
@@ -69,23 +77,31 @@ shell = "bash"
 # session roots (fast, parallel walk), then per-session liveness, phase
 # and mtime in-process. No per-session forks.
 #
-# Two named source commands: television runs "All" on startup and cycles
-# to "Active" on Ctrl+S (the `cycle_sources` keybinding), then back to
-# "All". Each press swaps the list between every found session and the
-# live-loop sessions only.
+# Named source commands: television runs the first on startup and cycles
+# the rest on Ctrl+S (the `cycle_sources` keybinding). Each command passes
+# a different ROOT set to the same binary, so no flags are stacked. This
+# shipped copy is rootless, so it ships the single `CWD` command. Add
+# `Local` and `All` commands (examples below) to enable the root views.
 display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}"
 output = "{split:\t:6}"
 frecency = false
 
 [[source.command]]
-name = "All"
-# No scan roots: the binary scans the CWD. To watch fixed trees, add
-# the roots to this line (the binary takes any number).
+# No scan roots: the binary scans the CWD.
+name = "CWD"
 run = "rushi-sessions source"
 
-[[source.command]]
-name = "Active"
-run = "rushi-sessions source --active-only"
+# Root views. Uncomment and add your roots to enable them. `Local` takes
+# only the local roots; `All` takes the local + remote roots. A remote
+# root is host:/path or user@host:/path (an ssh alias).
+#
+# [[source.command]]
+# name = "Local"
+# run = "rushi-sessions source /export ~/Downloads"
+#
+# [[source.command]]
+# name = "All"
+# run = "rushi-sessions source /export ~/Downloads build:/export"
 
 [preview]
 shell = "bash"
@@ -132,7 +148,7 @@ description = "Open this session in rushi-tui. Inside tmux, a new pane to the ri
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "rushi-tui \\\"$n\\\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; if [ -n \"$host\" ]; then n=$(basename \"$rp\"); r=$(dirname \"$(dirname \"$rp\")\"); if ssh -T \"$host\" tmux split-window -h -c \"$r\" \"\\\"rushi-tui \\\\\\\"$n\\\\\\\"\\\"\" 2>/dev/null; then :; else ssh -T \"$host\" tmux new-session -d -c \"$r\" \"\\\"rushi-tui \\\\\\\"$n\\\\\\\"\\\"\" 2>/dev/null; fi; else n=$(basename \"$s\"); r=$(dirname \"$(dirname \"$s\")\"); t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then tmux split-window -h -c \"$r\" \"rushi-tui \\\"$n\\\"\"; else cd \"$r\" && rushi-tui \"$n\"; fi; fi' sh '{split:\t:6}'
 """
 
 [actions.open_v]
@@ -144,7 +160,7 @@ description = "Open this session in rushi-tui. Inside tmux, a new pane below tv 
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's="$1"; n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "rushi-tui \\\"$n\\\""; else cd "$r" && rushi-tui "$n"; fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; if [ -n \"$host\" ]; then n=$(basename \"$rp\"); r=$(dirname \"$(dirname \"$rp\")\"); if ssh -T \"$host\" tmux split-window -v -c \"$r\" \"\\\"rushi-tui \\\\\\\"$n\\\\\\\"\\\"\" 2>/dev/null; then :; else ssh -T \"$host\" tmux new-session -d -c \"$r\" \"\\\"rushi-tui \\\\\\\"$n\\\\\\\"\\\"\" 2>/dev/null; fi; else n=$(basename \"$s\"); r=$(dirname \"$(dirname \"$s\")\"); t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then tmux split-window -v -c \"$r\" \"rushi-tui \\\"$n\\\"\"; else cd \"$r\" && rushi-tui \"$n\"; fi; fi' sh '{split:\t:6}'
 """
 
 [actions.open_dir]
@@ -157,7 +173,7 @@ description = "Exit tv and cd into the session's project dir; a $SHELL shell (ba
 shell = "bash"
 mode = "execute"
 command = """
-sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; cd "$r" && exec "$sh2"' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; r=$(dirname \"$(dirname \"$rp\")\"); sh2=$SHELL; [ -n \"$sh2\" ] || sh2=bash; if [ -n \"$host\" ]; then ssh -t \"$host\" \"cd \\\"$rp\\\" && exec $sh2\"; else cd \"$r\" && exec \"$sh2\"; fi' sh '{split:\t:6}'
 """
 
 [actions.open_dir_tmux_h]
@@ -182,7 +198,7 @@ description = "Open a $SHELL shell (bash fallback) in the session's project dir.
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; r=$(dirname \"$(dirname \"$rp\")\"); sh2=$SHELL; [ -n \"$sh2\" ] || sh2=bash; if [ -n \"$host\" ]; then if ssh -T \"$host\" tmux split-window -h -c \"$r\" \"$sh2\" 2>/dev/null; then :; else ssh -T \"$host\" tmux new-session -d -c \"$r\" \"$sh2\"; fi; else t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then tmux split-window -h -c \"$r\" \"$sh2\"; else cd \"$r\" && exec \"$sh2\"; fi; fi' sh '{split:\t:6}'
 """
 
 [actions.open_dir_tmux_v]
@@ -194,7 +210,7 @@ description = "Open a $SHELL shell (bash fallback) in the session's project dir.
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's="$1"; r=$(dirname "$(dirname "$s")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; r=$(dirname \"$(dirname \"$rp\")\"); sh2=$SHELL; [ -n \"$sh2\" ] || sh2=bash; if [ -n \"$host\" ]; then if ssh -T \"$host\" tmux split-window -v -c \"$r\" \"$sh2\" 2>/dev/null; then :; else ssh -T \"$host\" tmux new-session -d -c \"$r\" \"$sh2\"; fi; else t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then tmux split-window -v -c \"$r\" \"$sh2\"; else cd \"$r\" && exec \"$sh2\"; fi; fi' sh '{split:\t:6}'
 """
 
 [actions.send_message]
@@ -204,7 +220,7 @@ Open $EDITOR (falling back to nvim) on a message file, then send the result to t
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's="$1"; p=$(cat "$s/loop.pid" 2>/dev/null); live=no; [ -n "$p" ] && kill -0 "$p" 2>/dev/null && live=yes; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; if [ "$live" = yes ]; then rushi run "$s" "$m" --no-run; else setsid rushi run "$s" "$m" </dev/null >/dev/null 2>&1 & fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; if [ -n \"$host\" ]; then p=$(ssh -T \"$host\" cat \"$rp/loop.pid\" 2>/dev/null); else p=$(cat \"$rp/loop.pid\" 2>/dev/null); fi; p=$(printf \"%s\" \"$p\" | tr -d \"[:space:]\"); live=no; if [ -n \"$p\" ]; then if [ -n \"$host\" ]; then ssh -T \"$host\" kill -0 \"$p\" 2>/dev/null && live=yes; else kill -0 \"$p\" 2>/dev/null && live=yes; fi; fi; d=$TMPDIR; [ -n \"$d\" ] || d=/tmp; f=$(mktemp \"$d/tv-rushi-msg.XXXXXX\"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n \"$ed\" ] || ed=nvim; $ed \"$f\"; [ -n \"$st\" ] && stty \"$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat \"$f\" 2>/dev/null); rm -f \"$f\"; if [ -z \"$(printf \"%s\" \"$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; exit 0; fi; if [ -n \"$host\" ]; then m64=$(printf \"%s\" \"$m\" | base64 | tr -d \"\\n\"); if [ \"$live\" = yes ]; then ssh -T \"$host\" \"rushi run \\\"$rp\\\" \\\"\\$(printf %s $m64 | base64 -d)\\\" --no-run\"; else setsid ssh -T \"$host\" \"rushi run \\\"$rp\\\" \\\"\\$(printf %s $m64 | base64 -d)\\\"\" </dev/null >/dev/null 2>&1 & fi; else if [ \"$live\" = yes ]; then rushi run \"$rp\" \"$m\" --no-run; else setsid rushi run \"$rp\" \"$m\" </dev/null >/dev/null 2>&1 & fi; fi' sh '{split:\t:6}'
 """
 
 [actions.kill]
@@ -212,5 +228,5 @@ description = "Stop the session loop (SIGTERM to the loop pid)"
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 'p=$(cat "$1/loop.pid" 2>/dev/null); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$1")")"; else echo "no live loop for "$(basename "$1")" (stale or absent pid)"; fi' sh '{split:\t:6}'
+sh -c 's=\"$1\"; host=\"\"; rp=\"$s\"; h=$(printf \"%s\" \"$s\" | cut -d: -f1); if [ \"$h\" != \"$s\" ]; then case \"$h\" in */*) : ;; *) host=\"$h\"; rp=$(printf \"%s\" \"$s\" | cut -d: -f2-);; esac; fi; if [ -n \"$host\" ]; then p=$(ssh -T \"$host\" cat \"$rp/loop.pid\" 2>/dev/null); p=$(printf \"%s\" \"$p\" | tr -d \"[:space:]\"); if [ -n \"$p\" ] && ssh -T \"$host\" kill -0 \"$p\" 2>/dev/null; then ssh -T \"$host\" kill -TERM \"$p\"; echo \"sent SIGTERM to $p (\"$(basename \"$rp\")\") on $host\"; else echo \"no live loop for \"$(basename \"$rp\")\" on $host (stale or absent pid)\"; fi; else p=$(cat \"$rp/loop.pid\" 2>/dev/null); p=$(printf \"%s\" \"$p\" | tr -d \"[:space:]\"); if [ -n \"$p\" ] && kill -0 \"$p\" 2>/dev/null; then kill -TERM \"$p\"; echo \"sent SIGTERM to $p (\"$(basename \"$rp\")\")\"; else echo \"no live loop for \"$(basename \"$rp\")\" (stale or absent pid)\"; fi; fi' sh '{split:\t:6}'
 """
