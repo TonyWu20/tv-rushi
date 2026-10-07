@@ -708,3 +708,21 @@ replaces the manual `cp`. The channel stays pure data in the store.
     interval for one run. The key covers every launch path: the
     alt-e action, a direct `tv rushi-sessions-events DIR`, and a
     tmux pane.
+
+39. `bin/rushi-sessions/src/main.rs` was a single 1724-line file. It is
+    split into one module per responsibility. `scan.rs` owns the
+    `source` command (root resolution, the `fd` walk, TSV rows).
+    `remote.rs` owns the ssh roots (host parsing, grouping, the remote
+    calls, row parsing, the remote preview). `state.rs` holds the
+    session probes (pid liveness, mtime, the last `loop_phase` in the
+    log tail). `preview.rs` renders the preview card and its bat
+    colorization. `events.rs` owns the `events` command and the
+    events.jsonl readers. `doc.rs` owns `event-preview` and the
+    markdown/toml document rendering. `usage.rs` resolves token usage
+    and the context window. `format.rs` holds the display primitives
+    (clipping, JSON quoting, timestamp formatting, PATH lookup).
+    `main.rs` is now only the CLI definitions and the dispatch. The 41
+    unit tests moved with their code. The CLI, the TSV format, and the
+    environment variables are unchanged: the binary output of every
+    subcommand is byte-identical to the pre-split binary on the same
+    inputs (a fixture diff plus the remote-ssh integration tests).
