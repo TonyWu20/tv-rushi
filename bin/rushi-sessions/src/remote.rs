@@ -128,9 +128,10 @@ pub(crate) fn remote_source_lines(group: &RemoteGroup, active_only: bool) -> Vec
     }
 }
 /// One remote TSV line into a local `Row`, with the `host:` prefix on
-/// the path column. A short line or a bad mtime drops the row. A
-/// status that is not `ACTIVE` normalizes to `IDLE` (an older remote
-/// binary must not break the list).
+/// the repo and the path columns. The row list shows the host in front
+/// of the repo name; the preview strips it back off. A short line or a
+/// bad mtime drops the row. A status that is not `ACTIVE` normalizes
+/// to `IDLE` (an older remote binary must not break the list).
 pub(crate) fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
     let f: Vec<&str> = line.split('\t').collect();
     if f.len() != 7 {
@@ -140,7 +141,7 @@ pub(crate) fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
     Some(Row {
         status: if f[0] == "ACTIVE" { "ACTIVE" } else { "IDLE" },
         name: f[1].to_string(),
-        repo: f[2].to_string(),
+        repo: format!("{}:{}", host, f[2]),
         phase: f[3].to_string(),
         last: f[4].to_string(),
         mtime,
@@ -149,8 +150,18 @@ pub(crate) fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
 }
 /// The remote preview: run the remote binary's preview over ssh and
 /// stream its card to stdout. A failed ssh warns on stderr.
+///
+/// The command sets `RUSHI_SESSIONS_PREVIEW_HOST` inline (the remote
+/// shell exports it for that one command). The remote card render
+/// reads it and puts a `host` key right under the `repo` key. An
+/// older remote binary ignores the variable; the card then has no
+/// host line, but the source row still shows the host in the repo
+/// column.
 pub(crate) fn preview_remote(host: &str, cols: &[&str]) {
     let mut cmd = String::new();
+    cmd.push_str("RUSHI_SESSIONS_PREVIEW_HOST=");
+    cmd.push_str(&shell_quote(host));
+    cmd.push(' ');
     cmd.push_str(&remote_binary());
     cmd.push_str(" preview");
     for c in cols {
@@ -221,13 +232,23 @@ mod tests {
 
 
     #[test]
-    fn parse_remote_line_prefixes_path() {
+    fn parse_remote_line_prefixes_repo_and_path() {
         let line = "ACTIVE\tfoo\trepoA\ttools\t10-02 14:11\t1760000000\t/export/repoA/sessions/foo";
         let row = parse_remote_line(line, "host").unwrap();
+        assert_eq!(row.repo, "host:repoA");
         assert_eq!(row.path, "host:/export/repoA/sessions/foo");
         assert_eq!(row.status, "ACTIVE");
         assert_eq!(row.mtime, 1760000000);
         assert_eq!(row.name, "foo");
+    }
+
+
+    #[test]
+    fn parse_remote_line_user_at_host_prefix() {
+        let line = "ACTIVE\tfoo\trepoA\ttools\t10-02 14:11\t1760000000\t/export/repoA/sessions/foo";
+        let row = parse_remote_line(line, "u@host").unwrap();
+        assert_eq!(row.repo, "u@host:repoA");
+        assert_eq!(row.path, "u@host:/export/repoA/sessions/foo");
     }
 
 
@@ -242,6 +263,7 @@ mod tests {
         let line = "WEIRD\tfoo\trepo\t?\t?\t5\t/p";
         let row = parse_remote_line(line, "h").unwrap();
         assert_eq!(row.status, "IDLE");
+        assert_eq!(row.repo, "h:repo");
     }
 
 

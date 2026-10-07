@@ -8,7 +8,7 @@
 //!   one TSV row per session. Roots may be local or remote. A remote
 //!   root is `host:/path` or `user@host:/path` (the host is an ssh
 //!   alias). Each distinct host runs the remote `rushi-sessions source`
-//!   over ssh once; its rows join the list with the path column
+//!   over ssh once; its rows join the list with the repo and path columns
 //!   prefixed by `host:`. An unreachable host is skipped with a
 //!   stderr warning.:
 //!   `status<TAB>name<TAB>repo<TAB>phase<TAB>last<TAB>mtime<TAB>path`.

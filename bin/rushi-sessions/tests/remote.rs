@@ -72,6 +72,7 @@ fn source_scans_remote_root_over_fake_ssh() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     let fields: Vec<&str> = stdout.trim().split('\t').collect();
     assert_eq!(fields.len(), 7, "stdout: {stdout}");
+    assert_eq!(fields[2], "host:repoR");
     assert_eq!(fields[6], "host:/export/repoR/sessions/remote-fixture");
     let logged = std::fs::read_to_string(&log).unwrap();
     assert!(logged.contains("rushi-sessions source"), "remote command: {logged}");
@@ -154,7 +155,7 @@ fn preview_runs_remotely_over_fake_ssh() {
             "preview",
             "ACTIVE",
             "remote-fixture",
-            "repoR",
+            "host:repoR",
             "tools",
             "10-02 14:11",
             "1760000000",
@@ -172,4 +173,41 @@ fn preview_runs_remotely_over_fake_ssh() {
     assert!(logged.contains("/export/repoR/sessions/remote-fixture"));
     assert!(!logged.contains("host:/export/repoR"), "remote command: {logged}");
     assert!(logged.contains("preview"), "remote command: {logged}");
+    // The host reaches the remote card render through the env var,
+    // not through a new argument.
+    assert!(
+        logged.contains("RUSHI_SESSIONS_PREVIEW_HOST='host'"),
+        "remote command: {logged}"
+    );
+    // The repo column carries the host prefix; the remote card gets the
+    // bare repo name.
+    assert!(logged.contains("'repoR'"), "remote command: {logged}");
+    assert!(!logged.contains("host:repoR"), "remote command: {logged}");
 }
+
+#[test]
+fn preview_remote_without_host_prefix_keeps_repo() {
+    let d = unique_dir("prev2");
+    let fake = write_exec(&d, "fake-ssh", FAKE_SSH_OK);
+    let log = d.join("ssh.log");
+    let out = Command::new(bin())
+        .args([
+            "preview",
+            "ACTIVE",
+            "remote-fixture",
+            "repoR",
+            "tools",
+            "10-02 14:11",
+            "1760000000",
+            "host:/export/repoR/sessions/remote-fixture",
+        ])
+        .env("RUSHI_SESSIONS_SSH", fake.to_str().unwrap())
+        .env("FAKE_SSH_LOG", log.to_str().unwrap())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let logged = std::fs::read_to_string(&log).unwrap();
+    // A repo column without the prefix passes through unchanged.
+    assert!(logged.contains("'repoR'"), "remote command: {logged}");
+}
+

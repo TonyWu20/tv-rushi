@@ -39,8 +39,11 @@ action (alt-e) launches it from the session list.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`
   uses for the editor, temp file, and empty check. These resolve on PATH.
 - `ssh`, only for remote source roots. Each remote host also needs
-  `rushi-sessions`, `rushi` and `tmux` reachable by the non-interactive
-  ssh. A Nix profile on the remote is not on PATH, so set
+  `rushi-sessions`, `rushi` and `rushi-tui` reachable by the
+  non-interactive ssh. The open actions run the remote TUI over
+  `ssh -t` in a local pane. The open_dir_tmux actions open a
+  local pane that runs the remote shell over `ssh -t`, so no
+  remote tmux is needed. A Nix profile on the remote is not on PATH, so set
   `RUSHI_SESSIONS_REMOTE_BIN` on the remote to name the binary, or use an
   absolute path.
 - `tv` itself, for the `browse_events` action. It launches the nested
@@ -110,8 +113,10 @@ run.
 A root may be local or remote. A remote root is `host:/path` or
 `user@host:/path`, where `host` is an ssh alias. The binary runs the
 remote `rushi-sessions` over ssh and marks those rows with a `host:`
-prefix in the path column. The actions read that prefix and act on the
-remote host. In the example, `build:/export` scans the `build` host.
+The actions read the prefix: the open and open_dir_tmux actions split
+panes in the local tmux server that run the remote TUI or shell over
+`ssh -t`. The send_message and kill actions act over `ssh -T`. In the
+example, `build:/export` scans the `build` host.
 
 The channel is always registered. It exposes one source command per ROOT
 set, cycled with `Ctrl+S` in the order `Local`, `All`, `CWD`. `CWD`

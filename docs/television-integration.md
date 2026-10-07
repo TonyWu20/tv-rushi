@@ -259,6 +259,7 @@ Decisions (user, 2026-10-04):
   `scratch`, `.nix`. It emits one TSV line per session dir that has
   `events.jsonl`, `loop.pid`, or `cwd`.
   Fields: `status`, `name`, `repo`, `phase`, `last`, `epoch`, `abs-path`.
+  Remote rows carry the host in the `repo` and `abs-path` columns.
 - `status`: `ACTIVE` when `loop.pid` names a live pid (`kill(pid, 0)`).
   Otherwise `IDLE`.
 - `phase`: last `loop_phase` value in the tail 100KB of `events.jsonl`.
@@ -269,7 +270,7 @@ Decisions (user, 2026-10-04):
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
   seven tab-separated fields they split on.
 - Preview output: a structured TOML card. It has a `[rushi-session]`
-  header (name, repo, status, pid, phase, think, updated, usage). It has a
+  header (name, repo, host for remote rows, status, pid, phase, think, updated, usage). It has a
   `[last-user-message]` and a `[last-assistant-message]`. It has a
   `[[recent-event]]` array of the last 5 meaningful events.
 - `usage` shows the context window usage of the last model call. It reads
@@ -293,6 +294,9 @@ Decisions (user, 2026-10-04):
     in the directory that holds the sessions tree
     (`dirname(dirname(session_dir))`). It
     runs `rushi-tui <session>` in that pane. The pane closes on exit.
+    Remote rows (`host:` prefix) also split a local pane: the pane runs
+    `ssh -t HOST "cd REPO && rushi-tui NAME"`, so the remote TUI shows
+    up next to tv. No remote tmux server is needed.
     Outside tmux, or without the `tmux` binary, the fork runs `cd` to
     that base dir, then rushi-tui, as before. The TUI resolves a bare
     name against a relative `sessions_root`, so the pane or fork must
@@ -303,22 +307,27 @@ Decisions (user, 2026-10-04):
     It runs `tmux split-window -v -c` in the fork. The pane sits
     below the tv pane, in the same window. It starts in the same base
     dir and runs `rushi-tui <session>` there. Outside tmux, it is the
-    plain fork, like open.
+    plain fork, like open. Remote rows are the same ssh -t local pane, with the -v split.
   - `alt-o` open_dir: exit tv and land in a shell at the session's
     project dir (`dirname(dirname(session_dir))`). The command cds there,
     then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
     shell that launched tv. This mode matters: a forked `cd` dies with
     the child, so only `execute` mode can hand the terminal over.
+    Remote rows run `ssh -t HOST "cd REPO && exec SHELL"` in the
+    terminal, landing in the remote project dir.
   - `alt-d` open_dir_tmux_h: open a shell ($SHELL, fallback `bash`) at
     the session's project dir, in a tmux pane. The fork runs
     `tmux split-window -h -c`. The new pane sits to the right of tv,
     in the same window. It starts the shell in the repo dir. tv stays
     open. The pane closes when the shell exits. Outside tmux, the fork
     cds to the dir and execs the shell. tv resumes when the shell exits.
+    Remote rows open a local pane that runs
+    `ssh -t HOST "cd REPO && exec SHELL"`; no remote tmux is needed.
   - `alt-v` open_dir_tmux_v: same, but the new pane stacks below tv.
     It runs `tmux split-window -v -c`. The pane sits below the tv pane,
     in the same window. It starts the shell in the same repo dir.
-    Outside tmux, it is the plain fork, like open_dir_tmux_h.
+    Outside tmux, it is the plain fork, like open_dir_tmux_h. Remote
+    rows are the same ssh -t local pane, with the -v split.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
     file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
     loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
@@ -726,3 +735,31 @@ replaces the manual `cp`. The channel stays pure data in the store.
     environment variables are unchanged: the binary output of every
     subcommand is byte-identical to the pre-split binary on the same
     inputs (a fixture diff plus the remote-ssh integration tests).
+40. The `open` and `open_v` actions on remote rows (`host:` prefix)
+    open a pane in the LOCAL tmux server, not on the remote one. The
+    pane runs `ssh -t HOST "cd REPO && rushi-tui NAME"`: the remote
+    TUI shows up next to tv, and the pane closes when the TUI exits.
+    No tmux server is needed on the remote host (the old behavior
+    spawned a pane on the remote server, invisible to the user).
+    Outside a local tmux, the fork runs the ssh command directly.
+    Verified against a live tmux server with a fake ssh and a fake
+    rushi-tui: the pane shows the remote TUI, and the remote shell
+    receives `cd REPO && rushi-tui "NAME"` intact.
+41. Local and remote rows are now distinguished. The `source` binary
+    prefixes the remote rows' `repo` column with `host:` (the list
+    shows `host:repo/name`; the path column already carried the
+    prefix). The preview card gains a `host` key right under `repo`:
+    the local binary sets `RUSHI_SESSIONS_PREVIEW_HOST` inline in the
+    ssh command, and the remote card render (the same binary on the
+    remote host) reads it. The remote card renders the bare repo name:
+    the prefix is stripped before the ssh call. An older remote binary
+    ignores the variable, and the card simply omits the host line.
+42. The `open_dir_tmux_h` and `open_dir_tmux_v` actions on remote rows
+    open a pane in the LOCAL tmux server, like open (decision 40).
+    The pane runs `ssh -t HOST "cd REPO && exec SHELL"`: a shell at
+    the remote project dir shows up next to tv, and the pane closes
+    when the shell exits. No remote tmux server is needed. The shell
+    is the local `$SHELL` value (bash fallback), matching the old
+    remote branch. `open_dir` (execute mode) now cds to the project
+    dir on the remote branch too (it cded to the session dir, unlike
+    the local branch and its own description).

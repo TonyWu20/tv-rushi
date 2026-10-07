@@ -84,16 +84,21 @@ in
     # open_dir_tmux_v use it only when tv runs inside a tmux session
     # (each detects $TMUX and falls back to the plain fork).
     # (The interactive actions call binaries resolved on PATH, which are
-    # not listed as core requirements: `rushi` and `rushi-tui` for
-    # send_message/open/open_v, and `tmux` for open, open_v,
+    # not listed as core requirements: `rushi` for send_message,
+    # `rushi-tui` for open/open_v, and `tmux` for open, open_v,
     # open_dir_tmux_h and open_dir_tmux_v. send_message uses `mktemp`,
     # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`), all in the
     # standard Unix base. Remote source roots additionally need `ssh`,
-    # reachable by the alias in the root, and the same `rushi-sessions`,
-    # `rushi` and `tmux` on the remote host. A non-interactive ssh does
-    # not source the shell init, so remote PATH entries from a Nix
-    # profile are not visible. Set RUSHI_SESSIONS_REMOTE_BIN on the remote
-    # to name the binary, or use an absolute path.)
+    # reachable by the alias in the root, and the same
+    # `rushi-sessions` and `rushi` on the remote host. The open actions
+    # additionally need `rushi-tui` there: the local pane runs it over
+    # `ssh -t`. The open_dir_tmux actions open a local pane that runs the
+    # remote shell over `ssh -t`, so no remote tmux is needed.
+    # browse_events needs `tv` and this channel deployed there. A
+    # non-interactive ssh does not source the shell init, so remote PATH
+    # entries from a Nix profile are not visible. Set
+    # RUSHI_SESSIONS_REMOTE_BIN on the remote to name the binary, or use
+    # an absolute path.)
     requirements = [
       "fd"
       "rushi-sessions"
@@ -152,28 +157,37 @@ in
     # tmux binary is missing, keep the original behavior: it runs `cd`
     # to the sessions root, then rushi-tui in this fork.
     #
+    # A remote row (host: prefix) also opens a pane in the LOCAL tmux
+    # server, never on the remote one. The pane runs
+    # `ssh -t HOST "cd REPO && rushi-tui NAME"`: the remote TUI shows
+    # up next to tv, and the pane closes when it exits. No tmux server
+    # is needed on the remote host (the old behavior spawned a pane on
+    # the remote server, invisible to the user). Outside local tmux the
+    # fork runs the ssh command directly. The remote host needs
+    # `rushi-tui` reachable by a non-interactive ssh.
+    #
     # The shell body stays brace-free: television's string pipeline
     # treats a stray {group} as a template token and then leaves the
     # split placeholder unsubstituted. That is why the check reads
     # plain $TMUX instead of ${TMUX:-}.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of tv runs it from the session's repo dir. Outside tmux, it runs in this fork.";
+    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of tv runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); if ssh -T "$host" tmux split-window -h -c "$r" "\"rushi-tui \\\"$n\\\"\"" 2>/dev/null; then :; else ssh -T "$host" tmux new-session -d -c "$r" "\"rushi-tui \\\"$n\\\"\"" 2>/dev/null; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_v = {
     # Same as open, but the new pane stacks below tv instead of sitting
     # to the right. tmux's flags are easy to mix up: -v puts the new
-    # pane below the current one (a horizontal divider). Outside tmux,
-    # the behavior is the same plain fork as open.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane below tv runs it from the session's repo dir. Outside tmux, it runs in this fork.";
+    # pane below the current one (a horizontal divider). The remote-row
+    # behavior is the same ssh -t local pane, with the -v split.
+    description = "Open this session in rushi-tui. Inside tmux, a new pane below tv runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); if ssh -T "$host" tmux split-window -v -c "$r" "\"rushi-tui \\\"$n\\\"\"" 2>/dev/null; then :; else ssh -T "$host" tmux new-session -d -c "$r" "\"rushi-tui \\\"$n\\\"\"" 2>/dev/null; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(dirname "$(dirname "$rp")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -189,7 +203,7 @@ in
     shell = "bash";
     mode = "execute";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && exec $sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then ssh -t "$host" "cd \"$r\" && exec $sh2"; else cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -209,32 +223,42 @@ in
     # cds to the repo dir and execs the shell; tv resumes when the
     # shell exits.
     #
+    # A remote row (host: prefix) also opens a pane in the LOCAL tmux
+    # server, never on the remote one. The pane runs
+    # `ssh -t HOST "cd REPO && exec SHELL"`: a shell at the remote
+    # project dir shows up next to tv. No remote tmux server is needed.
+    # Outside local tmux the fork runs the ssh command directly. The
+    # shell name is the local $SHELL value (bash fallback), matching the
+    # old remote branch.
+    #
     # The command keeps $vars plain (no ${...}) so the Nix
     # single-quote string does not interpolate them. The body stays
     # brace-free for the same reason as open: a stray {group} would
     # break the television template and leave the split placeholder
     # unsubstituted.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits.";
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then if ssh -T "$host" tmux split-window -h -c "$r" "$sh2" 2>/dev/null; then :; else ssh -T "$host" tmux new-session -d -c "$r" "$sh2"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_dir_tmux_v = {
     # Same as open_dir_tmux_h, but the new pane stacks below tv instead
     # of sitting to the right. tmux's flags are easy to mix up: -v puts
-    # the new pane below the current one (a horizontal divider). Outside
-    # tmux, the behavior is the same plain fork as open_dir_tmux_h.
+    # the new pane below the current one (a horizontal divider). The
+    # remote-row behavior is the same ssh -t local pane, with the -v
+    # split. Outside tmux, the behavior is the same plain fork as
+    # open_dir_tmux_h.
     #
     # The command keeps $vars plain (no ${...}) so the Nix
     # single-quote string does not interpolate them.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits.";
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then if ssh -T "$host" tmux split-window -v -c "$r" "$sh2" 2>/dev/null; then :; else ssh -T "$host" tmux new-session -d -c "$r" "$sh2"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; r=$(dirname "$(dirname "$rp")"); sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
