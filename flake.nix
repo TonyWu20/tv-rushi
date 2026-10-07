@@ -16,11 +16,16 @@
     let
       pkgLib = nixpkgs.lib;
 
-      # The channel is one data file. Expose it as a package so a
-      # home-manager config can install it verbatim into the cable dir:
+      # The channel is two data files: the session list channel and
+      # the events channel. Expose each as a package so a
+      # home-manager config can install them verbatim into the cable
+      # dir:
       #   home.file.".config/television/cable/rushi-sessions.toml".source
       #     = inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-channel;
+      #   home.file.".config/television/cable/rushi-sessions-events.toml".source
+      #     = inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-events-channel;
       toml = pkgLib.readFile ./rushi-sessions.toml;
+      eventsToml = pkgLib.readFile ./rushi-sessions-events.toml;
 
       perSystem = system:
         let
@@ -34,8 +39,11 @@
             "rustc"
           ];
 
-          # One data file, the manual install path into the cable dir.
+          # The two data files, the manual install path into the cable
+          # dir.
           channelFile = pkgs.writeText "rushi-sessions-television-channel" toml;
+          eventsChannelFile =
+            pkgs.writeText "rushi-sessions-events-television-channel" eventsToml;
 
           # The `rushi-sessions` backend binary. The source honors
           # .gitignore (sessions/ and target/ stay out of the store).
@@ -61,6 +69,7 @@
         in
         {
           rushi-sessions-channel = channelFile;
+          rushi-sessions-events-channel = eventsChannelFile;
           default = channelFile;
           # The backend binary. The home-manager module (below) adds it to
           # home.packages.

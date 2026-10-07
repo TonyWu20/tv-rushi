@@ -269,9 +269,16 @@ Decisions (user, 2026-10-04):
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
   seven tab-separated fields they split on.
 - Preview output: a structured TOML card. It has a `[rushi-session]`
-  header (name, repo, status, pid, phase, think, updated). It has a
+  header (name, repo, status, pid, phase, think, updated, usage). It has a
   `[last-user-message]` and a `[last-assistant-message]`. It has a
   `[[recent-event]]` array of the last 5 meaningful events.
+- `usage` shows the context window usage of the last model call. It reads
+  `input_tokens + output_tokens` of the last `assistant_message` usage
+  record in `events.jsonl`. The window is the active model's
+  `context_tokens` from `rushi config` (the `rushi` binary on PATH). The
+  fallback is `limits.context_budget_tokens`. `RUSHI_CONTEXT_WINDOW`
+  overrides both. Without a resolvable window the line shows `used tokens`
+  only. A session with no usage record shows no line.
 - The card is syntax-highlighted by `bat` when it is on PATH. The default
   theme is `Catppuccin Macchiato` to match the dark catppuccin tv theme.
   Set `RUSHI_PREVIEW_THEME` to override it. When `bat` is absent, the card
@@ -322,9 +329,29 @@ Decisions (user, 2026-10-04):
     `events.jsonl` line lock. So `--no-run` appends into a live session
     without touching `.loop.lock` and without writing `loop.pid`. The
     live loop's pid lock stays in place for the TUI to read.
-  - `ctrl-shift-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
+  - `alt-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
     when the pid is stale. A SIGTERMed loop restarts. State stays in the
     session log.
+  - `alt-e` browse_events: launch a nested `tv` (the
+    `rushi-sessions-events` channel). The nested tv starts in the
+    selected session dir, so its source reads the CWD's
+    `events.jsonl`. Inside tmux a pane split to the right of tv runs
+    it (`-h`, like `open`). Outside tmux the fork cds to the session
+    dir and runs the nested tv; the outer tv pauses and resumes on
+    exit. Remote rows run it over `ssh -t` on the remote host.
+  - The events channel source is `rushi-sessions events`. It prints
+    one TSV row per entry: seq (the 1-based line number of the entry
+    in `events.jsonl`), type, ts, and a one-line summary that keeps
+    the whole payload but flattens tabs and newlines. The list side
+    truncates; nothing is clipped in the source.
+  - The events channel preview renders the selected entry as a
+    document. `user_message`, `assistant_message` and
+    `compaction_summary` render as markdown; `tool_call`,
+    `tool_result` and every other entry render as toml. The binary
+    prints the plain document; the channel pipes it into the
+    renderer chosen by the `eventPreviewer` / `eventTomlPreviewer`
+    module options (default bat, with the per-entry language flag,
+    the `RUSHI_PREVIEW_THEME` override and the plain fallback).
 
 ## Usage
 
@@ -333,6 +360,14 @@ tv rushi-sessions                    # scan CWD
 tv rushi-sessions ~/programming      # scan a given dir
 tv rushi-sessions ../                # relative dirs work too
 tv rushi-sessions /                  # full disk (slow)
+```
+
+The events channel takes the session dir (the dir that holds
+`events.jsonl`):
+
+```sh
+tv rushi-sessions-events DIR         # DIR is a session dir
+tv rushi-sessions-events             # CWD is the session dir
 ```
 
 The `CWD` source command always scans the CWD (the `tv [PATH]`
@@ -462,6 +497,27 @@ replaces the manual `cp`. The channel stays pure data in the store.
 - open_dir_tmux_h/v non-tmux branch (2026-10-05): verified at the
   shell level. The fork cds to the repo dir and execs the shell. The
   parent, a tv-fork stand-in, resumes after the shell exits.
+- Events channel pty test (tv 0.15.9, this repo's 8.7k-line log):
+  `tv rushi-sessions-events DIR` lists the entries. Typing a filter
+  narrows the list. The preview panel shows the selected entry as a
+  bat-rendered document. Esc exits clean.
+- `browse_events` tmux branch (scratch tmux session, fixture sessions):
+  `alt-e` on the outer `tv rushi-sessions` opens a pane to the right
+  of tv. The nested events tv runs in that pane from the session dir.
+  The outer pane keeps its own list.
+- `browse_events` non-tmux branch (pty driver, no `$TMUX`): `alt-e`
+  runs the nested events tv in the same terminal. The outer tv
+  resumes and re-lists when the nested tv exits.
+- Binary: `cargo test` covers the `events` row shape (seq, type, ts,
+  summary), the unclipped flattened summary, the seq alignment across
+  an unparseable line, the markdown and toml documents, and
+  `--print-lang`.
+- Nix parity: the events channel attrset (default options) matches
+  the repo `rushi-sessions-events.toml` leaf for leaf. The module
+  evaluation registers both channels. With `eventPreviewer =
+  "mdcat --ansi"` the events preview command carries the
+  `sh -c "mdcat --ansi"` pipe. The flake builds both channel files
+  and the binary.
 - `sourceRoots` option: full module evaluation (`lib.evalModules` with
   a stubbed `programs.television` option) with the default empty list
   yields the single `rushi-sessions` channel with the one `CWD`
@@ -491,7 +547,7 @@ replaces the manual `cp`. The channel stays pure data in the store.
   so the CWD must be that base dir.
 - `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
-  confirms before pressing ctrl-shift-k.
+  confirms before pressing alt-k.
 - `send_message` on an idle session starts the loop detached, so tv
   resumes at once. The loop's stdout and stderr go to `/dev/null`, so
   watch progress in the preview panel. The loop writes its own `loop.pid`
@@ -554,3 +610,50 @@ replaces the manual `cp`. The channel stays pure data in the store.
     the startup view is `Local` when it is present, else `All`,
     else `CWD`. The CWD view is blended into the array rather than
     a separate no-roots fallback. The binary is unchanged.
+32. The preview card's `[rushi-session]` header gains a `usage` line: the
+    context window usage of the last model call. `used` is
+    `input_tokens + output_tokens` of the last `assistant_message` usage
+    record in `events.jsonl`. The window comes from the active config of
+    the `rushi` binary on PATH: the active model's `context_tokens`, else
+    `limits.context_budget_tokens`. The `RUSHI_CONTEXT_WINDOW` env var
+    overrides both. Without a resolvable window the line shows the raw
+    `used` count. The `toml` crate parses the `rushi config` dump.
+
+## Decisions (user, 2026-10-08)
+
+33. Added the `rushi-sessions-events` channel: a fuzzy search over one
+    session's `events.jsonl`. The `rushi-sessions` binary gains two
+    subcommands. `events [DIR]` prints one TSV row per entry: seq
+    (the 1-based line number of the entry in the file), type, ts, and a
+    one-line summary that keeps the whole payload but flattens tabs and
+    newlines to spaces. Nothing is clipped; television truncates the
+    list lines itself. `event-preview DIR SEQ` renders one entry as a
+    document and `--print-lang` prints the document language alone.
+    Unparseable lines are skipped but keep their line number, so seq
+    stays stable against the raw file.
+34. The `browse_events` action (bound to `alt-e`, paired with
+    `ctrl-e` for rushi-tui) launches the nested events channel. The
+    nested tv starts in the session dir, so its source reads the CWD's
+    `events.jsonl`. Inside tmux, a pane split to the right of tv runs
+    it (`-h`, like `open`). Outside tmux, the fork cds to the session
+    dir and runs it; the outer tv pauses and resumes on exit. Remote
+    rows (`host:` prefix) run the nested tv over `ssh -t`. The remote
+    host must carry the same deployment of this channel (the same
+    flake is deployed there).
+35. Entry to document mapping: `user_message`, `assistant_message`
+    (including the `reasoning` thinking block and `tool_calls` in a
+    fenced toml block) and `compaction_summary` render as markdown.
+    `tool_call`, `tool_result` and every other entry render as toml
+    (a table named by the type; the unknown type gets `[event]`).
+    JSON to toml conversion drops nulls (toml has no null) and
+    reuses the `toml` crate already in the dependency tree.
+36. The events channel preview pipes the plain document into a
+    renderer. Two home-manager options, `eventPreviewer` and
+    `eventTomlPreviewer` (string, default `"bat"`), pick the renderer
+    per document language. The default bat keeps the per-entry
+    language flag, the `RUSHI_PREVIEW_THEME` override and the
+    plain-text fallback when bat is absent. Any other value is one
+    command line run through `sh -c`, reading the document from stdin
+    (for example `mdcat` or `glow`). Pipe filters only: `mdfried` was
+    considered and dropped. It is a fullscreen TUI viewer and cannot
+    feed the captured preview panel.

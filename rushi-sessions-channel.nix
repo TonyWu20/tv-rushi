@@ -28,6 +28,15 @@
 let
   tab = "\t";
   untab = s: builtins.replaceStrings [ "@TAB@" ] [ tab ] s;
+  # Strip one trailing newline, when present. The repo TOML holds
+  # preview.command as a single-line basic string, whose value has no
+  # trailing newline. The untab string adds one.
+  rstripNewline = v: let
+    len = builtins.stringLength v;
+  in
+    if len > 0 && (builtins.substring (len - 1) 1 v) == "\n" then
+    builtins.substring 0 (len - 1) v
+    else v;
 
   # A root is remote when it matches the binary's `split_remote`: a colon
   # whose host part is non-empty, holds no slash, does not start with `@`,
@@ -58,9 +67,12 @@ let
     ++ (if sourceRoots != [ ] then [ allCmd ] else [ ])
     ++ [ cwdCmd ];
 
-  previewCommand = untab ''
+  # The repo TOML holds this command as a single-line basic string, so
+  # the value carries no trailing newline. rstripNewline strips the one
+  # the untab string adds.
+  previewCommand = rstripNewline (untab ''
     rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
-  '';
+  '');
 in
 {
   metadata = {
@@ -122,6 +134,7 @@ in
     "alt-v" = "actions:open_dir_tmux_v";
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
+    "alt-e" = "actions:browse_events";
   };
 
   actions.open = {
@@ -226,11 +239,48 @@ in
   };
 
   actions.send_message = {
-    description = "Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.";
+    # Multi-line form: the repo TOML holds a multi-line basic string,
+    # whose value carries a trailing newline. The multi-line Nix string
+    # matches that value leaf for leaf.
+    description = ''
+      Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.
+    '';
     shell = "bash";
     mode = "fork";
     command = untab ''
       sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then p=$(ssh -T "$host" cat "$rp/loop.pid" 2>/dev/null); else p=$(cat "$rp/loop.pid" 2>/dev/null); fi; p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then if [ -n "$host" ]; then ssh -T "$host" kill -0 "$p" 2>/dev/null && live=yes; else kill -0 "$p" 2>/dev/null && live=yes; fi; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; if [ -n "$host" ]; then m64=$(printf "%s" "$m" | base64 | tr -d "\n"); if [ "$live" = yes ]; then ssh -T "$host" "rushi run \"$rp\" \"\$(printf %s $m64 | base64 -d)\" --no-run"; else setsid ssh -T "$host" "rushi run \"$rp\" \"\$(printf %s $m64 | base64 -d)\"" </dev/null >/dev/null 2>&1 & fi; else if [ "$live" = yes ]; then rushi run "$rp" "$m" --no-run; else setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi; fi' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.browse_events = {
+    # Fuzzy-search this session's events.jsonl in a nested `tv` (the
+    # `rushi-sessions-events` channel). The nested tv reads the
+    # session dir's events.jsonl from its CWD, so it must start
+    # there.
+    #
+    # tv forks this action, so the fork inherits the pane environment.
+    # When tv runs inside tmux, TMUX is set: create a new pane in the
+    # current window. The pane sits to the right of tv (-h, a vertical
+    # split) and starts in the session dir (-c). It runs the nested
+    # tv there. The pane closes when the nested tv exits. Outside
+    # tmux, or when the tmux binary is missing, the fork cds to the
+    # session dir and runs the nested tv here. The outer tv pauses
+    # and resumes when the nested tv exits.
+    #
+    # Remote rows (`host:` prefix) run the nested tv on the remote
+    # host over `ssh -t` (a pty, the nested tv is a TUI). The remote
+    # host must carry the same deployment of this channel (the same
+    # flake is deployed there).
+    #
+    # The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them. The body stays
+    # brace-free for the same reason as open: a stray {group} would
+    # break the television template.
+    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane to the right of tv runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -c "$rp" "tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 

@@ -1,0 +1,67 @@
+# rushi-sessions-events — a television channel that fuzzy-searches one
+# rushi session's events.jsonl.
+#
+# Launched by the `browse_events` action (alt-e) of the `rushi-sessions`
+# channel, which gives the session dir as the CWD. It also works
+# directly:
+#   tv rushi-sessions-events /path/to/sessions/<session>
+#   tv rushi-sessions-events        # CWD is the session dir
+#
+# The source command runs the `rushi-sessions` binary. `rushi-sessions
+# events` prints one TSV row per entry of the CWD's events.jsonl:
+#   0 seq     1-based line number of the entry in events.jsonl
+#   1 type    the event type
+#   2 ts      the raw timestamp
+#   3 summary the full one-line summary (the list side truncates)
+#
+# The list shows [type] ts summary. The preview panel renders the
+# selected entry as a document: markdown for user_message,
+# assistant_message and compaction_summary, toml for tool_call,
+# tool_result and everything else. The document pipes through a
+# renderer. This file carries the baseline: `bat` with the per-entry
+# language flag and the RUSHI_PREVIEW_THEME override (default theme
+# "Catppuccin Macchiato", to match the catppuccin tv theme). When bat
+# is absent, the document prints plain.
+#
+# The home-manager module builds this channel from
+# rushi-sessions-events-channel.nix with the `eventPreviewer` and
+# `eventTomlPreviewer` options. They replace the bat pipe with a
+# user-chosen renderer (for example `mdcat` or `glow` for the
+# markdown documents). That generated form is what the module
+# installs; this repo copy is the manual-install baseline.
+#
+# Requirements: `rushi-sessions` (the source and preview commands) and
+# `bat` (optional: the preview falls back to plain text without it).
+# The action that launches this channel needs `tv` on PATH, resolved
+# like the other interactive actions.
+
+[metadata]
+name = "rushi-sessions-events"
+description = "Fuzzy-search one session's events.jsonl entries and preview them"
+requirements = ["rushi-sessions"]
+
+[source]
+shell = "bash"
+display = "[{split:\t:1}] {split:\t:2} {split:\t:3}"
+output = "{split:\t:0}"
+frecency = false
+
+[[source.command]]
+name = "CWD"
+# No arguments: the binary reads the CWD's events.jsonl.
+run = "rushi-sessions events"
+
+[preview]
+shell = "bash"
+cached = true
+# Plain document from the binary, then the renderer. The shell asks the
+# binary for the language once (--print-lang) and picks the bat
+# language flag. The theme override reads RUSHI_PREVIEW_THEME when set.
+# A missing bat falls back to the plain document.
+command = """
+sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); t=$RUSHI_PREVIEW_THEME; if command -v bat >/dev/null 2>&1; then if [ -n \"$t\" ]; then th=\"--theme $t\"; else th=\"\"; fi; if [ \"$l\" = toml ]; then rushi-sessions event-preview . \"$q\" | bat --color=always -l toml --style=plain $th; else rushi-sessions event-preview . \"$q\" | bat --color=always -l markdown --style=plain $th; fi; else rushi-sessions event-preview . \"$q\"; fi' sh '{split:\t:0}'
+"""
+
+[ui.preview_panel]
+size = 75
+word_wrap = true

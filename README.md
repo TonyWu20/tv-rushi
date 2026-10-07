@@ -4,7 +4,10 @@
 channel for the rushi Unix agent harness. It gives a quick-peek window over
 rushi sessions. Each entry shows the session status, repo, last loop phase,
 and last activity. The preview panel shows a TOML status card. The card lists
-the last user and assistant messages and the recent events.
+the last user and assistant messages and the recent events. A second channel,
+`rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
+and previews each entry as a markdown or toml document. The `browse_events`
+action (alt-e) launches it from the session list.
 
 ## Features
 
@@ -13,7 +16,11 @@ the last user and assistant messages and the recent events.
 - Open a session in `rushi-tui` with ctrl-e.
 - Edit a message in `$EDITOR` (fallback `nvim`) and send it with ctrl-t.
   Idle: the loop starts detached. Live: `--no-run` appends.
-- Stop the session loop with ctrl-shift-k (SIGTERM).
+- Stop the session loop with alt-k (SIGTERM).
+- Fuzzy-search a session's `events.jsonl` with alt-e. A nested
+  `tv rushi-sessions-events` lists the entries and previews the
+  selected one. Inside tmux, a pane to the right of tv runs it.
+  Outside tmux, it runs in this terminal. Remote rows run it over ssh.
 
 ## Requirements
 
@@ -32,6 +39,10 @@ the last user and assistant messages and the recent events.
   ssh. A Nix profile on the remote is not on PATH, so set
   `RUSHI_SESSIONS_REMOTE_BIN` on the remote to name the binary, or use an
   absolute path.
+- `tv` itself, for the `browse_events` action. It launches the nested
+  events channel. The action resolves it on PATH, like the other
+  interactive actions. A remote row needs the events channel file on
+  the remote host. The same flake deployment carries it.
 
 ## Usage
 
@@ -39,6 +50,14 @@ the last user and assistant messages and the recent events.
 tv rushi-sessions                  # scan the current directory
 tv rushi-sessions ~/programming    # scan a given directory
 tv rushi-sessions /                # full disk scan (slow)
+```
+
+The events channel takes the session dir (the dir that holds
+`events.jsonl`):
+
+```sh
+tv rushi-sessions-events DIR       # DIR is a session dir
+tv rushi-sessions-events           # the CWD is the session dir
 ```
 
 The directory is television's `[PATH]` argument. television changes into it
@@ -53,6 +72,21 @@ programs."rushi-sessions" = {
   sourceRoots = [ "/export" "build:/export" "~/Downloads" ];
 };
 ```
+
+The events channel preview pipes each entry document into a renderer.
+The options are strings, default `bat`:
+
+```nix
+programs."rushi-sessions" = {
+  eventPreviewer = "mdcat --ansi";    # markdown documents
+  eventTomlPreviewer = "bat";         # toml documents
+};
+```
+
+A value other than `bat` is one command line, run through `sh -c` and
+reading the document from stdin. Pipe filters only. `mdfried` does not
+fit. It is a fullscreen TUI viewer, and the preview panel captures
+stdout.
 
 A root may be local or remote. A remote root is `host:/path` or
 `user@host:/path`, where `host` is an ssh alias. The binary runs the
@@ -79,7 +113,8 @@ Keybindings:
 | -------------- | --------------------------------------------------- |
 | ctrl-e         | Open the session in `rushi-tui`                     |
 | ctrl-t         | Edit a message in `$EDITOR` (fallback `nvim`), then send it |
-| ctrl-shift-k   | Send SIGTERM to the session loop                    |
+| alt-k          | Send SIGTERM to the session loop                    |
+| alt-e          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
 
 ## Install
 
@@ -101,7 +136,9 @@ home-manager.users.tony = {
 ```
 
 The host config must also load the television home-manager module. The module
-serializes the channel to `~/.config/television/cable/rushi-sessions.toml`.
+serializes the channels to
+`~/.config/television/cable/rushi-sessions.toml` and
+`~/.config/television/cable/rushi-sessions-events.toml`.
 
 The module set is keyed by system. Supported systems: `x86_64-linux`,
 `aarch64-linux`, and `aarch64-darwin`. Pick the key for your system. There
@@ -115,6 +152,7 @@ homeModules = [ inputs.tv-rushi.homeManagerModules."aarch64-darwin".default ];
 
 ```sh
 cp rushi-sessions.toml ~/.config/television/cable/rushi-sessions.toml
+cp rushi-sessions-events.toml ~/.config/television/cable/rushi-sessions-events.toml
 ```
 
 The copy needs `fd` and `rushi-sessions` on PATH. Build the binary from this
@@ -126,17 +164,20 @@ nix build .#rushi-sessions
 
 ### Nix flake
 
-The flake exposes the channel as a single-file package:
+The flake exposes each channel as a single-file package:
 
 ```sh
-nix build .#rushi-sessions-channel   # a store path holding the channel TOML
+nix build .#rushi-sessions-channel          # a store path holding the channel TOML
+nix build .#rushi-sessions-events-channel   # the events channel TOML
 ```
 
-A nixos-config can install that file through home-manager:
+A nixos-config can install those files through home-manager:
 
 ```nix
 home.file.".config/television/cable/rushi-sessions.toml".source =
   inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-channel;
+home.file.".config/television/cable/rushi-sessions-events.toml".source =
+  inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-events-channel;
 ```
 
 The input pins nixpkgs with `follows`. It reuses the config's own nixpkgs.
