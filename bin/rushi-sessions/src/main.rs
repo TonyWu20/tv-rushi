@@ -82,12 +82,15 @@ enum Command {
         path: String,
     },
     /// Print one TSV row per entry of the session's events.jsonl.
-    /// Columns: seq, type, ts, summary. Without DIR, the CWD is the
-    /// session dir.
+    /// Columns: seq, type, ts, summary. The rows come newest first.
+    /// Without DIR, the CWD is the session dir.
     Events {
         /// The session dir (the dir that holds events.jsonl).
         #[arg(value_name = "DIR")]
         dir: Option<PathBuf>,
+        /// Only the user and assistant messages.
+        #[arg(long)]
+        chat: bool,
     },
     /// Render one events.jsonl entry as a document: markdown for
     /// message entries, toml for everything else. SEQ is the 1-based
@@ -127,7 +130,7 @@ fn main() {
             mtime,
             path,
         } => preview(&status, &name, &repo, &phase, &last, &mtime, &path),
-        Command::Events { dir } => events(dir),
+        Command::Events { dir, chat } => events(dir, chat),
         Command::EventPreview {
             dir,
             seq,
@@ -750,19 +753,34 @@ fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
 }
 
 /// One TSV row per entry of the session's events.jsonl. The columns
-/// are seq (the 1-based line number), type, ts, and a one-line
-/// summary. The summary carries no tabs or newlines, so the row stays
-/// a single TSV line. Nothing is clipped; the list side truncates.
-fn events(dir: Option<PathBuf>) {
+/// are seq (the 1-based line number), type, ts (local wall-clock
+/// time), and a one-line summary. The summary carries no tabs or
+/// newlines, so the row stays a single TSV line. Nothing is clipped;
+/// the list side truncates. The rows come newest first. With `chat`,
+/// only the user and assistant messages print.
+fn events(dir: Option<PathBuf>, chat: bool) {
     let base = match dir {
         Some(d) => d,
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
-    for (seq, o) in numbered_events(&base) {
-        let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-        let ts = o.get("ts").map(ts_to_str).unwrap_or_default();
-        let summary = event_summary(&o);
-        println!("{seq}\t{ty}\t{ts}\t{summary}");
+    let rows = numbered_events(&base)
+        .into_iter()
+        .filter(|(_, o)| {
+            !chat
+                || matches!(
+                    o.get("type").and_then(|v| v.as_str()),
+                    Some("user_message") | Some("assistant_message")
+                )
+        })
+        .map(|(seq, o)| {
+            let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+            let ts = o.get("ts").map(ts_local).unwrap_or_default();
+            let summary = event_summary(&o);
+            format!("{seq}\t{ty}\t{ts}\t{summary}")
+        })
+        .collect::<Vec<String>>();
+    for row in rows.iter().rev() {
+        println!("{row}");
     }
 }
 
@@ -862,7 +880,9 @@ fn doc_lang(o: &Value) -> &'static str {
 /// The document for one event. Markdown entries open with a title and
 /// a metadata block, then the content, then optional reasoning and
 /// tool_calls sections. Every other event renders as a toml table
-/// named by its type.
+/// named by its type. The ts metadata is local wall-clock time. The
+/// id of a user_message does not print. The call ids of a tool_call
+/// (the id and call_id keys) do not print.
 fn doc_for(o: &Value) -> String {
     if doc_lang(o) == "markdown" {
         markdown_doc(o)
@@ -874,9 +894,20 @@ fn doc_for(o: &Value) -> String {
 fn markdown_doc(o: &Value) -> String {
     let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("event");
     let mut out = format!("# {ty}\n");
-    for k in ["ts", "id", "queue", "reason"] {
+    // The id of a user message is its queue id, not useful in the
+    // panel. The other types keep it.
+    let keys: &[&str] = if ty == "user_message" {
+        &["ts", "queue", "reason"]
+    } else {
+        &["ts", "id", "queue", "reason"]
+    };
+    for k in keys {
         if let Some(v) = o.get(k).filter(|v| !v.is_null()) {
-            out.push_str(&format!("{k}: {}\n", value_inline(v)));
+            if *k == "ts" {
+                out.push_str(&format!("ts: {}\n", ts_local(v)));
+            } else {
+                out.push_str(&format!("{k}: {}\n", value_inline(v)));
+            }
         }
     }
     if let Some(n) = o.get("tokens_before").and_then(|v| v.as_u64()) {
@@ -934,11 +965,28 @@ fn toml_doc(o: &Value) -> String {
         "tool_result" => "tool_result",
         _ => "event",
     };
+    // The ts of the table prints as local wall-clock time. The
+    // conversion rewrites the JSON value before the toml conversion.
+    let mut o2 = o.clone();
+    if let Value::Object(m) = &mut o2 {
+        if let Some(Value::String(t)) = m.get("ts").cloned() {
+            if let Some(l) = rfc3339_local(&t) {
+                m.insert("ts".to_string(), Value::String(l));
+            }
+        }
+    }
     let mut table = toml::map::Map::new();
-    if let Some(t) = json_to_toml(o) {
+    if let Some(t) = json_to_toml(&o2) {
         if let toml::Value::Table(inner) = t {
             table = inner;
         }
+    }
+    // The call ids of a tool_call are the id and call_id keys.
+    // They map the call to its result; the panel shows the result as
+    // its own entry.
+    if header == "tool_call" {
+        table.remove("id");
+        table.remove("call_id");
     }
     let mut doc = toml::map::Map::new();
     doc.insert(header.to_string(), toml::Value::Table(table));
@@ -1217,6 +1265,22 @@ fn ts_to_str(v: &Value) -> String {
     }
 }
 
+/// RFC3339 to the local wall-clock time. `None` when the string is
+/// not RFC3339. The local time is the running host's time zone.
+fn rfc3339_local(s: &str) -> Option<String> {
+    let dt = chrono::DateTime::parse_from_rfc3339(s).ok()?;
+    Some(dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+}
+
+/// The event ts as a local wall-clock time. A value that is not
+/// RFC3339 prints as is.
+fn ts_local(v: &Value) -> String {
+    match v {
+        Value::String(s) => rfc3339_local(s).unwrap_or_else(|| s.clone()),
+        _ => v.to_string(),
+    }
+}
+
 /// A JSON string (the `q()` helper): double-quoted, ASCII-escaped the way
 /// Python's `json.dumps` does, keeping non-ASCII as is.
 fn json_str(s: &str) -> String {
@@ -1279,6 +1343,68 @@ mod tests {
     fn ts_slice_iso() {
         assert_eq!(ts_slice("2026-09-17T21:13:24Z"), "21:13:24");
         assert_eq!(ts_slice(""), "");
+    }
+
+    #[test]
+    fn rfc3339_local_rejects_garbage() {
+        assert!(rfc3339_local("garbage").is_none());
+        assert!(rfc3339_local("").is_none());
+    }
+
+    #[test]
+    fn rfc3339_local_formats_wall_clock() {
+        // The date part holds for every offset from UTC-11 to UTC+12
+        // for this timestamp; the Z suffix does not survive.
+        let out = rfc3339_local("2026-10-01T01:30:59Z").unwrap();
+        assert_eq!(out.len(), 19, "{out}");
+        assert!(!out.contains('Z'), "{out}");
+        assert!(out.starts_with("2026-10-"), "{out}");
+    }
+
+    #[test]
+    fn ts_local_passes_through_unparseable() {
+        assert_eq!(ts_local(&Value::String("garbage".to_string())), "garbage");
+        assert_eq!(
+            ts_local(&Value::String("2026-10-01T01:30:59Z".to_string())).len(),
+            19
+        );
+    }
+
+    #[test]
+    fn user_message_doc_omits_its_id() {
+        let o = serde_json::json!({"type": "user_message", "id": "u1",
+            "ts": "2026-10-01T01:30:59Z", "content": "hi"});
+        let doc = markdown_doc(&o);
+        assert!(!doc.contains("\nid: "), "{doc}");
+        assert!(doc.contains("ts: "), "{doc}");
+        assert!(doc.contains("hi"), "{doc}");
+    }
+
+    #[test]
+    fn assistant_message_doc_keeps_its_id() {
+        let o = serde_json::json!({"type": "assistant_message", "id": "a1",
+            "content": "yo"});
+        let doc = markdown_doc(&o);
+        assert!(doc.contains("\nid: a1"), "{doc}");
+    }
+
+    #[test]
+    fn tool_call_doc_omits_its_call_ids() {
+        let o = serde_json::json!({"type": "tool_call", "id": "call_1",
+            "call_id": "call_1", "name": "bash",
+            "arguments": {"command": "ls"}, "ts": "2026-10-01T01:31:09Z"});
+        let doc = toml_doc(&o);
+        assert!(!doc.contains("call_1"), "{doc}");
+        assert!(!doc.contains("id"), "{doc}");
+        assert!(doc.contains("name = \"bash\""), "{doc}");
+    }
+
+    #[test]
+    fn tool_result_doc_keeps_its_id() {
+        let o = serde_json::json!({"type": "tool_result", "id": "call_1",
+            "is_error": false});
+        let doc = toml_doc(&o);
+        assert!(doc.contains("id = \"call_1\""), "{doc}");
     }
 
     #[test]

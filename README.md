@@ -19,8 +19,12 @@ action (alt-e) launches it from the session list.
 - Stop the session loop with alt-k (SIGTERM).
 - Fuzzy-search a session's `events.jsonl` with alt-e. A nested
   `tv rushi-sessions-events` lists the entries and previews the
-  selected one. Inside tmux, a pane to the right of tv runs it.
-  Outside tmux, it runs in this terminal. Remote rows run it over ssh.
+  selected one. The default view lists the user and assistant
+  messages, newest first. Ctrl+S cycles to the `All` view (every
+  entry). Inside tmux, a pane to the right of tv runs it.
+  Outside tmux, it runs in this terminal. Remote rows run it over
+  ssh. The previews drop the id of a user message and the call ids
+  of a tool call, and every timestamp shows as local time.
 
 ## Requirements
 

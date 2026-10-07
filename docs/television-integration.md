@@ -341,9 +341,16 @@ Decisions (user, 2026-10-04):
     exit. Remote rows run it over `ssh -t` on the remote host.
   - The events channel source is `rushi-sessions events`. It prints
     one TSV row per entry: seq (the 1-based line number of the entry
-    in `events.jsonl`), type, ts, and a one-line summary that keeps
-    the whole payload but flattens tabs and newlines. The list side
-    truncates; nothing is clipped in the source.
+    in `events.jsonl`), type, ts (local wall-clock time), and a
+    one-line summary that keeps the whole payload but flattens tabs
+    and newlines. The list side truncates; nothing is clipped in the
+    source. The rows come newest first.
+  - The events channel carries two source views. `User+Assistant`
+    lists only the user and assistant messages; it is the default
+    view, the first source command, and runs
+    `rushi-sessions events --chat`. `All` lists every entry and
+    runs the plain `events` command. Television runs the first
+    command on startup and cycles the rest on Ctrl+S.
   - The events channel preview renders the selected entry as a
     document. `user_message`, `assistant_message` and
     `compaction_summary` render as markdown; `tool_call`,
@@ -351,7 +358,11 @@ Decisions (user, 2026-10-04):
     prints the plain document; the channel pipes it into the
     renderer chosen by the `eventPreviewer` / `eventTomlPreviewer`
     module options (default bat, with the per-entry language flag,
-    the `RUSHI_PREVIEW_THEME` override and the plain fallback).
+    the `RUSHI_PREVIEW_THEME` override and the plain fallback). The ts of a
+    document is local wall-clock time. The id of a user_message
+    does not print. The call ids of a tool_call (the `id` and
+    `call_id` keys) do not print; a tool_result keeps its id, it is
+    its own entry.
 
 ## Usage
 
@@ -497,6 +508,12 @@ replaces the manual `cp`. The channel stays pure data in the store.
 - open_dir_tmux_h/v non-tmux branch (2026-10-05): verified at the
   shell level. The fork cds to the repo dir and execs the shell. The
   parent, a tv-fork stand-in, resumes after the shell exits.
+- Events channel live-use pty test (tv 0.15.9, this repo's log):
+  the default view is `User+Assistant` (only the message rows,
+  newest first). Ctrl+S cycles to `All` (the newest entry, an
+  `ext_status` row, on top). The preview panel shows the local
+  time, no user_message id, and no tool_call call ids. Esc exits
+  clean.
 - Events channel pty test (tv 0.15.9, this repo's 8.7k-line log):
   `tv rushi-sessions-events DIR` lists the entries. Typing a filter
   narrows the list. The preview panel shows the selected entry as a
@@ -618,6 +635,21 @@ replaces the manual `cp`. The channel stays pure data in the store.
     `limits.context_budget_tokens`. The `RUSHI_CONTEXT_WINDOW` env var
     overrides both. Without a resolvable window the line shows the raw
     `used` count. The `toml` crate parses the `rushi config` dump.
+
+37. Four changes to the events channel from live use. The events
+    list shows the newest entries first (the seq column keeps the
+    1-based line number, so the preview lookup is stable). The
+    channel carries two source views: `User+Assistant` (only the
+    user and assistant messages, the default view, the first source
+    command) and `All` (every entry). Television runs the first
+    source command on startup and cycles the rest on Ctrl+S. The
+    user+assistant view runs `rushi-sessions events --chat`. The
+    preview documents drop the `id` of a user_message and the call
+    ids of a tool_call (the `id` and `call_id` keys; a tool_result
+    keeps its id, it is its own entry). Every ts, in the list and
+    in the documents, prints as the local wall-clock time of the
+    running host (RFC3339 parsed with chrono, formatted
+    `YYYY-MM-DD HH:MM:SS`). A ts that is not RFC3339 prints as is.
 
 ## Decisions (user, 2026-10-08)
 

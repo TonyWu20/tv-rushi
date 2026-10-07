@@ -9,8 +9,12 @@
 # The channel fuzzy-searches one session's events.jsonl. It is launched
 # by the `browse_events` action of the rushi-sessions channel (which
 # gives the session dir as the CWD) or directly as
-# `tv rushi-sessions-events DIR`. The source command runs the
-# `rushi-sessions` binary's `events` subcommand against the CWD.
+# `tv rushi-sessions-events DIR`. The source commands run the
+# `rushi-sessions` binary's `events` subcommand against the CWD,
+# newest first. Two views: `User+Assistant` (the default, the first
+# source command) lists only the user and assistant messages, and
+# `All` lists every entry. Television runs the first command on
+# startup and cycles the rest on Ctrl+S.
 #
 # The channel takes two arguments: `eventPreviewer` and
 # `eventTomlPreviewer`, a string each (default `"bat"`). The preview
@@ -65,8 +69,16 @@ in
     shell = "bash";
     command = [
       {
-        name = "CWD";
-        # No arguments: the binary reads the CWD's events.jsonl.
+        # The default view (the first source command): only the user
+        # and assistant messages. No path argument: the binary reads
+        # the CWD's events.jsonl.
+        name = "User+Assistant";
+        run = "rushi-sessions events --chat";
+      }
+      {
+        # Every entry of the events.jsonl. No path argument: the
+        # binary reads the CWD's events.jsonl.
+        name = "All";
         run = "rushi-sessions events";
       }
     ];

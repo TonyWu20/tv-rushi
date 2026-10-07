@@ -7,18 +7,26 @@
 #   tv rushi-sessions-events /path/to/sessions/<session>
 #   tv rushi-sessions-events        # CWD is the session dir
 #
-# The source command runs the `rushi-sessions` binary. `rushi-sessions
-# events` prints one TSV row per entry of the CWD's events.jsonl:
+# The source commands run the `rushi-sessions` binary. `rushi-sessions
+# events` prints one TSV row per entry of the CWD's events.jsonl,
+# newest first:
 #   0 seq     1-based line number of the entry in events.jsonl
 #   1 type    the event type
-#   2 ts      the raw timestamp
+#   2 ts      the local wall-clock time of the entry
 #   3 summary the full one-line summary (the list side truncates)
+#
+# Two views: `User+Assistant` (the default, the first source command)
+# lists only the user and assistant messages, and `All` lists every
+# entry. Television runs the first command on startup and cycles the
+# rest on Ctrl+S.
 #
 # The list shows [type] ts summary. The preview panel renders the
 # selected entry as a document: markdown for user_message,
 # assistant_message and compaction_summary, toml for tool_call,
 # tool_result and everything else. The document pipes through a
-# renderer. This file carries the baseline: `bat` with the per-entry
+# renderer. The ts of a document is local wall-clock time. The id of
+# a user_message does not print. The call ids of a tool_call (the
+# id and call_id keys) do not print. This file carries the baseline: `bat` with the per-entry
 # language flag and the RUSHI_PREVIEW_THEME override (default theme
 # "Catppuccin Macchiato", to match the catppuccin tv theme). When bat
 # is absent, the document prints plain.
@@ -47,8 +55,16 @@ output = "{split:\t:0}"
 frecency = false
 
 [[source.command]]
-name = "CWD"
-# No arguments: the binary reads the CWD's events.jsonl.
+# The default view (the first source command): only the user and
+# assistant messages.
+name = "User+Assistant"
+# No path argument: the binary reads the CWD's events.jsonl.
+run = "rushi-sessions events --chat"
+
+[[source.command]]
+# Every entry of the events.jsonl.
+name = "All"
+# No path argument: the binary reads the CWD's events.jsonl.
 run = "rushi-sessions events"
 
 [preview]

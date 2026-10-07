@@ -22,6 +22,7 @@ fn fixture(tag: &str) -> PathBuf {
         r#"{"type":"user_message","id":"u1","ts":"2026-10-01T01:30:59Z","content":"line one\nline two","v":1}"#,
         "not json at all",
         r#"{"type":"ext_status","id":"loop_phase","ts":"2026-10-01T01:31:08Z","value":"wait","v":1}"#,
+        r#"{"type":"assistant_message","id":"a1","ts":"2026-10-01T01:31:09Z","content":"the assistant replies","v":1}"#,
         r#"{"type":"tool_call","id":"c1","ts":"2026-10-01T01:31:09Z","name":"bash","arguments":{"command":"ls -la"},"v":1}"#,
         r#"{"type":"tool_result","id":"c1","ts":"2026-10-01T01:31:17Z","is_error":false,"bytes":1537,"value":{"text":"ok output","details":{"exit_code":0,"stderr":null}},"v":1}"#,
         r#"{"type":"cancel","ts":"2026-10-01T01:31:20Z","v":1}"#,
@@ -43,23 +44,46 @@ fn run(args: &[&str], dir: &Path) -> String {
 }
 
 #[test]
-fn events_lists_every_entry_with_seq() {
+fn events_lists_every_entry_newest_first() {
     let d = fixture("events-list");
     let out = run(&["events"], &d);
     let rows: Vec<&str> = out.trim().lines().collect();
-    assert_eq!(rows.len(), 5, "{out}");
+    assert_eq!(rows.len(), 6, "{out}");
     // The bad second line is skipped, but its number stays in the file.
+    // The rows come newest first: the highest line number prints first.
     let seqs: Vec<&str> = rows.iter().map(|r| r.split('\t').next().unwrap()).collect();
-    assert_eq!(seqs, vec!["1", "3", "4", "5", "6"], "{out}");
-    // Output row 3 is file line 4, the tool_call. The summary keeps
+    assert_eq!(seqs, vec!["7", "6", "5", "4", "3", "1"], "{out}");
+    // Output row 3 is file line 5, the tool_call. The summary keeps
     // the command unclipped.
     let call = rows[2];
     let f: Vec<&str> = call.split('\t').collect();
     assert_eq!(f[1], "tool_call");
     assert_eq!(f[3], "bash ls -la");
     // The user message content flattened to one line, unclipped.
-    let user = rows[0].split('\t').collect::<Vec<&str>>();
+    let user = rows[5].split('\t').collect::<Vec<&str>>();
     assert_eq!(user[3], "line one line two");
+    // The ts column is the local wall-clock time: 19 chars, no Z.
+    let ts = f[2];
+    assert_eq!(ts.len(), 19, "{out}");
+    assert!(!ts.contains('Z'), "{out}");
+}
+
+#[test]
+fn events_chat_lists_only_the_messages() {
+    let d = fixture("events-chat");
+    let out = run(&["events", "--chat"], &d);
+    let rows: Vec<&str> = out.trim().lines().collect();
+    // Only the user and assistant messages, newest first.
+    let seqs: Vec<&str> = rows.iter().map(|r| r.split('\t').next().unwrap()).collect();
+    assert_eq!(seqs, vec!["4", "1"], "{out}");
+    let types: Vec<&str> = rows
+        .iter()
+        .map(|r| r.split('\t').nth(1).unwrap())
+        .collect();
+    assert_eq!(types, vec!["assistant_message", "user_message"], "{out}");
+    // The unfiltered list still carries every entry.
+    let all = run(&["events"], &d);
+    assert_eq!(all.trim().lines().count(), 6, "{all}");
 }
 
 #[test]
@@ -68,29 +92,59 @@ fn event_preview_renders_markdown_for_messages() {
     assert_eq!(run(&["event-preview", ".", "1", "--print-lang"], &d), "markdown\n");
     let doc = run(&["event-preview", ".", "1"], &d);
     assert!(doc.starts_with("# user_message\n"), "{doc}");
-    assert!(doc.contains("id: u1"), "{doc}");
+    // The id of a user_message does not print.
+    assert!(!doc.contains("\nid: "), "{doc}");
     assert!(doc.contains("line one\nline two"), "{doc}");
+    // The ts metadata is local wall-clock time: 19 chars, no Z.
+    let ts = doc
+        .lines()
+        .find(|l| l.starts_with("ts: "))
+        .map(|l| l.trim_start_matches("ts: "))
+        .unwrap();
+    assert_eq!(ts.len(), 19, "{doc}");
+    assert!(!ts.contains('Z'), "{doc}");
+}
+
+#[test]
+fn event_preview_assistant_message_keeps_its_id() {
+    let d = fixture("ev-md2");
+    let doc = run(&["event-preview", ".", "4"], &d);
+    assert!(doc.starts_with("# assistant_message\n"), "{doc}");
+    assert!(doc.contains("\nid: a1"), "{doc}");
 }
 
 #[test]
 fn event_preview_renders_toml_for_tool_events() {
     let d = fixture("ev-toml");
-    assert_eq!(run(&["event-preview", ".", "4", "--print-lang"], &d), "toml\n");
-    let doc = run(&["event-preview", ".", "4"], &d);
+    assert_eq!(run(&["event-preview", ".", "5", "--print-lang"], &d), "toml\n");
+    let doc = run(&["event-preview", ".", "5"], &d);
     assert!(doc.starts_with("[tool_call]\n"), "{doc}");
     assert!(doc.contains("name = \"bash\""), "{doc}");
     assert!(doc.contains("command = \"ls -la\""), "{doc}");
+    // The call ids of a tool_call do not print.
+    assert!(!doc.contains("id"), "{doc}");
+    assert!(!doc.contains("call_id"), "{doc}");
+    // The ts of the table is local wall-clock time: 19 chars, no Z.
+    let ts = doc
+        .lines()
+        .find(|l| l.starts_with("ts = "))
+        .and_then(|l| l.trim_start_matches("ts = ").split('"').nth(1))
+        .unwrap();
+    assert_eq!(ts.len(), 19, "{doc}");
+    assert!(!ts.contains('Z'), "{doc}");
     // The result keeps its value table and drops the null stderr.
-    let res = run(&["event-preview", ".", "5"], &d);
+    let res = run(&["event-preview", ".", "6"], &d);
     assert!(res.starts_with("[tool_result]\n"), "{res}");
     assert!(res.contains("text = \"ok output\""), "{res}");
     assert!(!res.contains("stderr"), "{res}");
+    // The tool_result keeps its id: only the tool_call drops it.
+    assert!(res.contains("id = \"c1\""), "{res}");
 }
 
 #[test]
 fn event_preview_unknown_type_gets_event_table() {
     let d = fixture("ev-other");
-    let doc = run(&["event-preview", ".", "6"], &d);
+    let doc = run(&["event-preview", ".", "7"], &d);
     assert!(doc.starts_with("[event]\n"), "{doc}");
     assert!(doc.contains("type = \"cancel\""), "{doc}");
 }
