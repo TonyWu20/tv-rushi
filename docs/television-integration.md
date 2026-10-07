@@ -373,6 +373,14 @@ Decisions (user, 2026-10-04):
     `call_id` keys) do not print; a tool_result keeps its id, it is
     its own entry.
 
+  - `ctrl-t` send_message on the events channel: same design as
+    the main channel's, local only, acting on the CWD's session.
+    The session dir is the CWD of the channel (television chdirs to
+    its `[PATH]` argument; the `browse_events` action starts the
+    nested tv in the session dir), so the body reads it with
+    `$(pwd)`. The source rows carry only the seq token, so the
+    command takes no split placeholder. It stays brace-free.
+
 ## Usage
 
 ```sh
@@ -763,3 +771,16 @@ replaces the manual `cp`. The channel stays pure data in the store.
     remote branch. `open_dir` (execute mode) now cds to the project
     dir on the remote branch too (it cded to the session dir, unlike
     the local branch and its own description).
+43. The events channel gains a `send_message` action (bound to
+    `ctrl-t`), reusing the main channel's design: open `$EDITOR`
+    (fallback `nvim`) on a `mktemp` file, then `rushi run
+    <session-dir> <msg>` (idle: start the loop detached with
+    `setsid`, stdio to `/dev/null`; live: append with `--no-run`;
+    an empty or whitespace-only message cancels). The main channel
+    resolves the session dir from the `{split:\t:6}` path token.
+    The events rows carry only the seq token, so the action takes
+    the session dir from the CWD instead: the channel always runs
+    with the session dir as its CWD (television chdirs to its
+    `[PATH]` argument; the `browse_events` action starts the
+    nested tv there). The body is local only (no `host:` rows in
+    this channel) and carries no split placeholder.

@@ -24,7 +24,9 @@ action (alt-e) launches it from the session list.
   entry). Inside tmux, a pane to the right of tv runs it.
   Outside tmux, it runs in this terminal. Remote rows run it over
   ssh. The previews drop the id of a user message and the call ids
-  of a tool call, and every timestamp shows as local time.
+  of a tool call, and every timestamp shows as local time. The view
+  also binds ctrl-t to its own `send_message`, which sends a
+  message to the session it was launched from.
 
 ## Requirements
 
@@ -139,6 +141,9 @@ Keybindings:
 | ctrl-t         | Edit a message in `$EDITOR` (fallback `nvim`), then send it |
 | alt-k          | Send SIGTERM to the session loop                    |
 | alt-e          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
+
+The events channel binds the same `ctrl-t` to its own `send_message`.
+It acts on the session dir the channel was launched from (its CWD).
 
 ## Install
 

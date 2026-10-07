@@ -48,7 +48,9 @@ watch = 5
 # Requirements: `rushi-sessions` (the source and preview commands) and
 # `bat` (optional: the preview falls back to plain text without it).
 # The action that launches this channel needs `tv` on PATH, resolved
-# like the other interactive actions.
+# like the other interactive actions. The `send_message` action needs
+# `rushi`, `setsid`, `stty` and `$EDITOR` (fallback `nvim`), resolved
+# on PATH, like the main channel's copy.
 
 [metadata]
 name = "rushi-sessions-events"
@@ -88,3 +90,22 @@ sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); t=$RUSHI_P
 [ui.preview_panel]
 size = 75
 word_wrap = true
+
+[keybindings]
+ctrl-t = "actions:send_message"
+
+[actions.send_message]
+# The session dir is the CWD of this channel: television chdirs to the
+# [PATH] argument, and the main channel's browse_events action starts
+# the nested tv in the session dir. The fork of this action inherits
+# it. The source rows carry only the seq token, so the command takes
+# no split placeholder. The body stays brace-free: television's string
+# pipeline treats a stray {group} as a template token.
+description = """
+Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.
+"""
+shell = "bash"
+mode = "fork"
+command = """
+sh -c 'rp=$(pwd); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; if [ "$live" = yes ]; then rushi run "$rp" "$m" --no-run; else setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi'
+"""
