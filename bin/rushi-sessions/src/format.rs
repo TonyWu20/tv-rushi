@@ -41,6 +41,34 @@ pub(crate) fn value_to_str(v: Option<&Value>) -> String {
         Some(other) => serde_json::to_string(other).unwrap_or_default(),
     }
 }
+/// The one-line summary of the two control-record types: the `rewind`
+/// marker and the `user_message_retract` marker. The kernel appends
+/// both to the log; they carry no `content` key, so the default
+/// content-based summary would print their raw JSON.
+pub(crate) fn marker_summary(o: &Value) -> String {
+    match o.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "rewind" => {
+            let t = o.get("target_seq").and_then(|v| v.as_u64()).unwrap_or(0);
+            let m = o.get("mode").and_then(|v| v.as_str()).unwrap_or("?");
+            let r = o.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            if r.is_empty() {
+                format!("rewind -> seq {t} ({m})")
+            } else {
+                format!("rewind -> seq {t} ({m}, {r})")
+            }
+        }
+        "user_message_retract" => {
+            let target = o.get("target").and_then(|v| v.as_str()).unwrap_or("?");
+            let r = o.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+            if r.is_empty() {
+                format!("retract {target}")
+            } else {
+                format!("retract {target} ({r})")
+            }
+        }
+        _ => String::new(),
+    }
+}
 /// A one-line summary of an event, or None to skip it. Mirrors the
 /// channel's `brief()` for tool_call, tool_result and ext_status.
 pub(crate) fn brief(o: &Value) -> Option<String> {
@@ -100,6 +128,7 @@ pub(crate) fn brief(o: &Value) -> Option<String> {
                 )),
             }
         }
+        "rewind" | "user_message_retract" => Some(marker_summary(o)),
         _ => {
             let c = o.get("content").and_then(|v| v.as_str()).unwrap_or("");
             Some(c.replace('\n', " "))
@@ -252,6 +281,15 @@ mod tests {
     fn flatten_ws_stays_one_line() {
         assert_eq!(flatten_ws("a\tb\nc\rd"), "a b c d");
         assert_eq!(flatten_ws("x"), "x");
+    }
+
+    #[test]
+    fn brief_rewind_and_retract_markers() {
+        let r = serde_json::json!({"type": "rewind", "target_seq": 2,
+            "mode": "on", "reason": "tui_pick"});
+        assert_eq!(brief(&r), Some("rewind -> seq 2 (on, tui_pick)".into()));
+        let x = serde_json::json!({"type": "user_message_retract", "target": "abc"});
+        assert_eq!(brief(&x), Some("retract abc".into()));
     }
 
 

@@ -1,5 +1,8 @@
 //! The `event-preview` command: render one events.jsonl entry as a
-//! document (markdown for messages, toml for everything else).
+//! document (markdown for messages, toml for everything else). The
+//! markdown document carries the model's reasoning text: the kernel
+//! stores it as structured items, and the `encrypted_content` blobs
+//! stay out of the document.
 use serde_json::Value;
 use std::path::Path;
 
@@ -19,7 +22,8 @@ fn doc_lang(o: &Value) -> &'static str {
 /// tool_calls sections. Every other event renders as a toml table
 /// named by its type. The ts metadata is local wall-clock time. The
 /// id of a user_message does not print. The call ids of a tool_call
-/// (the id and call_id keys) do not print.
+/// (the id and call_id keys) do not print. The `id` key of a
+/// `[[tool_calls]]` entry does not print either.
 fn doc_for(o: &Value) -> String {
     if doc_lang(o) == "markdown" {
         markdown_doc(o)
@@ -74,18 +78,17 @@ fn markdown_doc(o: &Value) -> String {
             out.push('\n');
         }
     }
-    if let Some(r) = o.get("reasoning").and_then(|v| v.as_str()) {
-        if !r.is_empty() {
-            out.push_str("\n## reasoning\n\n");
-            out.push_str(r);
-            if !r.ends_with('\n') {
-                out.push('\n');
-            }
+    let r = reasoning_text(o);
+    if !r.is_empty() {
+        out.push_str("\n## reasoning\n\n");
+        out.push_str(&r);
+        if !r.ends_with('\n') {
+            out.push('\n');
         }
     }
     if let Some(tc) = o.get("tool_calls").filter(|v| !v.is_null()) {
         out.push_str("\n## tool_calls\n\n```toml\n");
-        if let Some(t) = json_to_toml(tc) {
+        if let Some(t) = json_to_toml(tc).map(strip_call_id) {
             let mut m = toml::map::Map::new();
             m.insert("tool_calls".to_string(), t);
             out.push_str(&toml::to_string(&toml::Value::Table(m)).unwrap_or_default());
@@ -94,11 +97,79 @@ fn markdown_doc(o: &Value) -> String {
     }
     out
 }
+/// The `id` key of a `[[tool_calls]]` entry is the call id that
+/// links the call to its result row. The panel shows the result as
+/// its own entry, so the key drops out of the document.
+fn strip_call_id(t: toml::Value) -> toml::Value {
+    match t {
+        toml::Value::Array(items) => toml::Value::Array(
+            items
+                .into_iter()
+                .map(|item| match item {
+                    toml::Value::Table(mut m) => {
+                        m.remove("id");
+                        toml::Value::Table(m)
+                    }
+                    other => other,
+                })
+                .collect(),
+        ),
+        other => other,
+    }
+}
+/// The visible reasoning text of one event. The kernel stores
+/// `reasoning` either as a plain string or as a list of reasoning
+/// items (the kernel's `ReasoningItem` shape). Each item's visible
+/// text sits in `content`: a string, or a list of `{text, type}`
+/// parts. When `content` is absent, the `summary` fills in. The
+/// `encrypted_content` blob is opaque provider state; it never
+/// prints. Items without visible text are dropped.
+fn reasoning_text(o: &Value) -> String {
+    match o.get("reasoning") {
+        Some(Value::String(s)) => s.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .map(item_text)
+            .filter(|t| !t.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+/// One reasoning item's visible text, from its `content`, then its
+/// `summary`.
+fn item_text(item: &Value) -> String {
+    let mut out = String::new();
+    for src in [item.get("content"), item.get("summary")] {
+        match src {
+            Some(Value::String(s)) => out.push_str(s),
+            Some(Value::Array(parts)) => {
+                for p in parts {
+                    if let Some(t) = p.get("text").and_then(|v| v.as_str()) {
+                        out.push_str(t);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
 fn toml_doc(o: &Value) -> String {
-    let header = match o.get("type").and_then(|v| v.as_str()).unwrap_or("") {
-        "tool_call" => "tool_call",
-        "tool_result" => "tool_result",
-        _ => "event",
+    // The table takes its name from the event type when the type is
+    // a bare toml key (`rewind`, `user_message_retract`, ...). A
+    // type with other characters, or a missing type, falls back to
+    // `event`.
+    let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    let bare_key = |k: &str| {
+        !k.is_empty()
+            && k.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    };
+    let header = if bare_key(ty) {
+        ty.to_string()
+    } else {
+        "event".into()
     };
     // The ts of the table prints as local wall-clock time. The
     // conversion rewrites the JSON value before the toml conversion.
@@ -252,6 +323,9 @@ mod tests {
         assert!(d.contains("\n## reasoning\n\nthink\n"));
         assert!(d.contains("## tool_calls\n\n```toml\n"));
         assert!(d.contains("name = \"bash\""));
+        // The call id of the tool_calls entry does not print. The
+        // event id (c1 is absent, I is present) is the tell.
+        assert!(!d.contains("c1"), "{d}");
     }
 
 
@@ -267,11 +341,50 @@ mod tests {
 
 
     #[test]
-    fn toml_doc_unknown_type_event_table() {
-        let o = serde_json::json!({"type": "cancel", "ts": "T"});
+    fn toml_doc_rewind_table() {
+        let o = serde_json::json!({"type": "rewind", "ts": "T", "target_seq": 2,
+            "mode": "on", "reason": "tui_pick"});
+        let d = doc_for(&o);
+        assert!(d.starts_with("[rewind]\n"), "{d}");
+        assert!(d.contains("target_seq = 2"), "{d}");
+        assert!(d.contains("mode = \"on\""), "{d}");
+    }
+
+    #[test]
+    fn toml_doc_non_bare_type_event_table() {
+        let o = serde_json::json!({"type": "model.thinking", "ts": "T"});
         let d = doc_for(&o);
         assert!(d.starts_with("[event]\n"), "{d}");
-        assert!(d.contains("type = \"cancel\""));
+        assert!(d.contains("type = \"model.thinking\""));
+    }
+
+    #[test]
+    fn reasoning_doc_from_structured_items() {
+        let o = serde_json::json!({
+            "type": "assistant_message",
+            "content": "did it",
+            "reasoning": [
+                {"type": "reasoning_text",
+                 "content": [{"text": "step one ", "type": "reasoning_text"},
+                             {"text": "step two", "type": "reasoning_text"}],
+                 "encrypted_content": "sglang-reasoning-v1.opaque"}
+            ]
+        });
+        let d = doc_for(&o);
+        assert!(d.contains("## reasoning\n\nstep one step two\n"), "{d}");
+        assert!(!d.contains("opaque"), "{d}");
+    }
+
+    #[test]
+    fn reasoning_doc_empty_when_only_encrypted() {
+        let o = serde_json::json!({
+            "type": "assistant_message",
+            "content": "did it",
+            "reasoning": [{"type": "reasoning_text",
+                           "encrypted_content": "opaque"}]
+        });
+        let d = doc_for(&o);
+        assert!(!d.contains("## reasoning"), "{d}");
     }
 
 

@@ -33,6 +33,23 @@ fn fixture(tag: &str) -> PathBuf {
     d
 }
 
+fn rewind_fixture(tag: &str) -> PathBuf {
+    let d = std::env::temp_dir().join(format!("rushi-sessions-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).unwrap();
+    let lines = [
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:00Z","content":"first user msg","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"first answer","v":1}"#,
+        r#"{"type":"tool_call","ts":"2026-10-08T07:00:20Z","name":"bash","arguments":{"command":"ls"},"v":1}"#,
+        r#"{"type":"rewind","ts":"2026-10-08T07:01:00Z","target_seq":2,"mode":"on","reason":"tui_pick","v":1}"#,
+        r#"{"type":"user_message","ts":"2026-10-08T07:01:10Z","content":"re-asked","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:01:20Z","content":"branch B","v":1}"#,
+    ]
+    .join("\n");
+    std::fs::write(d.join("events.jsonl"), lines + "\n").unwrap();
+    d
+}
+
 fn run(args: &[&str], dir: &Path) -> String {
     let out = Command::new(bin())
         .args(args)
@@ -142,11 +159,48 @@ fn event_preview_renders_toml_for_tool_events() {
 }
 
 #[test]
-fn event_preview_unknown_type_gets_event_table() {
+fn event_preview_table_named_by_type() {
     let d = fixture("ev-other");
     let doc = run(&["event-preview", ".", "7"], &d);
-    assert!(doc.starts_with("[event]\n"), "{doc}");
+    assert!(doc.starts_with("[cancel]\n"), "{doc}");
     assert!(doc.contains("type = \"cancel\""), "{doc}");
+}
+
+#[test]
+fn events_all_view_tags_masked_rows() {
+    let d = rewind_fixture("ev-rewind");
+    let out = run(&["events"], &d);
+    let rows: Vec<&str> = out.trim().lines().collect();
+    assert_eq!(rows.len(), 6, "{out}");
+    // Newest first. Seq 4 is the rewind marker. Its summary is the
+    // kernel marker text, never the `[masked]` tag.
+    let marker = rows.iter().find(|r| r.starts_with("4\t")).unwrap();
+    assert!(marker.contains("rewind -> seq 2 (on, tui_pick)"), "{marker}");
+    assert!(!marker.contains("[masked]"), "{marker}");
+    // Seq 3 is the abandoned tool_call. It carries the tag.
+    let abandoned = rows.iter().find(|r| r.starts_with("3\t")).unwrap();
+    assert!(abandoned.starts_with("3\ttool_call\t"), "{abandoned}");
+    assert!(abandoned.contains("[masked]"), "{abandoned}");
+    // The active rows carry no tag.
+    for seq in ["1", "2", "5", "6"] {
+        let row = rows.iter().find(|r| r.starts_with(seq)).unwrap();
+        assert!(!row.contains("[masked]"), "{row}");
+    }
+}
+
+#[test]
+fn events_chat_view_keeps_active_messages_only() {
+    let d = rewind_fixture("ev-rewind");
+    let out = run(&["events", "--chat"], &d);
+    let seqs: Vec<&str> = out
+        .trim()
+        .lines()
+        .map(|l| l.split('\t').next().unwrap())
+        .collect();
+    // Newest first: the active messages only. Seqs 1 and 2 are the
+    // context up to the marker's target. Seqs 5 and 6 are the new
+    // active branch.
+    assert_eq!(seqs, vec!["6", "5", "2", "1"], "{out}");
 }
 
 #[test]

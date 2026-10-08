@@ -6,6 +6,7 @@ members = [
 
 [workspace.dependencies]
 libc = "0.2"
+rushi-common = "0.1.5"
 serde_json = "1.0"
 clap = { version = "4.6", features = ["derive"] }
 chrono = { version = "0.4", features = ["serde"] }

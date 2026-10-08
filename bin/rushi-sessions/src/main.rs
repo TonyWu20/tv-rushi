@@ -28,7 +28,9 @@
 //!   "Catppuccin Macchiato"); otherwise plain TOML is printed.
 //! - `rushi-sessions events [DIR] [--chat]`
 //!   Print one TSV row per entry of the session's events.jsonl, newest
-//!   first. `--chat` keeps only the user and assistant messages.
+//!   first. `--chat` keeps only the active-path user and assistant
+//!   messages. A row masked by a rewind marker carries a `[masked]`
+//!   summary prefix in the full view.
 //!
 //! - `rushi-sessions event-preview DIR SEQ [--print-lang]`
 //!   Render one events.jsonl entry as a document: markdown for message
@@ -88,7 +90,9 @@ enum Command {
     },
     /// Print one TSV row per entry of the session's events.jsonl.
     /// Columns: seq, type, ts, summary. The rows come newest first.
-    /// Without DIR, the CWD is the session dir.
+    /// Without DIR, the CWD is the session dir. `--chat` keeps the
+    /// active-path user and assistant messages. Rows masked by a
+    /// rewind marker carry a `[masked]` summary prefix.
     Events {
         /// The session dir (the dir that holds events.jsonl).
         #[arg(value_name = "DIR")]

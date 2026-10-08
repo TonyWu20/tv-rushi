@@ -1,10 +1,18 @@
 //! The `events` command: one TSV row per entry of events.jsonl, plus the
 //! log access helpers shared with the other commands.
+//!
+//! Rewound sessions carry the kernel's `rewind` markers in the same
+//! log. The active-path math comes from `rushi-common`, the kernel's
+//! shared crate: `log_active_ranges` projects the log onto the spans
+//! that survive every marker. The `chat` view shows the active path
+//! only. The full view keeps every row and tags the masked ones.
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::format::{flatten_ws, ts_local, value_inline};
+use rushi_common::rewind::{parse_rewind_event, seq_in_ranges};
+
+use crate::format::{flatten_ws, marker_summary, ts_local, value_inline};
 
 /// The 1-based line numbers of the parseable lines of the session's
 /// events.jsonl, paired with those events. Unparseable lines are
@@ -22,34 +30,58 @@ pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
         .filter_map(|(i, l)| serde_json::from_str::<Value>(l.trim()).ok().map(|v| (i as u64 + 1, v)))
         .collect()
 }
+/// The active path of one numbered log: the 1-based seq ranges that
+/// survive every `rewind` marker, per the kernel's `active_ranges`.
+/// A malformed marker is skipped, as the kernel skips it.
+pub(crate) fn log_active_ranges(rows: &[(u64, Value)]) -> Vec<(usize, usize)> {
+    let refs: Vec<_> = rows
+        .iter()
+        .filter_map(|(s, v)| parse_rewind_event(v, *s as usize))
+        .collect();
+    rushi_common::rewind::active_ranges(rows.len(), &refs)
+}
+/// One TSV row per numbered event, oldest first. The caller prints
+/// them reversed. The columns are seq, type, ts, summary. With
+/// `chat`, only the active-path user and assistant messages print.
+/// A row masked by a rewind marker carries a `[masked]` summary
+/// prefix. The marker itself never carries it.
+pub(crate) fn event_rows(
+    rows: &[(u64, Value)],
+    ranges: &[(usize, usize)],
+    chat: bool,
+) -> Vec<String> {
+    rows.iter()
+        .filter_map(|(seq, o)| {
+            let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+            let active = seq_in_ranges(*seq as usize, ranges);
+            let is_message = matches!(ty, "user_message" | "assistant_message");
+            if chat && (!active || !is_message) {
+                return None;
+            }
+            let ts = o.get("ts").map(ts_local).unwrap_or_default();
+            let mut summary = event_summary(o);
+            if !chat && !active && ty != "rewind" {
+                summary = format!("[masked] {summary}");
+            }
+            Some(format!("{seq}\t{ty}\t{ts}\t{summary}"))
+        })
+        .collect()
+}
 /// One TSV row per entry of the session's events.jsonl. The columns
 /// are seq (the 1-based line number), type, ts (local wall-clock
 /// time), and a one-line summary. The summary carries no tabs or
 /// newlines, so the row stays a single TSV line. Nothing is clipped;
 /// the list side truncates. The rows come newest first. With `chat`,
-/// only the user and assistant messages print.
+/// only the active-path user and assistant messages print. A row
+/// masked by a rewind marker carries a `[masked]` summary prefix.
 pub fn events(dir: Option<PathBuf>, chat: bool) {
     let base = match dir {
         Some(d) => d,
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
-    let rows = numbered_events(&base)
-        .into_iter()
-        .filter(|(_, o)| {
-            !chat
-                || matches!(
-                    o.get("type").and_then(|v| v.as_str()),
-                    Some("user_message") | Some("assistant_message")
-                )
-        })
-        .map(|(seq, o)| {
-            let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-            let ts = o.get("ts").map(ts_local).unwrap_or_default();
-            let summary = event_summary(&o);
-            format!("{seq}\t{ty}\t{ts}\t{summary}")
-        })
-        .collect::<Vec<String>>();
-    for row in rows.iter().rev() {
+    let rows = numbered_events(&base);
+    let ranges = log_active_ranges(&rows);
+    for row in event_rows(&rows, &ranges, chat).iter().rev() {
         println!("{row}");
     }
 }
@@ -59,6 +91,7 @@ pub fn events(dir: Option<PathBuf>, chat: bool) {
 fn event_summary(o: &Value) -> String {
     let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match t {
+        "rewind" | "user_message_retract" => marker_summary(o),
         "tool_call" => {
             let name = o
                 .get("name")
@@ -126,18 +159,6 @@ fn event_summary(o: &Value) -> String {
         }
     }
 }
-/// Parse the JSONL event log, skipping lines that do not parse.
-pub(crate) fn read_events(p: &Path) -> Vec<Value> {
-    let content = match fs::read_to_string(p) {
-        Ok(c) => c,
-        Err(_) => return Vec::new(),
-    };
-    content
-        .lines()
-        .filter_map(|l| serde_json::from_str::<Value>(l.trim()).ok())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +215,65 @@ mod tests {
         let seqs: Vec<u64> = rows.iter().map(|(n, _)| *n).collect();
         assert_eq!(seqs, vec![1, 3]);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn event_summary_rewind_and_retract_markers() {
+        let r = serde_json::json!({"type": "rewind", "ts": "2026-10-08T07:01:00Z",
+            "target_seq": 2, "mode": "on", "reason": "tui_pick"});
+        assert_eq!(event_summary(&r), "rewind -> seq 2 (on, tui_pick)");
+        let r2 = serde_json::json!({"type": "rewind", "target_seq": 5, "mode": "before"});
+        assert_eq!(event_summary(&r2), "rewind -> seq 5 (before)");
+        let x = serde_json::json!({"type": "user_message_retract", "target": "abc",
+            "reason": "user_edit"});
+        assert_eq!(event_summary(&x), "retract abc (user_edit)");
+    }
+
+    #[test]
+    fn log_active_ranges_masks_abandoned_spans() {
+        let v = |t: &str| serde_json::json!({"type": t});
+        let rows: Vec<(u64, Value)> = vec![
+            (1, v("user_message")),
+            (2, v("assistant_message")),
+            (3, v("rewind")),
+            (4, v("user_message")),
+            (5, v("assistant_message")),
+            (6, serde_json::json!({"type": "rewind", "target_seq": 4,
+                "mode": "on", "reason": "tui_pick"})),
+            (7, v("user_message")),
+        ];
+        // The marker at seq 3 is malformed (no target_seq), so the
+        // kernel skips it. The marker at seq 6 (target 4, on mode)
+        // keeps 1..4 and 7..end. Seq 5 is the abandoned branch.
+        let ranges = log_active_ranges(&rows);
+        assert_eq!(ranges, vec![(1, 4), (7, 7)]);
+    }
+
+    #[test]
+    fn event_rows_chat_keeps_active_messages_only() {
+        let v = |t: &str| serde_json::json!({"type": t});
+        let rows: Vec<(u64, Value)> = vec![
+            (1, v("user_message")),
+            (2, v("assistant_message")),
+            (3, v("tool_call")),
+            (4, serde_json::json!({"type": "rewind", "target_seq": 2,
+                "mode": "on"})),
+            (5, v("user_message")),
+            (6, v("assistant_message")),
+        ];
+        let ranges = log_active_ranges(&rows);
+        let chat: Vec<u64> = event_rows(&rows, &ranges, true)
+            .into_iter()
+            .map(|r| r.split('\t').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(chat, vec![1, 2, 5, 6]);
+        let all = event_rows(&rows, &ranges, false);
+        assert_eq!(all.len(), 6);
+        // The abandoned tool_call at seq 3 is tagged. The marker at
+        // seq 4 is never tagged.
+        assert!(all[2].contains("[masked]"), "{}", all[2]);
+        assert!(!all[3].contains("[masked]"), "{}", all[3]);
+        assert!(all[3].contains("rewind -> seq 2 (on)"), "{}", all[3]);
     }
 
 

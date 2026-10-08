@@ -795,3 +795,34 @@ replaces the manual `cp`. The channel stays pure data in the store.
     `eventWatch` home-manager option is dropped with it. The CLI
     flag `tv rushi-sessions-events --watch N` (a television flag,
     not channel data) still enables the reload for one run.
+46. The channel handles rewound sessions. `rushi-sessions` depends on
+    `rushi-common` (the kernel's shared crate, published on
+    crates.io, version-pinned: `rushi-common = "0.1.5"`). The
+    active-path math is the kernel's: `parse_rewind_event`,
+    `active_ranges` and `seq_in_ranges` from `rushi-common::rewind`.
+    The channel does not roll its own masking. No git rev pin.
+47. The `--chat` view shows the active path only: the messages the
+    model context actually sees. The full `events` view keeps every
+    row. Rows masked by a rewind marker carry a `[masked]` summary
+    prefix. The marker itself never carries the tag.
+48. The preview card scans keep only the active path. The card's
+    last-user / last-assistant messages, its usage line, its
+    recent-event list and its live thinking line all ignore the
+    abandoned branch.
+49. The event channel now extracts the model's reasoning text. The
+    kernel stores `reasoning` as structured items. Each item's
+    visible text sits in `content` (a string, or a list of
+    `{text, type}` parts). The `encrypted_content` blobs never
+    print. The toml document table takes its name from the event
+    type (`[rewind]`, `[user_message_retract]`). A type that is not
+    a bare toml key falls back to `[event]`.
+50. The `events_channel_toml_parses` integration test still asserted
+    the dropped `watch` key (decision 45 removed it from the repo
+    TOML, the test stayed stale and red). It now asserts the
+    absence of the key.
+51. The `id` key of a `[[tool_calls]]` entry does not print in the
+    event document. The key is the call id that links the call to
+    its result row, and the panel shows the result as its own
+    entry. The `[tool_call]` toml table already dropped id and
+    call_id; this closes the same gap in the assistant message's
+    `## tool_calls` section.

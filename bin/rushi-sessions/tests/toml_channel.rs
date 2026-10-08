@@ -45,5 +45,8 @@ fn session_channel_toml_parses() {
 fn events_channel_toml_parses() {
     let text = fs::read_to_string(repo().join("rushi-sessions-events.toml")).unwrap();
     let v: toml::Value = toml::from_str(&text).expect("rushi-sessions-events.toml must parse");
-    assert_eq!(v["watch"].as_integer(), Some(5));
+    // Decision 45: the channel carries no top-level `watch` key. A
+    // reload resets the preview panel's scroll position, so reloads
+    // stay one-run CLI flags (`tv rushi-sessions-events --watch N`).
+    assert!(v.get("watch").is_none());
 }

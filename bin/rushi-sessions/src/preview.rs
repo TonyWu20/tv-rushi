@@ -1,9 +1,14 @@
 //! The `preview` command: render the TOML preview card for one session.
+//! The card scans keep only the active path: the kernel's rewind
+//! markers mask the abandoned branch, so the card shows what the
+//! model context sees.
 use serde_json::Value;
 use std::fs;
 use std::path::Path;
 
-use crate::events::read_events;
+use rushi_common::rewind::seq_in_ranges;
+
+use crate::events::{log_active_ranges, numbered_events};
 use crate::format::{brief, clip, json_str, ts_slice, ts_to_str, value_to_str, which};
 use crate::remote::{preview_remote, split_remote};
 use crate::state::alive;
@@ -50,36 +55,18 @@ pub fn preview(
         status
     };
 
-    let epath = Path::new(path).join("events.jsonl");
-    let events = if epath.exists() {
-        read_events(&epath)
-    } else {
-        Vec::new()
-    };
+    // The numbered rows keep the 1-based seqs the kernel's rewind
+    // markers point at. The active-path filter drops the abandoned
+    // branch, so every card scan shows what the model context sees.
+    let rows = numbered_events(Path::new(path));
+    let ranges = log_active_ranges(&rows);
+    let events: Vec<Value> = rows
+        .into_iter()
+        .filter(|(s, _)| seq_in_ranges(*s as usize, &ranges))
+        .map(|(_, v)| v)
+        .collect();
 
-    let mut think = String::new();
-    let mut last_user = String::new();
-    let mut last_assistant = String::new();
-    for o in &events {
-        let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
-        if t == "ext_status" && o.get("id").and_then(|v| v.as_str()) == Some("model_thinking") {
-            think = value_to_str(o.get("value"));
-        }
-        if t == "user_message" {
-            last_user = o
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
-        if t == "assistant_message" {
-            last_assistant = o
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
-    }
+    let (think, last_user, last_assistant) = card_scans(&events);
 
     // The remote binary renders this same card with the host key,
     // fed by the env var the local binary set over ssh.
@@ -131,6 +118,35 @@ pub fn preview(
     }
 }
 
+/// The card's three text scans over the active-path events: the live
+/// `model_thinking` status, the last user message, and the last
+/// assistant message.
+pub(crate) fn card_scans(events: &[Value]) -> (String, String, String) {
+    let mut think = String::new();
+    let mut last_user = String::new();
+    let mut last_assistant = String::new();
+    for o in events {
+        let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if t == "ext_status" && o.get("id").and_then(|v| v.as_str()) == Some("model_thinking") {
+            think = value_to_str(o.get("value"));
+        }
+        if t == "user_message" {
+            last_user = o
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+        if t == "assistant_message" {
+            last_assistant = o
+                .get("content")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+        }
+    }
+    (think, last_user, last_assistant)
+}
 /// The TOML card text for one session. `host` (the ssh host of a
 /// remote session, set by the local binary through `HOST_ENV`)
 /// renders a `host` key right under `repo`.
@@ -244,6 +260,32 @@ mod tests {
             .position(|l| l.starts_with("repo    = "))
             .expect("repo line");
         assert!(lines[i + 1].starts_with("status  = "));
+    }
+
+    #[test]
+    fn card_scans_ignore_abandoned_branch() {
+        let d = std::env::temp_dir().join(format!("rushi-cardscan-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join("events.jsonl"), concat!(
+            "{\"type\":\"user_message\",\"content\":\"first user msg\"}\n",
+            "{\"type\":\"assistant_message\",\"content\":\"branch A answer\"}\n",
+            "{\"type\":\"rewind\",\"target_seq\":1,\"mode\":\"on\",\"reason\":\"tui_pick\"}\n",
+            "{\"type\":\"user_message\",\"content\":\"re-asked question\"}\n",
+        )).unwrap();
+        let rows = numbered_events(&d);
+        let ranges = log_active_ranges(&rows);
+        let active: Vec<Value> = rows
+            .into_iter()
+            .filter(|(s, _)| seq_in_ranges(*s as usize, &ranges))
+            .map(|(_, v)| v)
+            .collect();
+        let (think, last_user, last_assistant) = card_scans(&active);
+        assert_eq!(think, "");
+        assert_eq!(last_user, "re-asked question");
+        // The abandoned branch A answer is masked. No active assistant
+        // message exists yet after the marker.
+        assert_eq!(last_assistant, "");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
 }
