@@ -102,11 +102,19 @@ ctrl-t = "actions:send_message"
 # it. The source rows carry only the seq token, so the command takes
 # no split placeholder. The body stays brace-free: television's string
 # pipeline treats a stray {group} as a template token.
+#
+# The fork starts in the session dir, not the project dir, and the
+# loop re-anchors the session's `cwd` file to the starter's CWD on
+# every start. So the action cds to the recorded working dir first:
+# the `cwd` file, or dirname(dirname(session_dir)) when the file is
+# missing or its dir is gone. The live branch appends with a plain
+# `rushi run` (the kernel branches on the session lock itself); the
+# idle branch starts the loop detached.
 description = """
-Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached when the session is idle, and appends with `--no-run` when the loop is live. An empty message cancels.
+Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached in the session's recorded working dir when the session is idle, and appends from that dir when the loop is live. An empty message cancels.
 """
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 'rp=$(pwd); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; if [ "$live" = yes ]; then rushi run "$rp" "$m" --no-run; else setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi'
+sh -c 'rp=$(pwd); w=$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"$w\" ] || w=$(dirname \"$(dirname \"$rp\")\"); p=$(cat \"$rp/loop.pid\" 2>/dev/null); p=$(printf \"%s\" \"$p\" | tr -d \"[:space:]\"); live=no; if [ -n \"$p\" ]; then kill -0 \"$p\" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n \"$d\" ] || d=/tmp; f=$(mktemp \"$d/tv-rushi-msg.XXXXXX\"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n \"$ed\" ] || ed=nvim; $ed \"$f\"; [ -n \"$st\" ] && stty \"$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat \"$f\" 2>/dev/null); rm -f \"$f\"; if [ -z \"$(printf \"%s\" \"$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; exit 0; fi; cd \"$w\" && if [ \"$live\" = yes ]; then rushi run \"$rp\" \"$m\"; else setsid rushi run \"$rp\" \"$m\" </dev/null >/dev/null 2>&1 & fi'
 """

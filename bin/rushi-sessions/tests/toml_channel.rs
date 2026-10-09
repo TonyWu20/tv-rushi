@@ -14,6 +14,18 @@ fn repo() -> std::path::PathBuf {
         .unwrap()
 }
 
+/// The actions that resolve the session's project dir from the
+/// session's recorded `cwd` file (walked up to the nearest ancestor
+/// that holds a `sessions` dir), with the path-based
+/// dirname(dirname(session_dir)) as the fallback.
+const PROJECT_DIR_ACTIONS: [&str; 5] = [
+    "open",
+    "open_v",
+    "open_dir",
+    "open_dir_tmux_h",
+    "open_dir_tmux_v",
+];
+
 #[test]
 fn session_channel_toml_parses() {
     let text = fs::read_to_string(repo().join("rushi-sessions.toml")).unwrap();
@@ -25,17 +37,55 @@ fn session_channel_toml_parses() {
     assert!(cmd.contains("sh '{split:\t:6}'"), "tab token: {cmd}");
     let cmdv = v["actions"]["open_v"]["command"].as_str().unwrap();
     assert!(cmdv.contains("split-window -v"), "open_v: {cmdv}");
-    // open_dir_tmux_h: the remote branch opens a local pane that runs
-    // the remote shell over ssh, no remote tmux.
-    let odtmh = v["actions"]["open_dir_tmux_h"]["command"].as_str().unwrap();
-    assert!(odtmh.contains("ssh -t"), "open_dir_tmux_h: {odtmh}");
-    assert!(!odtmh.contains("ssh -T"), "open_dir_tmux_h must not spawn remote tmux: {odtmh}");
-    let odtmv = v["actions"]["open_dir_tmux_v"]["command"].as_str().unwrap();
-    assert!(!odtmv.contains("ssh -T"), "open_dir_tmux_v must not spawn remote tmux: {odtmv}");
+
+    // Decision 52: the project dir comes from the session's recorded
+    // `cwd` file (walked up to the nearest `sessions` ancestor), not
+    // from the session path. The dirname fallback stays for a missing
+    // or stale `cwd` file.
+    for a in PROJECT_DIR_ACTIONS {
+        let c = v["actions"][a]["command"].as_str().unwrap();
+        assert!(
+            c.contains("cat \"$rp/cwd\""),
+            "{a} must read the session's cwd file: {c}"
+        );
+        assert!(
+            c.contains("[ ! -d \"$w/sessions\" ]"),
+            "{a} must walk up to the sessions ancestor: {c}"
+        );
+        assert!(
+            c.contains("$(dirname \"$(dirname "),
+            "{a} keeps the dirname fallback: {c}"
+        );
+    }
+
+    // open_dir_tmux_h/v: the remote branch opens a local pane that
+    // runs the remote shell over ssh -t, so no remote tmux. The
+    // project dir resolves on the remote host with one read-only
+    // ssh -T call (the cwd file); the pane program stays plain.
+    for a in ["open_dir_tmux_h", "open_dir_tmux_v"] {
+        let c = v["actions"][a]["command"].as_str().unwrap();
+        assert!(c.contains("ssh -t"), "{a} remote pane: {c}");
+        assert!(c.contains("ssh -T"), "{a} remote cwd resolve: {c}");
+        assert!(
+            c.contains("c=\"cd $r && exec $sh2\""),
+            "{a} pane program runs the shell only: {c}"
+        );
+        assert!(!c.contains("tmux \"tmux"), "{a} must not spawn remote tmux: {c}");
+    }
+
     // open_dir: the remote branch cds to the project dir, not the
     // session dir.
     let od = v["actions"]["open_dir"]["command"].as_str().unwrap();
     assert!(od.contains("cd \\\"$r\\\" && exec"), "open_dir project dir: {od}");
+
+    // Decision 53: the live branch appends with a plain `rushi run`
+    // (the kernel branches on the session lock itself). No action
+    // carries the dropped `--no-run` flag.
+    let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
+    assert!(!sm.contains("--no-run"), "send_message: {sm}");
+    assert!(sm.contains("cd \"$w\" &&"), "send_message cds to the working dir: {sm}");
+    assert!(sm.contains("setsid rushi run"), "idle branch starts the loop: {sm}");
+
     // The preview command still carries the seven split tokens.
     let prev = v["preview"]["command"].as_str().unwrap();
     assert!(prev.contains("rushi-sessions preview"), "preview: {prev}");
@@ -49,4 +99,11 @@ fn events_channel_toml_parses() {
     // reload resets the preview panel's scroll position, so reloads
     // stay one-run CLI flags (`tv rushi-sessions-events --watch N`).
     assert!(v.get("watch").is_none());
+    // Decision 52/53: the action cds to the session's recorded
+    // working dir (the CWD of this channel is the session dir, not
+    // the project dir) and appends with a plain `rushi run`.
+    let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
+    assert!(sm.contains("rp=$(pwd)"), "session dir from CWD: {sm}");
+    assert!(sm.contains("cat \"$rp/cwd\""), "cwd file read: {sm}");
+    assert!(!sm.contains("--no-run"), "no dropped flag: {sm}");
 }

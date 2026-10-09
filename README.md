@@ -15,7 +15,10 @@ action (alt-e) launches it from the session list.
 - Show a status card in the preview panel. `bat` colors it when present.
 - Open a session in `rushi-tui` with ctrl-e.
 - Edit a message in `$EDITOR` (fallback `nvim`) and send it with ctrl-t.
-  Idle: the loop starts detached. Live: `--no-run` appends.
+  The send runs in the session's recorded working dir (the `cwd`
+  file, so a git worktree session stays in the worktree). Idle:
+  the loop starts detached. Live: `rushi run` appends (the kernel
+  branches on the session lock).
 - Stop the session loop with alt-k (SIGTERM).
 - Fuzzy-search a session's `events.jsonl` with alt-e. A nested
   `tv rushi-sessions-events` lists the entries and previews the

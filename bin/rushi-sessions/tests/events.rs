@@ -190,7 +190,7 @@ fn events_all_view_tags_masked_rows() {
 
 #[test]
 fn events_chat_view_keeps_active_messages_only() {
-    let d = rewind_fixture("ev-rewind");
+    let d = rewind_fixture("ev-rewind-chat");
     let out = run(&["events", "--chat"], &d);
     let seqs: Vec<&str> = out
         .trim()

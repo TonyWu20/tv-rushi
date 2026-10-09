@@ -291,25 +291,32 @@ Decisions (user, 2026-10-04):
   `execute` mode, so tv exits and the command takes over the terminal.
   - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -h -c`.
     The new pane sits to the right of tv, in the same window. It starts
-    in the directory that holds the sessions tree
-    (`dirname(dirname(session_dir))`). It
-    runs `rushi-tui <session>` in that pane. The pane closes on exit.
+    in the session's project dir: the recorded `cwd` (where the session's
+    tools run) walked up to the nearest ancestor that holds a `sessions`
+    dir. The path rule `dirname(dirname(session_dir))` stays the
+    fallback for a missing or stale `cwd` file. It runs
+    `rushi-tui <session>` in that pane. The pane closes on exit.
     Remote rows (`host:` prefix) also split a local pane: the pane runs
     `ssh -t HOST "cd REPO && rushi-tui NAME"`, so the remote TUI shows
-    up next to tv. No remote tmux server is needed.
-    Outside tmux, or without the `tmux` binary, the fork runs `cd` to
-    that base dir, then rushi-tui, as before. The TUI resolves a bare
-    name against a relative `sessions_root`, so the pane or fork must
-    start in that base dir. The session's tool `cwd` file is where
-    tools run, not where the TUI resolves the session, so it is not
-    used as the launch dir.
+    up next to tv. No remote tmux server is needed. The remote project
+    dir resolves on the remote host with one read-only `ssh -T` call
+    (the remote `cwd` file). Outside tmux, or without the `tmux`
+    binary, the fork runs `cd` to that base dir, then rushi-tui, as
+    before. The TUI resolves a bare name against a relative
+    `sessions_root`, so the pane or fork must start in that base dir.
+    The recorded `cwd` wins over the path rule: a git worktree symlinks
+    the `sessions` tree from the main worktree, so the session path
+    lands in the main worktree while the session works in the worktree
+    (decision 52).
   - `ctrl-v` open_v: same as open, but the new pane stacks below tv.
     It runs `tmux split-window -v -c` in the fork. The pane sits
     below the tv pane, in the same window. It starts in the same base
     dir and runs `rushi-tui <session>` there. Outside tmux, it is the
     plain fork, like open. Remote rows are the same ssh -t local pane, with the -v split.
   - `alt-o` open_dir: exit tv and land in a shell at the session's
-    project dir (`dirname(dirname(session_dir))`). The command cds there,
+    project dir: the recorded `cwd` walked up to the nearest `sessions`
+    ancestor, with the `dirname(dirname(session_dir))` path rule as the
+    fallback (decision 52). The command cds there,
     then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
     shell that launched tv. This mode matters: a forked `cd` dies with
     the child, so only `execute` mode can hand the terminal over.
@@ -329,15 +336,19 @@ Decisions (user, 2026-10-04):
     Outside tmux, it is the plain fork, like open_dir_tmux_h. Remote
     rows are the same ssh -t local pane, with the -v split.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
-    file, then `rushi run <abs-session-dir> <msg>`. Idle: it starts the
-    loop detached (`setsid`, stdio to `/dev/null`), so tv resumes at once.
-    Live: it appends with `--no-run`. An empty file cancels. The command
-    saves and restores the stty state around the editor launch.
-    Two separate locks are involved. The loop holds an exclusive
-    `.loop.lock` for its whole life. Log appends take only a brief
-    `events.jsonl` line lock. So `--no-run` appends into a live session
-    without touching `.loop.lock` and without writing `loop.pid`. The
-    live loop's pid lock stays in place for the TUI to read.
+    file, then `rushi run <abs-session-dir> <msg>`, from the session's
+    recorded working dir (the `cwd` file; the path rule is the
+    fallback). Idle: it starts the loop detached (`setsid` + `&`, stdio to
+    `/dev/null`). The kernel's idle `rushi run` blocks, so the detach
+    keeps tv responsive (decision 54). Live: it appends with a plain
+    `rushi run`; the installed kernel (0.1.0) branches on the session
+    lock itself, so a live append takes the log-line lock only (decision
+    53). An empty file cancels. The command saves and restores the stty
+    state around the editor launch. The kernel re-anchors the `cwd` file
+    to the starter's CWD on every loop start, so the action cds to the
+    recorded working dir first: without that, a worktree session
+    (symlinked `sessions` tree) re-anchors to the tv CWD and its tools
+    run in the wrong project (decision 52).
   - `alt-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
     when the pid is stale. A SIGTERMed loop restarts. State stays in the
     session log.
@@ -826,3 +837,39 @@ replaces the manual `cp`. The channel stays pure data in the store.
     entry. The `[tool_call]` toml table already dropped id and
     call_id; this closes the same gap in the assistant message's
     `## tool_calls` section.
+52. The actions resolve the session's project dir from the session's
+    recorded `cwd` file, not from the session path. The `open`,
+    `open_v`, `open_dir`, `open_dir_tmux_h` and `open_dir_tmux_v`
+    actions walk the recorded `cwd` up to the nearest ancestor that
+    holds a `sessions` dir and start there. `send_message` (both
+    channels) cds to the recorded `cwd` before it runs `rushi run`.
+    The path-based `dirname(dirname(session_dir))` stays the
+    fallback for a missing or stale `cwd` file. The worktree case
+    drove this: a git worktree symlinks the `sessions` tree from the
+    main worktree, so the session path always lands in the main
+    worktree while the session's `cwd` file records the worktree.
+    Remote rows resolve the dir on the remote host with one read-only
+    `ssh -T` call. The kernel re-anchors the `cwd` file to the
+    starter's CWD on every loop start, so `send_message` must cd to
+    the recorded dir first. Without that, a worktree session
+    re-anchors to the tv CWD, its tools run in the wrong project,
+    and the send looks like a no-op on the worktree.
+53. The `send_message` live branch drops the `--no-run` flag. The
+    installed kernel (rushi 0.1.0) has no `--no-run` option: `rushi
+    run` branches on the session lock itself. A live loop holds the
+    lock, so the task is appended with the log-line lock only and
+    the call exits 0. The idle branch keeps `setsid` + `&` (stdio to
+    `/dev/null`): the kernel's idle `rushi run` blocks, so the
+    detach keeps tv responsive (decision 54). The old live branch's `--no-run`
+    was a clap error on this kernel, so live sends never reached the
+    session. Supersedes the `--no-run` wording in decisions 12, 13
+    and 43 and in the `Verified` section (those lines were checked
+    against an earlier kernel build that shipped the flag).
+54. The kernel's idle `rushi run` blocks (user-confirmed against the
+    current kernel). The `send_message` idle branch therefore keeps
+    `setsid` + `&`, so the forked action does not hold the tv pane
+    while the kernel starts the loop. A single-call body, a plain
+    `rushi run` for both live and idle, is not possible on this
+    kernel. An idle send would freeze the pane until the first task
+    finishes. The live branch stays a foreground plain `rushi run`:
+    it appends and returns at once.
