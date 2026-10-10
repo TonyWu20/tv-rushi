@@ -349,6 +349,20 @@ Decisions (user, 2026-10-04):
     recorded working dir first: without that, a worktree session
     (symlinked `sessions` tree) re-anchors to the tv CWD and its tools
     run in the wrong project (decision 52).
+  - `alt-n` new_session: create a sibling session next to the
+    selected entry. The prompt opens `$EDITOR` (fallback `nvim`) on a
+    temp file: line 1 is the session name, the rest is the message.
+    The project dir is the entry's own `dirname(dirname(session_dir))`.
+    The new session anchors to the project where the entry lives, not
+    to the entry's recorded `cwd` file (decision 55). It runs
+    `rushi run NAME MSG --sessions-root <project>/sessions` from the
+    project dir (rushi 0.1.1+). The new loop starts detached
+    (`setsid` + `&`, stdio to `/dev/null`): a new session has no live
+    loop, so the kernel call blocks as the loop. An empty message
+    creates the session idle. An unusable name cancels: an empty line 1,
+    the comment line left in place, or a name that holds `/`, `.` or
+    `..`. Remote rows prompt locally and create the session over
+    `ssh -T` (decision 55).
   - `alt-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
     when the pid is stale. A SIGTERMed loop restarts. State stays in the
     session log.
@@ -610,6 +624,13 @@ replaces the manual `cp`. The channel stays pure data in the store.
   placeholder un-substituted. The command reaches the shell with the literal
   placeholder text. Keep `sh -c` bodies brace-free (use `if/then/fi`).
 - Full-disk scans are slow. Prefer a repo or `~/programming`.
+- `new_session` (decision 55) was verified against the installed
+  kernel 0.1.1 with a scratch project. The task-less call
+  `rushi run NAME --sessions-root <project>/sessions` created the
+  session dir, wrote the `cwd` file with the project dir, and
+  stopped idle. The action command ran under stub `rushi`, `ssh`
+  and editor binaries: local, idle, cancel, and remote branches
+  each issued the expected argv.
 
 ## Decisions (user, 2026-10-07)
 
@@ -873,3 +894,32 @@ replaces the manual `cp`. The channel stays pure data in the store.
     kernel. An idle send would freeze the pane until the first task
     finishes. The live branch stays a foreground plain `rushi run`:
     it appends and returns at once.
+
+## Decisions (user, 2026-10-10)
+
+55. The `new_session` action creates a session next to the selected
+    entry. `rushi run` (rushi 0.1.1) now takes `--sessions-root`
+    and `--cwd`, so the channel creates sessions in place. The
+    prompt opens `$EDITOR` (fallback `nvim`) on a temp file: line 1
+    is the session name, the rest is the message. The project dir is
+    the entry's own `dirname(dirname(session_dir))`. The new session
+    anchors to the project where the entry lives, not to the
+    entry's recorded `cwd` file: the decision-52 refinement stays
+    with the actions that act on the existing session. The action
+    runs `rushi run NAME MSG --sessions-root <project>/sessions`
+    from the project dir. It passes no `--cwd`: the kernel sets the
+    working dir to the sessions root's parent, the project dir
+    itself. An empty message creates the session idle (no task). An
+    unusable name cancels: an empty line 1, the comment line left in
+    place, or a name that holds `/`, `.` or `..`.
+56. `new_session` binds to `alt-n`. `ctrl-n` is television's
+    navigate-next key (0.15.9 defaults), so a ctrl binding would
+    hijack list navigation. The alt key keeps the channel's
+    `alt-*` family (`alt-o`, `alt-d`, `alt-v`, `alt-k`, `alt-e`).
+    The new loop starts detached (`setsid` + `&`, stdio to
+    `/dev/null`), like the `send_message` idle branch: a new
+    session has no live loop, so the kernel's `rushi run` blocks as
+    the loop. Remote rows prompt locally, resolve the project dir on
+    the remote host with one read-only `ssh -T` call, and create the
+    session there over `ssh -T`. The message passes as base64, like
+    `send_message`.

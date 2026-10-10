@@ -84,11 +84,13 @@ in
     # open_dir_tmux_v use it only when tv runs inside a tmux session
     # (each detects $TMUX and falls back to the plain fork).
     # (The interactive actions call binaries resolved on PATH, which are
-    # not listed as core requirements: `rushi` for send_message,
-    # `rushi-tui` for open/open_v, and `tmux` for open, open_v,
-    # open_dir_tmux_h and open_dir_tmux_v. send_message uses `mktemp`,
-    # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`), all in the
-    # standard Unix base. Remote source roots additionally need `ssh`,
+    # not listed as core requirements: `rushi` for send_message and
+    # new_session (0.1.1+ for the --sessions-root flag), `rushi-tui`
+    # for open/open_v, and `tmux` for open, open_v, open_dir_tmux_h
+    # and open_dir_tmux_v. send_message and new_session use `mktemp`,
+    # `stty`, `setsid`, `tr` and $EDITOR (fallback `nvim`);
+    # new_session adds `sed`, `head`, `tail` and `base64` (remote
+    # rows). All are in the standard Unix base. Remote source roots additionally need `ssh`,
     # reachable by the alias in the root, and the same
     # `rushi-sessions` and `rushi` on the remote host. The open actions
     # additionally need `rushi-tui` there: the local pane runs it over
@@ -141,6 +143,7 @@ in
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
     "alt-e" = "actions:browse_events";
+    "alt-n" = "actions:new_session";
   };
 
   actions.open = {
@@ -331,6 +334,38 @@ in
     mode = "fork";
     command = untab ''
       sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then p=$(ssh -T "$host" cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && ssh -T "$host" kill -0 "$p" 2>/dev/null; then ssh -T "$host" kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$rp")") on $host"; else echo "no live loop for "$(basename "$rp")" on $host (stale or absent pid)"; fi; else p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$rp")")"; else echo "no live loop for "$(basename "$rp")" (stale or absent pid)"; fi; fi' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.new_session = {
+    # Create a sibling session next to the selected entry. The prompt
+    # opens $EDITOR (fallback nvim) on a temp file: line 1 is the
+    # session name, the rest is the message. The project dir is the
+    # entry's own dirname(dirname(session_dir)): a new session anchors
+    # to the project where the entry lives, not to the entry's
+    # recorded cwd file. The command keeps $vars plain (no ${...}) so
+    # the Nix single-quote string does not interpolate them. The body
+    # stays brace-free: a stray {group} would break the television
+    # template and leave the split placeholder unsubstituted.
+    #
+    # rushi run takes --sessions-root <project>/sessions (rushi
+    # 0.1.1+), so the new session's recorded working dir is the
+    # sessions root's parent: the project dir itself.
+    #
+    # The loop starts detached (setsid + &, stdio to /dev/null): a
+    # new session has no live loop, so the kernel's rushi run blocks
+    # as the loop. An empty message omits the task: the session is
+    # created idle.
+    #
+    # A remote row (host: prefix) prompts locally, resolves the
+    # project dir on the remote host with one read-only ssh -T call
+    # (dirname dirname of the session path), and creates the session
+    # there over ssh -T: the message passes as base64.
+    description = "Create a new session next to the selected entry. The action opens $EDITOR (fallback nvim) on a temp file: line 1 is the session name, the rest is the message. The session lands in the entry's project dir: dirname(dirname(session dir)), sessions root <project>/sessions. It runs `rushi run NAME MSG --sessions-root <project>/sessions` from that project dir, detached (setsid + &, stdio to /dev/null). An empty message creates the session idle. An empty or unusable name (line 1 left as the comment, or it holds /, . or ..) cancels. Remote rows (host: prefix) prompt locally and create the session over ssh.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "printf \"%s\" \"\$(dirname \"\$(dirname \"$rp\")\")\""); else r=$(dirname "$(dirname "$rp")"); fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-new.XXXXXX"); printf "# line 1: session name, then the message\n" > "$f"; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; name=$(head -n1 "$f" | sed -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//"); m=$(tail -n +2 "$f"); rm -f "$f"; case "$name" in ""|"#"*|*/*|"."|"..") echo "new_session: empty or unusable session name, nothing created."; exit 0;; esac; msg=$(printf "%s" "$m" | tr -d "[:space:]"); if [ -n "$host" ]; then m64=$(printf "%s" "$m" | base64 | tr -d "\n"); if [ -n "$msg" ]; then setsid ssh -T "$host" "cd \"$r\" && rushi run \"$name\" \"\$(printf %s $m64 | base64 -d)\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & echo "new session $name starting in $r/sessions on $host"; else setsid ssh -T "$host" "cd \"$r\" && rushi run \"$name\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & echo "new idle session $name starting in $r/sessions on $host"; fi; else cd "$r" 2>/dev/null || echo "new_session: project dir $r missing, nothing created."; [ -d "$r" ] || exit 1; if [ -n "$msg" ]; then setsid rushi run "$name" "$m" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & echo "new session $name starting in $r/sessions (working dir $r)"; else setsid rushi run "$name" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & echo "new idle session $name starting in $r/sessions (working dir $r)"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 }

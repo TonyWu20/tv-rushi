@@ -52,7 +52,7 @@ in
   options.programs."rushi-sessions".enable = lib.mkOption {
     type = lib.types.bool;
     default = true;
-    description = "The rushi-sessions television channel: a peek at rushi sessions (status, loop phase, last activity) with open, send_message, kill and browse_events actions.";
+    description = "The rushi-sessions television channel: a peek at rushi sessions (status, loop phase, last activity) with open, send_message, new_session, kill and browse_events actions.";
   };
 
   options.programs."rushi-sessions".sourceRoots = lib.mkOption {

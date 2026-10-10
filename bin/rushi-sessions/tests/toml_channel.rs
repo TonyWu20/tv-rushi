@@ -89,6 +89,26 @@ fn session_channel_toml_parses() {
     // The preview command still carries the seven split tokens.
     let prev = v["preview"]["command"].as_str().unwrap();
     assert!(prev.contains("rushi-sessions preview"), "preview: {prev}");
+
+    // Decision 55: new_session creates a sibling session in the
+    // entry's project dir with an explicit --sessions-root (rushi
+    // 0.1.1+). The prompt is an $EDITOR file (line 1 the name, the
+    // rest the message); an unusable name cancels; the new loop
+    // starts detached, like the send_message idle branch.
+    let ns = v["actions"]["new_session"]["command"].as_str().unwrap();
+    assert!(
+        ns.contains("--sessions-root \"$r/sessions\""),
+        "new_session pins the sessions root: {ns}"
+    );
+    assert!(ns.contains("sh '{split:\t:6}'"), "tab token: {ns}");
+    assert!(ns.contains("setsid rushi run"), "new loop starts detached: {ns}");
+    assert!(ns.contains("\"#\"*"), "unusable-name guard: {ns}");
+    assert!(
+        ns.contains("mktemp \"$d/tv-rushi-new.XXXXXX\""),
+        "prompt file: {ns}"
+    );
+    let kb = v["keybindings"]["alt-n"].as_str().unwrap();
+    assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
 }
 
 #[test]
