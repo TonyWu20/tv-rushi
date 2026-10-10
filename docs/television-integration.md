@@ -923,3 +923,10 @@ replaces the manual `cp`. The channel stays pure data in the store.
     the remote host with one read-only `ssh -T` call, and create the
     session there over `ssh -T`. The message passes as base64, like
     `send_message`.
+
+57. The preview card's `[[recent-event]]` ts is the local wall-clock
+    time of the running host. The card sliced the raw RFC3339 string
+    and showed the UTC HH:MM:SS. It now uses `ts_local`, the helper
+    the `events` rows and the event documents share. A ts that is
+    not RFC3339 prints as is. `ts_slice` and `ts_to_str` went away
+    as dead code, and a card test pins the 19-char wall-clock shape.

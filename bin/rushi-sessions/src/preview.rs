@@ -9,7 +9,7 @@ use std::path::Path;
 use rushi_common::rewind::seq_in_ranges;
 
 use crate::events::{log_active_ranges, numbered_events};
-use crate::format::{brief, clip, json_str, ts_slice, ts_to_str, value_to_str, which};
+use crate::format::{brief, clip, json_str, ts_local, value_to_str, which};
 use crate::remote::{preview_remote, split_remote};
 use crate::state::alive;
 use crate::usage::{context_window, last_usage, usage_line};
@@ -202,8 +202,9 @@ pub(crate) fn render_card(
         .iter()
         .filter_map(|o| {
             let brief = brief(o)?;
-            let ts_raw = o.get("ts").map(ts_to_str).unwrap_or_default();
-            let ts = ts_slice(&ts_raw);
+            // Local wall-clock ts, the same ts_local the events rows
+            // use. A ts that is not RFC3339 prints as is.
+            let ts = o.get("ts").map(ts_local).unwrap_or_default();
             let ty = o
                 .get("type")
                 .and_then(|v| v.as_str())
@@ -286,6 +287,37 @@ mod tests {
         // message exists yet after the marker.
         assert_eq!(last_assistant, "");
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn card_recent_event_ts_is_local_wall_clock() {
+        let evts: Vec<Value> = vec![serde_json::json!({
+            "type": "user_message",
+            "ts": "2026-10-01T01:30:59Z",
+            "content": "hi"
+        })];
+        let card = render_card(
+            "IDLE", "foo", "repoR", None, "", "tools", "", "10-02 14:11", "u", "",
+            &evts,
+        );
+        let ts = card
+            .lines()
+            .find(|l| l.starts_with("ts    = "))
+            .expect("a recent-event ts line");
+        let v = ts.trim_start_matches("ts    = ");
+        // The json_str quotes wrap a 19-char wall clock. The shape
+        // check holds for every running-host offset; a UTC
+        // pass-through would carry the Z suffix and a date part.
+        assert_eq!(v.len(), 21, "{v}");
+        let inner = &v[1..20];
+        let shape = inner.chars().enumerate().all(|(i, c)| match i {
+            4 | 7 => c == '-',
+            10 => c == ' ',
+            13 | 16 => c == ':',
+            _ => c.is_ascii_digit(),
+        });
+        assert!(shape, "{v}");
+        assert!(!inner.contains('Z'), "{v}");
     }
 
 }

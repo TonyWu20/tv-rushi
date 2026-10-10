@@ -151,24 +151,6 @@ pub(crate) fn clip(s: &str, n: usize) -> String {
         s
     }
 }
-/// `str(ts)[11:19]` — the HH:MM:SS slice of an ISO timestamp (or the
-/// leftover of a relative one), empty when the slice is out of range.
-pub(crate) fn ts_slice(ts: &str) -> String {
-    let chars: Vec<char> = ts.chars().collect();
-    let start = 11.min(chars.len());
-    let stop = 19.min(chars.len());
-    if start < stop {
-        chars[start..stop].iter().collect()
-    } else {
-        String::new()
-    }
-}
-pub(crate) fn ts_to_str(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        _ => v.to_string(),
-    }
-}
 /// RFC3339 to the local wall-clock time. `None` when the string is
 /// not RFC3339. The local time is the running host's time zone.
 pub(crate) fn rfc3339_local(s: &str) -> Option<String> {
@@ -241,12 +223,6 @@ mod tests {
         assert_eq!(c, "aaaaaaaaaa ...");
     }
 
-
-    #[test]
-    fn ts_slice_iso() {
-        assert_eq!(ts_slice("2026-09-17T21:13:24Z"), "21:13:24");
-        assert_eq!(ts_slice(""), "");
-    }
 
 
     #[test]
