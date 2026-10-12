@@ -117,6 +117,14 @@ in
     command = sourceCommands;
     display = "[{split:\t:0}] {split:\t:2}/{split:\t:1} [{split:\t:3}] {split:\t:4}";
     output = "{split:\t:6}";
+    # Keep the source order of the rows, including the rows a typed
+    # query filters to. The binary prints them newest-mtime first, so
+    # the list and every query result show the most recently updated
+    # sessions on top. Without this, television re-ranks fuzzy
+    # matches by match score and the update-time order is lost.
+    no_sort = true;
+    # The frecency re-ranking is also off: it would float the most
+    # often opened sessions to the top and break the time order.
     frecency = false;
   };
 

@@ -79,12 +79,11 @@ pub fn source(active_only: bool, args: Vec<PathBuf>) {
     if active_only {
         rows.retain(|r| r.status == "ACTIVE");
     }
-    // ACTIVE first, then by mtime descending (the old sort key).
-    rows.sort_by(|a, b| {
-        let ka = a.status != "ACTIVE";
-        let kb = b.status != "ACTIVE";
-        ka.cmp(&kb).then_with(|| b.mtime.cmp(&a.mtime))
-    });
+    // Newest activity first, regardless of status: the channel sets
+    // `no_sort`, so television keeps the source order of matched rows.
+    // The list and every typed-query result show the most recently
+    // updated sessions on top.
+    sort_rows(&mut rows);
     for r in &rows {
         let line = [
             r.status,
@@ -99,6 +98,15 @@ pub fn source(active_only: bool, args: Vec<PathBuf>) {
         println!("{}", line);
     }
 }
+
+/// Newest activity first: sort the rows by mtime, descending. The
+/// sort is stable, so equal mtimes keep the scan order. Status is not
+/// a key: a live loop is usually the newest mtime, and a blocked one
+/// ranks by its real time.
+pub(crate) fn sort_rows(rows: &mut Vec<Row>) {
+    rows.sort_by(|a, b| b.mtime.cmp(&a.mtime));
+}
+
 /// Resolve the requested scan roots into an absolute list. No roots
 /// means the CWD when `cwd_fallback` is set (the original
 /// single-root behavior); otherwise the list stays empty. Relative
@@ -245,6 +253,46 @@ mod tests {
         assert_eq!(out, vec![s]);
     }
 
+
+    #[test]
+    fn sort_rows_newest_mtime_first() {
+        // A stale ACTIVE ranks below a fresher IDLE: status is not a
+        // key. The newest mtime wins the top row.
+        let mut rows = vec![
+            Row {
+                status: "IDLE",
+                name: "old".into(),
+                repo: "r".into(),
+                phase: "p".into(),
+                last: "l".into(),
+                mtime: 1000,
+                path: "a".into(),
+            },
+            Row {
+                status: "ACTIVE",
+                name: "new".into(),
+                repo: "r".into(),
+                phase: "p".into(),
+                last: "l".into(),
+                mtime: 3000,
+                path: "b".into(),
+            },
+            Row {
+                status: "IDLE",
+                name: "mid".into(),
+                repo: "r".into(),
+                phase: "p".into(),
+                last: "l".into(),
+                mtime: 2000,
+                path: "c".into(),
+            },
+        ];
+        sort_rows(&mut rows);
+        assert_eq!(
+            rows.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+            vec!["new".to_string(), "mid".to_string(), "old".to_string()]
+        );
+    }
 
     #[test]
     fn dedup_paths_keeps_distinct() {

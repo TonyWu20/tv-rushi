@@ -264,7 +264,11 @@ Decisions (user, 2026-10-04):
   Otherwise `IDLE`.
 - `phase`: last `loop_phase` value in the tail 100KB of `events.jsonl`.
 - `last` and `epoch`: mtime of `events.jsonl`. Fallback is `loop.pid`.
-- Sort: ACTIVE first, then newest activity first. `frecency = false`.
+- Sort: rows by mtime, newest first, regardless of status. The
+  channel sets `no_sort = true` (with `frecency = false`), so
+  television keeps the source order of the rows a typed query
+  filters to: query results show the most recently updated sessions
+  on top (decision 59).
 - The source and preview commands are the two `rushi-sessions` subcommands.
   television runs every command string through its template engine. The
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
@@ -637,6 +641,14 @@ replaces the manual `cp`. The channel stays pure data in the store.
   the name-before-hint, name-after-hint, hint-only, and
   name-replaces-hint cases. Each created or cancelled with the
   expected name.
+- Mtime order (decision 59): a fixture tree with mtimes 1000, 3000
+  and 2000 (the newest session ACTIVE, the others IDLE) makes
+  `source` print the rows newest-mtime first, statuses interleaved
+  (`tests/source.rs`). The mtime column of a live scan of this repo's
+  sessions dir is monotonically descending. The `no_sort` key is
+  accepted by television 0.15.9 (`SourceSpec` in its source; its
+  `test_no_sort_preserves_source_order` pins the match-order
+  semantics).
 
 ## Decisions (user, 2026-10-07)
 
@@ -948,3 +960,22 @@ replaces the manual `cp`. The channel stays pure data in the store.
     from the pre-fix run keeps its log. Its loop was live at fix
     time, so the rename to `sort-sessions-by-date` (with its
     `loop.meta` session field) waits for the loop to go idle.
+
+## Decisions (user, 2026-10-12)
+
+59. Typed-query results sort by the session's last update time.
+    Television re-ranks fuzzy matches by match score by default, so
+    a typed query would not keep the list's newest-first order. Two
+    changes make it so: the `source` command sorts its rows by mtime
+    descending only (the ACTIVE-first status grouping is dropped; a
+    live loop is usually the newest mtime, and a blocked one ranks
+    by its real time), and the channel source sets `no_sort = true`,
+    which selects television's index sort strategy, so the rows a
+    query matches keep the source order (television 0.15.x; its own
+    test `test_no_sort_preserves_source_order` pins the semantics).
+    The `frecency = false` setting already disabled the frecency
+    re-ranking. The unfiltered list now shows the plain newest-first
+    order too. The `rushi-sessions-events` channel is unchanged: its
+    rows come newest first from the binary, but a query there still
+    ranks by match score. A `source` integration test pins the mtime
+    order with interleaved ACTIVE and IDLE fixture sessions.

@@ -11,7 +11,9 @@ action (alt-e) launches it from the session list.
 
 ## Features
 
-- List rushi sessions under a directory. Active sessions sort first.
+- List rushi sessions under a directory. Rows sort by the session's
+  last update time, newest first. The channel sets `no_sort`, so a
+  typed query in television keeps that order for its results.
 - Show a status card in the preview panel. `bat` colors it when present.
 - Open a session in `rushi-tui` with ctrl-e.
 - Edit a message in `$EDITOR` (fallback `nvim`) and send it with ctrl-t.
