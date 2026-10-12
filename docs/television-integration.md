@@ -979,3 +979,26 @@ replaces the manual `cp`. The channel stays pure data in the store.
     rows come newest first from the binary, but a query there still
     ranks by match score. A `source` integration test pins the mtime
     order with interleaved ACTIVE and IDLE fixture sessions.
+
+## Decisions (user, 2026-10-12, continued)
+
+60. The tmux pane actions no longer trust the `-c` start dir alone. The
+    Mac deployment ran a tmux server whose own working directory had
+    been deleted (a dir was removed and recreated while the server
+    lived in it). That server's getcwd fails, and tmux (3.7) guards
+    the pane start-dir chdir on that getcwd, so every new pane on such
+    a server silently skips the `-c` chdir and lands in the dead dir.
+    On this Mac that broke `open`, `open_v`, `open_dir_tmux_h`,
+    `open_dir_tmux_v` and `browse_events`: the pane never reached the
+    dir the channel resolved from the session's `cwd` file, so the
+    channel "failed to resolve the cwd". The fix makes each pane
+    command self-anchoring: it cds to the resolved dir itself before
+    running the program (`cd "$dir" && <prog>`), which works even
+    when `-c` is ignored, since an absolute chdir from a dead cwd
+    still succeeds. The events channel's `send_message` guards its
+    `rp=$(pwd)`: when the channel CWD is empty or gone, the action
+    aborts with a message instead of sending to a ghost session.
+    Verified on the broken live server: the `open` action opened a
+    real `rushi-tui` in the session's project dir, and the events
+    `send_message` aborted cleanly in a dead-cwd pane and ran from
+    the project dir in the cd'd context.

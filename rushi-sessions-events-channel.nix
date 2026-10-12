@@ -42,7 +42,11 @@
 # run`: the loop re-anchors the `cwd` file to the starter's CWD on
 # every start, and the fork's CWD is the session dir, not the
 # project dir. It needs `rushi`, `setsid`, `stty` and
-# `$EDITOR` (fallback `nvim`) on PATH.
+# `$EDITOR` (fallback `nvim`) on PATH. The body resolves the
+# session dir with `pwd` and guards it: when the channel's CWD is
+# gone (a deleted dir, or a tmux pane on a server whose own cwd was
+# deleted) `pwd` prints nothing, and the action aborts with a message
+# instead of sending to a ghost session.
 
 { eventPreviewer ? "bat", eventTomlPreviewer ? "bat", ... }:
 
@@ -136,7 +140,7 @@ in
     # stays brace-free: a stray {group} would break the television
     # template.
     command = ''
-      sh -c 'rp=$(pwd); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] || w=$(dirname "$(dirname "$rp")"); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "$w" && if [ "$live" = yes ]; then rushi run "$rp" "$m"; else setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi'
+      sh -c 'rp=$(pwd 2>/dev/null); if [ -z "$rp" ] || [ ! -d "$rp" ]; then echo "rushi-sessions-events: cannot resolve the session dir (the channel CWD is gone); re-open it from a live directory."; exit 1; fi; w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] || w=$(dirname "$(dirname "$rp")"); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "$w" && if [ "$live" = yes ]; then rushi run "$rp" "$m"; else setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi'
     '';
   };
 }

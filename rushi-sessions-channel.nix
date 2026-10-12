@@ -170,7 +170,11 @@ in
     # When tv runs inside tmux, TMUX is set: create a new pane in the
     # current window. The pane sits to the right of tv (-h, a vertical
     # split) and starts in the repo dir (-c). It runs rushi-tui there.
-    # The pane closes when rushi-tui exits. Outside tmux, or when the
+    # The pane closes when rushi-tui exits. The pane command cds to the
+    # resolved dir itself: a tmux server whose own cwd was deleted
+    # fails its getcwd, and tmux (3.7) skips the -c chdir for every
+    # new pane on such a server. The explicit cd keeps the pane
+    # anchored. Outside tmux, or when the
     # tmux binary is missing, keep the original behavior: it runs `cd`
     # to the sessions root, then rushi-tui in this fork.
     #
@@ -191,7 +195,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -204,7 +208,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -241,7 +245,11 @@ in
     # split) and starts in the repo dir (-c). It runs the shell there.
     # The pane closes when the shell exits. tmux runs the pane command
     # through its default shell, so the pane command is the plain shell
-    # path. Outside tmux, or when the tmux binary is missing, the fork
+    # path. The pane command cds to the resolved dir first: a tmux
+    # server whose own cwd was deleted fails its getcwd, and tmux
+    # (3.7) skips the -c chdir for every new pane on such a server.
+    # The explicit cd keeps the pane anchored. Outside tmux, or when
+    # the tmux binary is missing, the fork
     # cds to the repo dir and execs the shell; tv resumes when the
     # shell exits.
     #
@@ -262,7 +270,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -280,7 +288,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "$sh2"; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -314,8 +322,12 @@ in
     # When tv runs inside tmux, TMUX is set: create a new pane in the
     # current window. The pane sits to the right of tv (-h, a vertical
     # split) and starts in the session dir (-c). It runs the nested
-    # tv there. The pane closes when the nested tv exits. Outside
-    # tmux, or when the tmux binary is missing, the fork cds to the
+    # tv there. The pane closes when the nested tv exits. The pane
+    # command cds to the session dir first: a tmux server whose own
+    # cwd was deleted fails its getcwd, and tmux (3.7) skips the -c
+    # chdir for every new pane on such a server. The explicit cd keeps
+    # the nested tv in the session dir. Outside tmux, or when the
+    # tmux binary is missing, the fork cds to the
     # session dir and runs the nested tv here. The outer tv pauses
     # and resumes when the nested tv exits.
     #
@@ -332,7 +344,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$rp" "tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
