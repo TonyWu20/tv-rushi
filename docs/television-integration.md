@@ -1002,3 +1002,14 @@ replaces the manual `cp`. The channel stays pure data in the store.
     real `rushi-tui` in the session's project dir, and the events
     `send_message` aborted cleanly in a dead-cwd pane and ran from
     the project dir in the cd'd context.
+61. The detached loop start no longer hard-depends on `setsid`. The
+    macOS base has no `setsid`, so the idle branches of `send_message`
+    and `new_session` would fail on the Mac. Every detached start now
+    branches at run time: `setsid` when it is on PATH (the Linux
+    base, unchanged behavior), `nohup` otherwise. The `nohup` path
+    keeps the loop immune to SIGHUP when the terminal closes, but
+    the loop stays in the starter's process group: a pane kill or a
+    Ctrl-C in the pane can still reach it. On a host that has both
+    tools, `setsid` wins, so Linux behavior is untouched. The
+    requirements notes drop `setsid` from the hard list; `nohup` is
+    in the standard Unix base.
