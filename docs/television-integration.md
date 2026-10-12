@@ -359,9 +359,11 @@ Decisions (user, 2026-10-04):
     project dir (rushi 0.1.1+). The new loop starts detached
     (`setsid` + `&`, stdio to `/dev/null`): a new session has no live
     loop, so the kernel call blocks as the loop. An empty message
-    creates the session idle. An unusable name cancels: an empty line 1,
-    the comment line left in place, or a name that holds `/`, `.` or
-    `..`. Remote rows prompt locally and create the session over
+    creates the session idle. The prompt file starts with a hint line.
+    The hint text is stripped from line 1, so the name may sit before,
+    after, or instead of the hint (decision 58). An empty or unusable
+    name (line 1 empty after the strip, or it holds `/`, `.` or `..`)
+    cancels. Remote rows prompt locally and create the session over
     `ssh -T` (decision 55).
   - `alt-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
     when the pid is stale. A SIGTERMed loop restarts. State stays in the
@@ -631,6 +633,10 @@ replaces the manual `cp`. The channel stays pure data in the store.
   stopped idle. The action command ran under stub `rushi`, `ssh`
   and editor binaries: local, idle, cancel, and remote branches
   each issued the expected argv.
+- `new_session` hint strip (decision 58): the stub-harness run covers
+  the name-before-hint, name-after-hint, hint-only, and
+  name-replaces-hint cases. Each created or cancelled with the
+  expected name.
 
 ## Decisions (user, 2026-10-07)
 
@@ -923,10 +929,22 @@ replaces the manual `cp`. The channel stays pure data in the store.
     the remote host with one read-only `ssh -T` call, and create the
     session there over `ssh -T`. The message passes as base64, like
     `send_message`.
-
 57. The preview card's `[[recent-event]]` ts is the local wall-clock
     time of the running host. The card sliced the raw RFC3339 string
     and showed the UTC HH:MM:SS. It now uses `ts_local`, the helper
     the `events` rows and the event documents share. A ts that is
     not RFC3339 prints as is. `ts_slice` and `ts_to_str` went away
     as dead code, and a card test pins the 19-char wall-clock shape.
+
+58. The `new_session` prompt file started with the hint line
+    `# line 1: session name, then the message` as data. A user who
+    typed the name before the hint got a concatenated session name
+    (`sort-sessions-by-date# line 1: session name, then the message`):
+    the hint was data, not a comment, and nothing stripped it. The
+    action now stores the hint in a variable and sed-strips the exact
+    hint text from line 1 before it reads the name. The name may sit
+    before, after, or instead of the hint. A line 1 that holds only
+    the hint gives an empty name and cancels. The stray session dir
+    from the pre-fix run keeps its log. Its loop was live at fix
+    time, so the rename to `sort-sessions-by-date` (with its
+    `loop.meta` session field) waits for the loop to go idle.

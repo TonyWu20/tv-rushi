@@ -102,6 +102,14 @@ fn session_channel_toml_parses() {
     );
     assert!(ns.contains("sh '{split:\t:6}'"), "tab token: {ns}");
     assert!(ns.contains("setsid rushi run"), "new loop starts detached: {ns}");
+    // Decision 58: the prompt file starts with a hint line; the exact
+    // hint text is sed-stripped from line 1, so a name typed before the
+    // hint does not concatenate with it.
+    assert!(
+        ns.contains("hint=\"# line 1: session name, then the message\""),
+        "hint stored in a variable: {ns}"
+    );
+    assert!(ns.contains("s/$hint//"), "hint stripped from line 1: {ns}");
     assert!(ns.contains("\"#\"*"), "unusable-name guard: {ns}");
     assert!(
         ns.contains("mktemp \"$d/tv-rushi-new.XXXXXX\""),
