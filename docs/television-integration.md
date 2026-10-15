@@ -1013,3 +1013,86 @@ replaces the manual `cp`. The channel stays pure data in the store.
     tools, `setsid` wins, so Linux behavior is untouched. The
     requirements notes drop `setsid` from the hard list; `nohup` is
     in the standard Unix base.
+
+## Analysis: floating pane vs display-popup for the prompt actions (2026-10-15)
+
+The user proposed tmux floating panes and `display-popup` for the
+`send_message` and `new_session` prompts. They asked whether the
+feature should rest on a tmux 3.8 prerequisite. Findings below come
+from the tmux repo `CHANGES` file, the 3.7c and 3.8 man pages, and
+live reproductions on this machine's tmux 3.7c (scratch `-L` socket,
+pty-attached client).
+
+Facts:
+
+1. `display-popup` (alias `popup`) landed in tmux 3.2. It runs a
+   command in a popup box drawn over the panes. The popup is a
+   per-client overlay that owns the keys while it is open. tmux
+   3.3 added the `-s`, `-S`, `-b`, `-B`, `-T`, and `-e` flags.
+   tmux 3.6 added `-k` and the in-popup modify semantics. The
+   3.7c and 3.8 flag sets are identical. That check read both man
+   pages and the 3.7c binary's `list-commands`.
+2. Every flag the prompt needs works on 3.7c. Live tests confirmed
+   `-d` (start directory), `-e` (environment), `-T` (title),
+   `-w`/`-h` (size), and `-E` (close on command exit). An outside
+   `display-popup` call blocks until the popup closes. That
+   blocking matches the wait semantics the action fork needs.
+3. tmux 3.8 polished floating panes. The `CHANGES` entry from 3.7c
+   to 3.8 lists: modal panes (`new-pane -O`), `new-pane -W` (wait
+   for the command to exit), `-T` and `-B` on `new-pane` and
+   `split-window`, keyboard move and resize of floating panes
+   (`move-pane`, `resize-pane`, z-index `-z`), `swap-pane` and
+   `join-pane` on floating panes, Ctrl-drag creating a floating
+   pane, `command-prompt -P` (a prompt inside a pane), and redraw
+   fixes including flicker with alternate screen applications.
+   Floating panes are new in 3.7. On 3.7 they move and resize by
+   mouse only.
+4. No 3.8 floating-pane item is essential to a transient prompt.
+   The prompt is a short-lived overlay over tv. That is exactly
+   what a popup window is. A floating pane is a non-modal,
+   persistent member of the window layout. It fits a different UX
+   where the editor coexists with the user's panes.
+5. The only 3.8 item on the popup path is cosmetic. The redraw
+   fixes include flicker with alternate screen applications. tv
+   is an alternate screen TUI. A 3.7c user may see flicker when
+   the popup opens and closes. tmux 3.8 removes it.
+6. Availability: tmux 3.8 released 2026-09-09. As of 2026-10-15,
+   nixpkgs master still builds 3.7c. This machine's tmux is the
+   nixpkgs 3.7c. A hard 3.8 prerequisite leaves the feature
+   unusable here until nixpkgs bumps tmux, or a source build is
+   added.
+
+Recommendation: do not build the feature on a tmux 3.8
+prerequisite. Build the tmux prompt path on `display-popup -E`
+(tmux 3.3+, verified on 3.7c). Keep the plain fork fallback for
+non-tmux and for tmux below 3.3. The action can probe
+`display-popup` for the flags it needs. A tmux 3.7+ gate is
+cheaper still. If the user wants the editor as a floating pane
+(non-modal, persistent), that is a 3.8 feature. Make 3.8 a tier,
+not a prerequisite: use the floating pane on 3.8+, fall back to
+the popup on 3.3+, fall back to the fork otherwise.
+
+## Decisions (user, 2026-10-15)
+
+62. `send_message` and `new_session` prompt in a tmux `display-popup` when tv runs in a tmux pane. The fork opens a `display-popup -E` box over tv. The editor prompt and the following `rushi run` step run as the popup command. The popup closes itself when the command exits. The pane underneath keeps rendering. This replaces the editor on the pane pty while tv is paused. The popup path needs no tmux 3.8: `-E`, `-T`, `-d`, `-e`, `-w`, and `-h` work on the tmux of this machine (3.7c). No floating-pane tier. The plain fork fallback stays for non-tmux and for older tmux. This refines the 2026-10-15 analysis, which proposed an optional 3.8 tier.
+
+63. Implemented the `display-popup` prompt path from decision 62, in both `send_message` and `new_session`.
+The action command now branches on a tmux version gate. When tv runs inside tmux 3.7+,
+the editor and the `rushi run` step run as the pipeline of a `display-popup -E` window
+over tv. The pipeline is a sh file that the action writes through an unquoted heredoc.
+The `display-popup -e` flags pass the state (RP, HOST, W, LIVE, F, ED) to the popup.
+`new_session` adds R and HINT. The multi-arg `sh <file>` form runs the pipeline.
+`-E` closes the popup when the pipeline exits. The fork blocks on that close.
+television resumes when the fork exits.
+
+On local rows, `-d` starts the editor in the session working dir
+(`new_session` uses the project dir). Remote rows pass no `-d`. A popup failure,
+a tmux below 3.7, or a run outside tmux falls back to the pane editor. The fallback
+text is byte-identical to the pre-change command, extracted verbatim.
+
+Verified: `nix eval` of both commands matches the hand-synced TOML decode
+byte-for-byte. The flake `rushi-sessions-channel` derivation serializes to the
+repo TOML byte-for-byte (`cmp`). `sh -n` accepts both commands. Smoke test on
+tmux 3.7c with a pty-attached client: the editor ran in the titled popup box,
+the `rushi run` step ran there, the popup closed on pipeline exit, and the
+base pane kept rendering.
