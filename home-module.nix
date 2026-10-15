@@ -18,7 +18,11 @@
 #     default empty). Local and remote roots mix in the same list.
 #   - registers the rushi-sessions-events channel (the fuzzy search
 #     over one session's events.jsonl) and the `eventPreviewer` /
-#     `eventTomlPreviewer` options that pick its renderers.
+#     `eventTomlPreviewer` options that pick its preview renderers.
+#     The `eventViewer` / `eventTomlViewer` options pick the
+#     viewers of its `view_message` action (bound to enter):
+#     markdown entries go to `eventViewer`, toml entries go to
+#     `eventTomlViewer`.
 #
 # This module does not declare `programs.television` itself. The host config
 # must also load the television home-manager module (the one that declares
@@ -73,6 +77,18 @@ in
     description = "The pipe command the rushi-sessions-events channel uses to render the toml documents (tool_call, tool_result and every other entry) in the preview panel. It reads the document from stdin. See eventPreviewer for the bat baseline and the custom-value semantics.";
   };
 
+  options.programs."rushi-sessions".eventViewer = lib.mkOption {
+    type = lib.types.str;
+    default = "mdfried";
+    description = "The markdown viewer of the rushi-sessions-events channel's view_message action (bound to enter). The fork pipes a markdown entry's document (user_message, assistant_message and compaction_summary) into the viewer, and the viewer takes over the pane until it exits. The value is one command line that reads the document from stdin, like eventPreviewer. The default mdfried is a fullscreen markdown viewer. Pick another viewer, for example glow or mdcat.";
+  };
+
+  options.programs."rushi-sessions".eventTomlViewer = lib.mkOption {
+    type = lib.types.str;
+    default = "bat";
+    description = "The toml viewer of the rushi-sessions-events channel's view_message action (bound to enter). The fork pipes a toml entry's document (tool_call, tool_result and every other entry) into the viewer, and the viewer takes over the pane until it exits. The value is one command line that reads the document from stdin, like eventPreviewer. The default is the plain bat pipe. Set another command line, for example `bat -p`, for a paged view.";
+  };
+
 
   config = lib.mkIf cfg.enable {
     home.packages = [ bin ];
@@ -85,11 +101,14 @@ in
     # It is registered next to the main channel: the browse_events
     # action (alt-e) of the main channel launches it with the session
     # dir as the tv [PATH] argument. The renderer options feed its
-    # preview command.
+    # preview command. The viewer options feed its view_message
+    # action.
     programs.television.channels."rushi-sessions-events" =
       (import ./rushi-sessions-events-channel.nix) {
         eventPreviewer = cfg.eventPreviewer;
         eventTomlPreviewer = cfg.eventTomlPreviewer;
+        eventViewer = cfg.eventViewer;
+        eventTomlViewer = cfg.eventTomlViewer;
       };
   };
 }

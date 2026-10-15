@@ -1118,3 +1118,54 @@ equals the repo TOML byte-for-byte. `sh -n` accepts the command.
 A smoke test on tmux 3.7c showed the editor and the `rushi run`
 step in the titled popup. The popup closed on exit and the pane
 below stayed live.
+
+65. The `rushi-sessions-events` channel gets a `view_message`
+action, bound to enter. The user wanted to read a selected entry in
+a real markdown program. The preview panel cannot host it: it
+captures stdout, and a fullscreen viewer needs the pane pty. The
+action runs in `fork` mode. Television pauses, the fork pipes the
+entry document (`rushi-sessions event-preview . SEQ`) into the
+viewer, and the viewer takes over the pane. Television resumes when
+the viewer exits. The body takes the seq through one split
+placeholder (`{split:\t:0}`). The binding overrides television's
+default enter action (ConfirmSelection).
+
+The viewer is the new `programs."rushi-sessions".eventViewer`
+home-manager option (default `mdfried`). `mdfried` is a fullscreen
+markdown TUI. It is a nixpkgs package, present in both home
+profiles. A non-default value is one command line, run through
+`sh -c` on the piped document, like the previewer options. The
+default is the baseline direct pipe the repo TOML carries.
+
+The body does not branch on the entry language. A toml document
+(a tool entry in the `All` view) prints as plain text inside the
+markdown viewer.
+
+Verified: the default `eventViewer` value of the channel Nix
+evaluates byte-for-byte equal to the repo TOML decode. `sh -n`
+accepts both the default and the `sh -c` forms. The full pipeline
+ran under a pty on a live session dir: `mdfried` read the piped
+document for an `assistant_message` seq and exited clean on
+timeout.
+66. The `view_message` action branches on the entry's document
+language. The user wants toml entries (the tool rows) to open in
+`bat` instead of the markdown viewer. The fork asks the binary for
+the language once (`--print-lang`) and branches: toml pipes into
+the toml viewer, markdown pipes into the markdown viewer. This
+supersedes the no-branching sentence of decision 65.
+
+The toml viewer is the new `programs."rushi-sessions".eventTomlViewer`
+home-manager option (default `bat`), mirroring `eventTomlPreviewer`
+on the preview panel. Any value is one command line, run through
+`sh -c` on the piped document, like the previewer options. Set
+`bat -p` for a paged view. `eventViewer` is now the markdown
+viewer. The defaults keep the baseline direct pipes the repo TOML
+carries: markdown to `mdfried`, toml to `bat`.
+
+Verified: the default `viewCommand` value of the channel Nix
+evaluates byte-for-byte equal to the repo TOML decode. `sh -n`
+accepts the default and a non-default form. The flake
+`rushi-sessions-events-channel` derivation serializes to the repo
+TOML byte-for-byte (`cmp`). The pipeline ran under a pty on a live
+session dir: `bat` took the piped toml document and `mdfried` took
+the piped markdown document, both exiting clean on timeout.

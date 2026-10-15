@@ -30,8 +30,12 @@ action (alt-e) launches it from the session list.
   Outside tmux, it runs in this terminal. Remote rows run it over
   ssh. The previews drop the id of a user message and the call ids
   of a tool call, and every timestamp shows as local time. The view
-  also binds ctrl-t to its own `send_message`, which sends a
-  message to the session it was launched from.
+  binds ctrl-t to its own `send_message`, which sends a message to
+  the session it was launched from. It binds enter to
+  `view_message`, which forks a viewer on the selected entry's
+  document. The fork picks the viewer from the document language:
+  markdown goes to `eventViewer` (default `mdfried`), toml goes to
+  `eventTomlViewer` (default `bat`).
 
 ## Requirements
 
@@ -57,6 +61,10 @@ action (alt-e) launches it from the session list.
   events channel. The action resolves it on PATH, like the other
   interactive actions. A remote row needs the events channel file on
   the remote host. The same flake deployment carries it.
+- `mdfried` (or the viewer named by `eventViewer`) and `bat` (or
+  the viewer named by `eventTomlViewer`), only for the `view_message`
+  action of the events channel. They resolve on PATH in the fork's
+  pane.
 
 ## Usage
 
@@ -94,13 +102,21 @@ The options are strings, default `bat`:
 programs."rushi-sessions" = {
   eventPreviewer = "mdcat --ansi";    # markdown documents
   eventTomlPreviewer = "bat";         # toml documents
+  eventViewer = "mdfried";            # the enter action's markdown viewer
+  eventTomlViewer = "bat";            # the enter action's toml viewer
 };
 ```
 
 A value other than `bat` is one command line, run through `sh -c` and
 reading the document from stdin. Pipe filters only. `mdfried` does not
-fit. It is a fullscreen TUI viewer, and the preview panel captures
-stdout.
+fit the preview panel. It is a fullscreen TUI viewer, and the panel
+captures stdout. That is what the `view_message` action is for: the
+fork picks the viewer from the entry's document language and pipes
+the document into it in the pane. Markdown goes to `eventViewer`
+(default `mdfried`). Toml goes to `eventTomlViewer` (default `bat`).
+The viewer takes over the pane, and television resumes when the
+viewer exits. Set `glow` or `mdcat` for another markdown viewer. Set
+`bat -p` for a paged toml view.
 
 The events channel carries no reload by default: a reload resets the
 preview panel's scroll position, which blocks reading a rendered
@@ -138,6 +154,9 @@ Keybindings:
 | alt-e          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
 
 The events channel binds the same `ctrl-t` to its own `send_message`.
+It binds enter to `view_message`, which forks a viewer chosen from
+the entry's document language: markdown goes to `eventViewer`
+(default `mdfried`), toml goes to `eventTomlViewer` (default `bat`).
 It acts on the session dir the channel was launched from (its CWD).
 
 ## Install

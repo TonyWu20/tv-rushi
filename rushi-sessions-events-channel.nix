@@ -16,13 +16,22 @@
 # `All` lists every entry. Television runs the first command on
 # startup and cycles the rest on Ctrl+S.
 #
-# The channel takes two arguments: `eventPreviewer` and
-# `eventTomlPreviewer`, a string each (default `"bat"`). The preview
-# command pipes the
-# binary's plain document into the renderer. The binary renders
-# markdown for user_message, assistant_message and
-# compaction_summary, and toml for tool_call, tool_result and every
-# other entry. Each renderer option controls one language.
+# The channel takes four arguments: `eventPreviewer`,
+# `eventTomlPreviewer`, `eventViewer` and `eventTomlViewer`, a
+# string each (defaults `"bat"`, `"bat"`, `"mdfried"` and
+# `"bat"`). The previewer options control the preview panel's
+# renderer per language. The preview command pipes the binary's
+# plain document into the renderer. The binary renders markdown
+# for user_message, assistant_message and compaction_summary, and
+# toml for tool_call, tool_result and every other entry. Each
+# renderer option controls one language. The `eventViewer` and
+# `eventTomlViewer` options are the commands the `view_message`
+# action (bound to enter) runs on the entry document: the fork
+# picks the command from the entry's language, pipes the document
+# into it, and the viewer takes over the pane until it exits. Any
+# value is one command line, reading the document from stdin. The
+# defaults (mdfried for markdown, bat for toml) are the baseline
+# direct pipes the repo TOML carries.
 # The channel carries no top-level `watch` key: a reload resets the
 # preview panel's scroll position. The CLI flag
 # `tv rushi-sessions-events --watch N` enables the reload for one run.
@@ -33,7 +42,7 @@
 # The repo copy rushi-sessions-events.toml carries the default (bat)
 # and is the manual-install baseline.
 #
-# The channel carries one action, `send_message` (bound to ctrl-t):
+# The channel carries two actions. `send_message` (bound to ctrl-t) is
 # the same design as the main channel's, local only. The session dir
 # is the CWD of the channel, so the body reads it with `$(pwd)` and
 # takes no split placeholder. It cds to the session's recorded
@@ -58,8 +67,17 @@
 # display-popup flags it uses are -E, -T, -w, -h, -d, -e and
 # the multi-arg command form. Below 3.7, or outside tmux, the
 # pane editor runs instead.
+#
+# `view_message` (bound to enter) forks a fullscreen viewer on the
+# selected entry's document: the body pipes
+# `rushi-sessions event-preview . SEQ` into a viewer chosen from
+# the entry's language, and the viewer takes over the pane until
+# it exits. The body asks the binary for the language once
+# (`--print-lang`), then branches: markdown to the `eventViewer`
+# command, toml to the `eventTomlViewer` command. The body takes
+# the seq through one split placeholder (`{split:\t:0}`).
 
-{ eventPreviewer ? "bat", eventTomlPreviewer ? "bat", ... }:
+{ eventPreviewer ? "bat", eventTomlPreviewer ? "bat", eventViewer ? "mdfried", eventTomlViewer ? "bat", ... }:
 
 let
   tab = "\t";
@@ -85,6 +103,28 @@ let
       ''
     else
       untab ("sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then " + render eventTomlPreviewer "toml" + "; else " + render eventPreviewer "markdown" + "; fi' sh '{split:@TAB@:0}'");
+
+  # The per-language pipeline of the view_message action. The
+  # defaults (mdfried for markdown, bat for toml) are the baseline
+  # form, a direct pipe, and are what the repo TOML carries. Every
+  # other value is one command line, run through `sh -c`, reading
+  # the document from stdin.
+  viewPipe = viewer:
+    if viewer == "mdfried" || viewer == "bat" then
+      "rushi-sessions event-preview . \"$q\" | ${viewer}"
+    else
+      "rushi-sessions event-preview . \"$q\" | sh -c \"${viewer}\"";
+
+  # The view_message command: the fork asks the binary for the
+  # entry's language once, then pipes the document into the viewer
+  # of that language. The defaults are the repo TOML baseline.
+  viewCommand =
+    if eventViewer == "mdfried" && eventTomlViewer == "bat" then
+      untab ''
+        sh -c 'q=$1; l=$(rushi-sessions event-preview . "$q" --print-lang); if [ "$l" = toml ]; then rushi-sessions event-preview . "$q" | bat; else rushi-sessions event-preview . "$q" | mdfried; fi' sh '{split:@TAB@:0}'
+      ''
+    else
+      untab ("sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then " + viewPipe eventTomlViewer + "; else " + viewPipe eventViewer + "; fi' sh '{split:@TAB@:0}'");
 in
 {
   metadata = {
@@ -133,6 +173,7 @@ in
 
   keybindings = {
     "ctrl-t" = "actions:send_message";
+    "enter" = "actions:view_message";
   };
 
   actions.send_message = {
@@ -169,5 +210,17 @@ in
       PIPE
       tmux display-popup -E -T "tv-rushi message" -w 80% -h 60% -d "$w" -e RP="$rp" -e W="$w" -e LIVE="$live" -e F="$f" -e ED="$ed" sh "$g"; rc=$?; rm -f "$g"; if [ "$rc" -eq 0 ]; then exit 0; fi; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "$w" && if [ "$live" = yes ]; then rushi run "$rp" "$m"; else if command -v setsid >/dev/null 2>&1; then setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & else nohup rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi; fi'
     '';
+  };
+
+  actions.view_message = {
+    # Multi-line form, like send_message: the value carries a
+    # trailing newline, matching the repo TOML leaf for leaf.
+    description = ''
+      View the selected entry in the channel's viewer. The fork picks the viewer from the entry's language: markdown goes to the eventViewer, toml goes to the eventTomlViewer. The viewer takes over the pane, and television resumes when the viewer exits. The baseline copy pipes markdown into mdfried and toml into bat. Set the options of the rushi-sessions home-manager module to pick the viewers.
+    '';
+
+    shell = "bash";
+    mode = "fork";
+    command = viewCommand;
   };
 }

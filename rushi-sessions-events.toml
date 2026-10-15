@@ -40,8 +40,11 @@
 # rushi-sessions-events-channel.nix with the `eventPreviewer` and
 # `eventTomlPreviewer` options. They replace the bat pipe with a
 # user-chosen renderer (for example `mdcat` or `glow` for the
-# markdown documents). That generated form is what the module
-# installs; this repo copy is the manual-install baseline.
+# markdown documents). The module also exposes `eventViewer` and
+# `eventTomlViewer`, the viewers of the `view_message` action
+# (for example `mdfried` and `bat`). That generated form is what
+# the module installs; this repo copy is the manual-install
+# baseline.
 #
 # Requirements: `rushi-sessions` (the source and preview commands) and
 # `bat` (optional: the preview falls back to plain text without it).
@@ -51,6 +54,8 @@
 # like the main channel's copy. The detached loop start uses `setsid`
 # when it is on PATH and falls back to `nohup` otherwise (the macOS
 # base has no setsid).
+# The `view_message` action needs its viewers on PATH (`mdfried`
+# and `bat` in this baseline copy).
 #
 # When tv runs inside tmux 3.7+, the prompt runs in a `display-popup`
 # window over tv: the editor and the send step run in the popup, the
@@ -104,6 +109,7 @@ word_wrap = true
 
 [keybindings]
 ctrl-t = "actions:send_message"
+enter = "actions:view_message"
 
 [actions.send_message]
 # The session dir is the CWD of this channel: television chdirs to the
@@ -138,4 +144,24 @@ sh -c 'rp=$(pwd 2>/dev/null); if [ -z \"$rp\" ] || [ ! -d \"$rp\" ]; then echo \
 st=\\$(stty -g 2>/dev/null); \\$ED \"\\$F\"; [ -n \"\\$st\" ] && stty \"\\$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=\\$(cat \"\\$F\" 2>/dev/null); rm -f \"\\$F\"; if [ -z \"\\$(printf \"%s\" \"\\$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; exit 0; fi; cd \"\\$W\" && if [ \"\\$LIVE\" = yes ]; then rushi run \"\\$RP\" \"\\$m\"; echo \"message sent to \\$RP\"; sleep 2; else if command -v setsid >/dev/null 2>&1; then setsid rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & fi; echo \"message queued for \\$RP\"; sleep 2; fi; fi
 PIPE
 tmux display-popup -E -T \"tv-rushi message\" -w 80% -h 60% -d \"$w\" -e RP=\"$rp\" -e W=\"$w\" -e LIVE=\"$live\" -e F=\"$f\" -e ED=\"$ed\" sh \"$g\"; rc=$?; rm -f \"$g\"; if [ \"$rc\" -eq 0 ]; then exit 0; fi; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n \"$ed\" ] || ed=nvim; $ed \"$f\"; [ -n \"$st\" ] && stty \"$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat \"$f\" 2>/dev/null); rm -f \"$f\"; if [ -z \"$(printf \"%s\" \"$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; exit 0; fi; cd \"$w\" && if [ \"$live\" = yes ]; then rushi run \"$rp\" \"$m\"; else if command -v setsid >/dev/null 2>&1; then setsid rushi run \"$rp\" \"$m\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"$rp\" \"$m\" </dev/null >/dev/null 2>&1 & fi; fi'
+"""
+
+[actions.view_message]
+# The fork pipes the selected entry's document into a viewer chosen
+# from the entry's language and runs it in the pane: the viewer
+# takes over the pane, then television resumes when it exits. The
+# source rows carry the seq token, so the body takes one split
+# placeholder, {split:\t:0}. The body asks the binary for the
+# language once (--print-lang), then branches: markdown to the
+# markdown viewer, toml to the toml viewer. This baseline copy
+# pipes markdown into mdfried and toml into bat. The
+# home-manager module exposes the viewers as the `eventViewer` and
+# `eventTomlViewer` options.
+description = """
+View the selected entry in the channel's viewer. The fork picks the viewer from the entry's language: markdown goes to the eventViewer, toml goes to the eventTomlViewer. The viewer takes over the pane, and television resumes when the viewer exits. The baseline copy pipes markdown into mdfried and toml into bat. Set the options of the rushi-sessions home-manager module to pick the viewers.
+"""
+shell = "bash"
+mode = "fork"
+command = """
+sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then rushi-sessions event-preview . \"$q\" | bat; else rushi-sessions event-preview . \"$q\" | mdfried; fi' sh '{split:\t:0}'
 """
