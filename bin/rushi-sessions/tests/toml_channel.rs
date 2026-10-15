@@ -86,6 +86,18 @@ fn session_channel_toml_parses() {
     assert!(sm.contains("cd \"$w\" &&"), "send_message cds to the working dir: {sm}");
     assert!(sm.contains("setsid rushi run"), "idle branch starts the loop: {sm}");
 
+    // The prompt file is a markdown (.md) file, so $EDITOR detects the
+    // markdown filetype. The pane editor opens in the session's recorded
+    // working dir, so typed relative paths complete against it.
+    assert!(
+        sm.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
+        "prompt file is a .md file: {sm}"
+    );
+    assert!(
+        sm.contains("if [ -z \"$host\" ] && [ -n \"$w\" ]; then cd \"$w\" 2>/dev/null; fi; $ed \"$f\""),
+        "pane editor cds to the project dir: {sm}"
+    );
+
     // The preview command still carries the seven split tokens.
     let prev = v["preview"]["command"].as_str().unwrap();
     assert!(prev.contains("rushi-sessions preview"), "preview: {prev}");
@@ -114,6 +126,17 @@ fn session_channel_toml_parses() {
     assert!(
         ns.contains("mktemp \"$d/tv-rushi-new.XXXXXX\""),
         "prompt file: {ns}"
+    );
+    // The prompt file is a markdown (.md) file, so $EDITOR detects the
+    // markdown filetype. The pane editor opens in the entry's project dir,
+    // so typed relative paths complete against it.
+    assert!(
+        ns.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
+        "prompt file is a .md file: {ns}"
+    );
+    assert!(
+        ns.contains("if [ -z \"$host\" ] && [ -n \"$r\" ]; then cd \"$r\" 2>/dev/null; fi; $ed \"$f\""),
+        "pane editor cds to the project dir: {ns}"
     );
     let kb = v["keybindings"]["alt-n"].as_str().unwrap();
     assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
