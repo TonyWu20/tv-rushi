@@ -1088,7 +1088,8 @@ television resumes when the fork exits.
 On local rows, `-d` starts the editor in the session working dir
 (`new_session` uses the project dir). Remote rows pass no `-d`. A popup failure,
 a tmux below 3.7, or a run outside tmux falls back to the pane editor. The fallback
-text is byte-identical to the pre-change command, extracted verbatim.
+is the guarded pane editor command with the nohup loop-start fallback
+(the remote version of the pre-change command).
 
 Verified: `nix eval` of both commands matches the hand-synced TOML decode
 byte-for-byte. The flake `rushi-sessions-channel` derivation serializes to the
@@ -1096,3 +1097,24 @@ repo TOML byte-for-byte (`cmp`). `sh -n` accepts both commands. Smoke test on
 tmux 3.7c with a pty-attached client: the editor ran in the titled popup box,
 the `rushi run` step ran there, the popup closed on pipeline exit, and the
 base pane kept rendering.
+
+64. The `rushi-sessions-events` channel's `send_message` also gets the
+`display-popup` prompt path. The user pointed out that the events
+channel carries the same action. The new command stays local-only,
+like the old events body. It resolves the session dir from the
+channel CWD, guarded: when the CWD is gone it reports and aborts.
+It takes no split placeholder. On tmux 3.7+, the editor
+and the send step run in a `display-popup -E` window over tv.
+
+The pipeline is a temp sh file written through an unquoted heredoc
+and passed over the -e flags. `-d` opens the editor in the session
+working dir. A popup failure, a tmux below 3.7, or a run outside
+tmux, the pane editor runs as before. The fallback is the
+guarded pane editor command with the nohup loop-start fallback.
+
+Verified: `nix eval` of the command matches the events TOML decode
+byte-for-byte. The flake `rushi-sessions-events-channel` derivation
+equals the repo TOML byte-for-byte. `sh -n` accepts the command.
+A smoke test on tmux 3.7c showed the editor and the `rushi run`
+step in the titled popup. The popup closed on exit and the pane
+below stayed live.
