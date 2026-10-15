@@ -1169,3 +1169,29 @@ accepts the default and a non-default form. The flake
 TOML byte-for-byte (`cmp`). The pipeline ran under a pty on a live
 session dir: `bat` took the piped toml document and `mdfried` took
 the piped markdown document, both exiting clean on timeout.
+67. The tmux version gate of `new_session` and `send_message` no longer
+uses a shell brace group. A `{ ... }` group inside an action command made
+the television template processing (0.15.9) leave the `{split:\t:6}`
+placeholder unsubstituted. The literal token reached the shell as the
+first action argument. The row parse treated it as a remote row, host
+part `{split`. The ssh call then failed with `hostname contains invalid
+characters`. No session was created and no message was sent. The gate
+is rewritten as nested brace-free `if` tests. The 3.7+ semantics are
+unchanged: `tmo=yes` when `$TMUX` is set, the tmux binary is on PATH,
+and the version is 3.7 or higher. The events channel `send_message`
+gate gets the same rewrite. It carries no split placeholder. The other
+row-token actions stayed brace-free since the 0.15.9 analysis. That is
+why only these two actions failed.
+
+Reproduced on the deployed tv 0.15.9: the brace-gated command left the
+token literal in the fork. The host parse produced `{split`. ssh
+printed the hostname error in the tv pane. With the brace-free gate the
+same token substitutes and the actions run.
+
+Verified end to end on tv 0.15.9 with the built channel files and the
+real `rushi`: `new_session` created the session dir under the entry
+project through the popup path. `send_message` recorded the message in
+the selected session `events.jsonl`. No hostname error and no token
+fragment in the pane output. The flake `rushi-sessions-channel` and
+`rushi-sessions-events-channel` derivations build clean. `sh -n` accepts
+the rewritten gate.
