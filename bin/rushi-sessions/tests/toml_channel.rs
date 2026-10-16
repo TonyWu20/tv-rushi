@@ -157,4 +157,16 @@ fn events_channel_toml_parses() {
     assert!(sm.contains("rp=$(pwd 2>/dev/null)"), "session dir from CWD: {sm}");
     assert!(sm.contains("cat \"$rp/cwd\""), "cwd file read: {sm}");
     assert!(!sm.contains("--no-run"), "no dropped flag: {sm}");
+    // The prompt file is a markdown (.md) file, so $EDITOR detects the
+    // markdown filetype. The pane editor opens in the session's recorded
+    // working dir, so typed relative paths complete against it.
+    assert!(
+        sm.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
+        "prompt file is a .md file: {sm}"
+    );
+    assert!(
+        sm.contains("if [ -n \"$w\" ]; then cd \"$w\" 2>/dev/null; fi; $ed \"$f\""),
+        "pane editor cds to the project dir: {sm}"
+    );
+
 }
