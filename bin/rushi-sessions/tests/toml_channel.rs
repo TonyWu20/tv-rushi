@@ -154,7 +154,7 @@ fn events_channel_toml_parses() {
     // working dir (the CWD of this channel is the session dir, not
     // the project dir) and appends with a plain `rushi run`.
     let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
-    assert!(sm.contains("rp=$(pwd)"), "session dir from CWD: {sm}");
+    assert!(sm.contains("rp=$(pwd 2>/dev/null)"), "session dir from CWD: {sm}");
     assert!(sm.contains("cat \"$rp/cwd\""), "cwd file read: {sm}");
     assert!(!sm.contains("--no-run"), "no dropped flag: {sm}");
 }
