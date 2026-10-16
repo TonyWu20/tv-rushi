@@ -59,14 +59,16 @@
 # deleted) `pwd` prints nothing, and the action aborts with a message
 # instead of sending to a ghost session.
 #
-# When tv runs inside tmux 3.7+, the prompt runs in a
-# `display-popup` window over tv: the editor and the send step
-# run in the popup, the popup closes on exit, the pane below
-# keeps rendering, the fork waits for the close. The popup path
-# adds `cat` and a second `mktemp` (the pipeline file); the
-# display-popup flags it uses are -E, -T, -w, -h, -d, -e and
-# the multi-arg command form. Below 3.7, or outside tmux, the
-# pane editor runs instead.
+# When tv runs inside tmux 3.8+, the prompt runs in a floating
+# pane (`tmux new-pane -f`) above tv: the editor and the send
+# step run in the pane, the pane dies on exit, the panes below
+# keep rendering, and the fork returns at pane creation. The
+# floating-pane path adds `cat` and a second `mktemp` (the
+# pipeline file); the new-pane flags it uses are -f, -c, -x,
+# -y, -X, -Y, -T and the multi-arg command form. The pane
+# is not modal: copy-mode, window switching and the prefix
+# bindings stay available while it is open. Below 3.8, or
+# outside tmux, the pane editor runs instead.
 #
 # `view_message` (bound to enter) forks a fullscreen viewer on the
 # selected entry's document: the body pipes
@@ -181,7 +183,7 @@ in
     # whose value carries a trailing newline. The multi-line Nix
     # string matches that value leaf for leaf.
     description = ''
-      Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached in the session's recorded working dir when the session is idle, and appends from that dir when the loop is live. An empty message cancels. When tv runs inside tmux 3.7+, the editor and the send step run in a `display-popup` window over tv: the popup closes when the step exits, and the pane below keeps rendering. Outside tmux, or on tmux below 3.7, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the session's recorded working dir, so typed relative paths complete against it.
+      Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with `rushi run <session> <msg>`: it starts the loop detached in the session's recorded working dir when the session is idle, and appends from that dir when the loop is live. An empty message cancels. When tv runs inside tmux 3.8+, the editor and the send step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the session's recorded working dir, so typed relative paths complete against it.
     '';
 
     shell = "bash";
@@ -193,22 +195,23 @@ in
     # stays brace-free: a stray {group} would break the television
     # template.
     # The command branches on tmux, like the main channel's. When $TMUX
-    # is set, the tmux binary is on PATH, and `tmux -V` reports 3.7+,
-    # the prompt runs in a `display-popup` window. The editor and the
-    # send step run as the popup pipeline: a sh file written through
-    # an unquoted heredoc (the pipeline's $ and backslash are escaped
-    # for that layer), passed over the display-popup -e flags, and
-    # run by the multi-arg `sh <pipeline>` form. -E closes the popup
-    # when the pipeline exits; the fork blocks on that close, then
-    # television resumes. A popup failure falls through to the pane
-    # editor below. Below 3.7, or outside tmux, only the pane editor
-    # runs: $EDITOR on the message file with the stty state saved
+    # is set, the tmux binary is on PATH, and `tmux -V` reports 3.8+,
+    # the prompt runs in a floating pane (`tmux new-pane -f`) above
+    # tv. The editor and the send step run as the pane pipeline: a
+    # sh file written through an unquoted heredoc (the pipeline's $
+    # and backslash are escaped for that layer), run by the
+    # multi-arg `sh <pipeline>` form; the values pass as the pane
+    # command's positional arguments. The pane dies when the
+    # pipeline exits; the fork returns at pane creation, so a
+    # broken pipeline is a visible pane
+    # flash. Below 3.8, or outside tmux, only the pane editor runs:
+    # $EDITOR on the message file with the stty state saved
     # and restored around it.
     command = ''
-      sh -c 'rp=$(pwd 2>/dev/null); if [ -z "$rp" ] || [ ! -d "$rp" ]; then echo "rushi-sessions-events: cannot resolve the session dir (the channel CWD is gone); re-open it from a live directory."; exit 1; fi; w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] || w=$(dirname "$(dirname "$rp")"); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); mv "$f" "$f.md"; f="$f.md"; ed=$EDITOR; [ -n "$ed" ] || ed=nvim; tv=$(tmux -V 2>/dev/null); set -- $tv; v=$2; m=$(printf "%s" "$v" | cut -d. -f1); n=$(printf "%s" "$v" | cut -d. -f2); n=$(printf "%s" "$n" | tr -cd 0-9); tmo=no; if [ -n "$TMUX" ] && command -v tmux >/dev/null; then if [ "$m" -gt 3 ] 2>/dev/null; then tmo=yes; fi; if [ "$m" -eq 3 ] && [ "$n" -ge 7 ] 2>/dev/null; then tmo=yes; fi; fi;  if [ "$tmo" = yes ]; then g=$(mktemp "$d/tv-rushi-pipe.XXXXXX"); cat > "$g" <<PIPE
-      st=\$(stty -g 2>/dev/null); \$ED "\$F"; [ -n "\$st" ] && stty "\$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=\$(cat "\$F" 2>/dev/null); rm -f "\$F"; if [ -z "\$(printf "%s" "\$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "\$W" && if [ "\$LIVE" = yes ]; then rushi run "\$RP" "\$m"; echo "message sent to \$RP"; sleep 2; else if command -v setsid >/dev/null 2>&1; then setsid rushi run "\$RP" "\$m" </dev/null >/dev/null 2>&1 & else nohup rushi run "\$RP" "\$m" </dev/null >/dev/null 2>&1 & fi; echo "message queued for \$RP"; sleep 2; fi
+      sh -c 'rp=$(pwd 2>/dev/null); if [ -z "$rp" ] || [ ! -d "$rp" ]; then echo "rushi-sessions-events: cannot resolve the session dir (the channel CWD is gone); re-open it from a live directory."; exit 1; fi; w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] || w=$(dirname "$(dirname "$rp")"); p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); live=no; if [ -n "$p" ]; then kill -0 "$p" 2>/dev/null && live=yes; fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); mv "$f" "$f.md"; f="$f.md"; ed=$EDITOR; [ -n "$ed" ] || ed=nvim; tv=$(tmux -V 2>/dev/null); set -- $tv; v=$2; m=$(printf "%s" "$v" | cut -d. -f1); n=$(printf "%s" "$v" | cut -d. -f2); n=$(printf "%s" "$n" | tr -cd 0-9); tmo=no; if [ -n "$TMUX" ] && command -v tmux >/dev/null; then if [ "$m" -gt 3 ] 2>/dev/null; then tmo=yes; fi; if [ "$m" -eq 3 ] && [ "$n" -ge 8 ] 2>/dev/null; then tmo=yes; fi; fi;  if [ "$tmo" = yes ]; then g=$(mktemp "$d/tv-rushi-pipe.XXXXXX"); cat > "$g" <<PIPE
+      RP=\\$1; W=\\$2; LIVE=\\$3; F=\\$4; ED=\\$5; st=\\$(stty -g 2>/dev/null); \\$ED \"\\$F\"; [ -n \"\\$st\" ] && stty \"\\$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=\\$(cat \"\\$F\" 2>/dev/null); rm -f \"\\$F\"; if [ -z \"\\$(printf \"%s\" \"\\$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; rm -f \"\\$0\"; exit 0; fi; cd \"\\$W\" && if [ \"\\$LIVE\" = yes ]; then rushi run \"\\$RP\" \"\\$m\"; echo \"message sent to \\$RP\"; sleep 2; else if command -v setsid >/dev/null 2>&1; then setsid rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & fi; echo \"message queued for \\$RP\"; sleep 2; fi; rm -f \"\\$0\"
       PIPE
-      tmux display-popup -E -T "tv-rushi message" -w 80% -h 60% -d "$w" -e RP="$rp" -e W="$w" -e LIVE="$live" -e F="$f" -e ED="$ed" sh "$g"; rc=$?; rm -f "$g"; if [ "$rc" -eq 0 ]; then exit 0; fi; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; if [ -n "$w" ]; then cd "$w" 2>/dev/null; fi; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "$w" && if [ "$live" = yes ]; then rushi run "$rp" "$m"; else if command -v setsid >/dev/null 2>&1; then setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & else nohup rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi; fi'
+      tmux new-pane -f -c "$w" -x 80% -y 60% -X 10% -Y 20% -T "tv-rushi message" sh "$g" "$rp" "$w" "$live" "$f" "$ed"; exit 0; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; if [ -n "$w" ]; then cd "$w" 2>/dev/null; fi; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; cd "$w" && if [ "$live" = yes ]; then rushi run "$rp" "$m"; else if command -v setsid >/dev/null 2>&1; then setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & else nohup rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi; fi'
     '';
   };
 
