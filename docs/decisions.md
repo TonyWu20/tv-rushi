@@ -1,3 +1,43 @@
+## 73. Prompt actions move into the rushi-sessions binary (2026-10-17)
+
+The three prompt actions (main send_message, main new_session, events
+send_message) ran as shell oneliners. They layered four escapes: the
+channel TOML string, the shell oneliner, the heredoc body, and the
+base64 blob for remote rows. The unquoted heredoc broke on `$`
+expansion. The remote base64 line failed with `base64: invalid input`
+on a stale build. Each fix risked the next layer.
+
+Decision: move all prompt action logic into the `rushi-sessions` Rust
+binary (the new `src/prompt.rs`). The action commands become one
+binary call each. No shell oneliner, no heredoc, no base64 in the
+command string. The values cross the tmux boundary through a JSON
+args file, not positional shell args.
+
+Two-stage design:
+
+- Stage 1 runs in the television fork. It resolves the row, the
+  host, the working dir, the project root, the editor, the prompt
+  file, and the args file. It spawns `tmux new-pane -f` with the
+  binary's own absolute path as the pane command. No shell quoting
+  crosses the tmux boundary.
+- Stage 2 is the pane's own command (`run-pane --args file`). It
+  reads and deletes the args file, runs the editor, then runs the
+  create or send step. The floating pane auto-closes two seconds
+  after the step.
+
+The send step detaches (`setsid nohup rushi run`) only in pane
+mode, so the pane close does not kill the pipeline. The inline
+fallback (no tmux, or below the 3.8 gate) runs the step in this
+process, matching the shell design. The new_session create step is
+one `rushi run <name> --sessions-root` call. The kernel creates the
+session dir. No separate `tmux new-session`.
+
+Verified end to end on tmux 3.8: the floating pane opens, the
+editor persists, the message sends, the new session creates, the
+pane auto-closes. Cargo tests pass (including the args-file round
+trip). The Nix module stays in lockstep with the repo TOML. The
+`nix build` channels are byte-identical to the repo mirrors.
+
 ## 72. send_message: one detached `rushi run` call for both loop states (2026-10-17)
 
 The `send_message` actions of `rushi-sessions` and `rushi-sessions-events`

@@ -83,23 +83,21 @@ fn session_channel_toml_parses() {
     // no action probes the loop pid and no action carries the dropped
     // `--no-run` flag.
     let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
-    assert!(!sm.contains("--no-run"), "send_message: {sm}");
-    assert!(sm.contains("cd \"$w\" &&"), "send_message cds to the working dir: {sm}");
-    assert!(sm.contains("setsid rushi run"), "the detached call starts the loop when it is idle: {sm}");
+    // The whole action is one binary call: the binary resolves the row,
+    // the working dir, the editor and the send step itself. No shell
+    // oneliner, no heredoc, no base64, no detached `rushi run` in the
+    // command string (the binary runs the send step as the pane's own
+    // process, detached only when the pane closes).
+    assert!(sm.contains("rushi-sessions send-message"), "binary call: {sm}");
+    assert!(sm.contains("'{split:\t:6}'"), "tab token: {sm}");
+    assert!(!sm.contains(";"), "no shell sequencing: {sm}");
+    assert!(!sm.contains("$(printf"), "no base64 blob: {sm}");
+    assert!(!sm.contains("base64"), "no base64: {sm}");
+    assert!(!sm.contains("setsid rushi run"), "no detached send in the command: {sm}");
     assert!(!sm.contains("loop.pid"), "no loop pid probe: {sm}");
     assert!(!sm.contains("kill -0"), "no pid liveness check: {sm}");
-
-    // The prompt file is a markdown (.md) file, so $EDITOR detects the
-    // markdown filetype. The pane editor opens in the session's recorded
-    // working dir, so typed relative paths complete against it.
-    assert!(
-        sm.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
-        "prompt file is a .md file: {sm}"
-    );
-    assert!(
-        sm.contains("if [ -z \"$host\" ] && [ -n \"$w\" ]; then cd \"$w\" 2>/dev/null; fi; $ed \"$f\""),
-        "pane editor cds to the project dir: {sm}"
-    );
+    let smd = v["actions"]["send_message"]["description"].as_str().unwrap();
+    assert!(smd.contains("rushi-sessions"), "description names the binary: {smd}");
 
     // The preview command still carries the seven split tokens.
     let prev = v["preview"]["command"].as_str().unwrap();
@@ -111,36 +109,13 @@ fn session_channel_toml_parses() {
     // rest the message); an unusable name cancels; the new loop
     // starts detached, like the send_message call.
     let ns = v["actions"]["new_session"]["command"].as_str().unwrap();
-    assert!(
-        ns.contains("--sessions-root \"$r/sessions\""),
-        "new_session pins the sessions root: {ns}"
-    );
-    assert!(ns.contains("sh '{split:\t:6}'"), "tab token: {ns}");
-    assert!(ns.contains("setsid rushi run"), "new loop starts detached: {ns}");
-    // Decision 58: the prompt file starts with a hint line; the exact
-    // hint text is sed-stripped from line 1, so a name typed before the
-    // hint does not concatenate with it.
-    assert!(
-        ns.contains("hint=\"# line 1: session name, then the message\""),
-        "hint stored in a variable: {ns}"
-    );
-    assert!(ns.contains("s/$hint//"), "hint stripped from line 1: {ns}");
-    assert!(ns.contains("\"#\"*"), "unusable-name guard: {ns}");
-    assert!(
-        ns.contains("mktemp \"$d/tv-rushi-new.XXXXXX\""),
-        "prompt file: {ns}"
-    );
-    // The prompt file is a markdown (.md) file, so $EDITOR detects the
-    // markdown filetype. The pane editor opens in the entry's project dir,
-    // so typed relative paths complete against it.
-    assert!(
-        ns.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
-        "prompt file is a .md file: {ns}"
-    );
-    assert!(
-        ns.contains("if [ -z \"$host\" ] && [ -n \"$r\" ]; then cd \"$r\" 2>/dev/null; fi; $ed \"$f\""),
-        "pane editor cds to the project dir: {ns}"
-    );
+    // Like send_message: one binary call, the binary owns the prompt
+    // file, the name validation and the session create.
+    assert!(ns.contains("rushi-sessions new-session"), "binary call: {ns}");
+    assert!(ns.contains("'{split:\t:6}'"), "tab token: {ns}");
+    assert!(!ns.contains(";"), "no shell sequencing: {ns}");
+    assert!(!ns.contains("setsid rushi run"), "no detached send in the command: {ns}");
+    assert!(!ns.contains("loop.pid"), "no loop pid probe: {ns}");
     let kb = v["keybindings"]["alt-n"].as_str().unwrap();
     assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
 }
@@ -158,22 +133,16 @@ fn events_channel_toml_parses() {
     // the project dir) and pokes with one detached `rushi run` call.
     // The kernel branches on the session lock itself.
     let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
-    assert!(sm.contains("rp=$(pwd 2>/dev/null)"), "session dir from CWD: {sm}");
-    assert!(sm.contains("cat \"$rp/cwd\""), "cwd file read: {sm}");
-    assert!(!sm.contains("--no-run"), "no dropped flag: {sm}");
-    assert!(sm.contains("setsid rushi run"), "the detached call starts the loop when it is idle: {sm}");
+    // The CWD-mode variant: the binary reads the session's recorded
+    // working dir itself (the cwd file read moved into the binary).
+    assert!(sm.contains("rushi-sessions send-message --events"), "binary call: {sm}");
+    assert!(sm.contains("'{split:\t:6}'"), "tab token: {sm}");
+    assert!(!sm.contains(";"), "no shell sequencing: {sm}");
+    assert!(!sm.contains("setsid rushi run"), "no detached send in the command: {sm}");
     assert!(!sm.contains("loop.pid"), "no loop pid probe: {sm}");
     assert!(!sm.contains("kill -0"), "no pid liveness check: {sm}");
-    // The prompt file is a markdown (.md) file, so $EDITOR detects the
-    // markdown filetype. The pane editor opens in the session's recorded
-    // working dir, so typed relative paths complete against it.
     assert!(
-        sm.contains("mv \"$f\" \"$f.md\"; f=\"$f.md\""),
-        "prompt file is a .md file: {sm}"
+        sm.contains("--events"),
+        "events variant flag: {sm}"
     );
-    assert!(
-        sm.contains("if [ -n \"$w\" ]; then cd \"$w\" 2>/dev/null; fi; $ed \"$f\""),
-        "pane editor cds to the project dir: {sm}"
-    );
-
 }

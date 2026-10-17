@@ -47,6 +47,7 @@ mod doc;
 mod events;
 mod format;
 mod preview;
+mod prompt;
 mod remote;
 mod scan;
 mod state;
@@ -101,6 +102,32 @@ enum Command {
         #[arg(long)]
         chat: bool,
     },
+    /// Open the new-session prompt: the editor on a temp file, then
+    /// the create step (a detached `rushi run`). When tv runs inside
+    /// tmux 3.8+, the prompt opens in a floating pane over tv.
+    NewSession {
+        /// The session row: the path, or host:path for a remote row.
+        row: String,
+    },
+    /// Open the send-message prompt: the editor on a temp file, then
+    /// the send step (a detached `rushi run`). With `--events` the
+    /// session dir is the channel CWD; else it is the row.
+    SendMessage {
+        /// The session row: the path, or host:path for a remote row.
+        row: Option<String>,
+        /// Use the CWD as the session dir (the events channel).
+        #[arg(long)]
+        events: bool,
+    },
+    /// [hidden] The floating-pane stage of the prompt actions. It
+    /// reads its inputs from the JSON args file, runs the editor,
+    /// then the create/send step.
+    #[command(hide = true)]
+    RunPane {
+        /// The JSON args file (created by stage 1, deleted here).
+        #[arg(long)]
+        args: PathBuf,
+    },
     /// Render one events.jsonl entry as a document: markdown for
     /// message entries, toml for everything else. SEQ is the 1-based
     /// line number of the entry in events.jsonl.
@@ -140,6 +167,11 @@ fn main() {
             path,
         } => preview::preview(&status, &name, &repo, &phase, &last, &mtime, &path),
         Command::Events { dir, chat } => events::events(dir, chat),
+        Command::NewSession { row } => std::process::exit(prompt::new_session(&row)),
+        Command::SendMessage { row, events } => {
+            std::process::exit(prompt::send_message(row.as_deref(), events))
+        }
+        Command::RunPane { args } => std::process::exit(prompt::run_pane(&args)),
         Command::EventPreview {
             dir,
             seq,

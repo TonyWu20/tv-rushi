@@ -90,17 +90,15 @@ in
     # not listed as core requirements: `rushi` for send_message and
     # new_session (0.1.1+ for the --sessions-root flag), `rushi-tui`
     # for open/open_v, and `tmux` for open, open_v, open_dir_tmux_h
-    # and open_dir_tmux_v. send_message and new_session use `mktemp`, `mv`,
-    # `stty`, `tr` and $EDITOR (fallback `nvim`). A detached loop
-    # start uses `setsid` when it is on PATH and falls back to
-    # `nohup` otherwise (the macOS base has no setsid).
-    # new_session adds `sed`, `head`, `tail` and `base64` (remote
-    # rows). All are in the standard Unix base. When tv runs inside
-    # tmux 3.8+, the floating-pane path of send_message and
-    # new_session also uses `cat` and a second `mktemp` (the
-    # pipeline file); the new-pane flags it uses are -f, -c, -x,
-    # -y, -X, -Y, -T and the multi-arg command form. Remote source roots additionally
-    # need `ssh`,
+    # and open_dir_tmux_v. The send_message and new_session prompts run
+    # in the rushi-sessions binary: `mktemp` for the prompt file,
+    # $EDITOR (fallback `nvim`), `stty` on the fork-fallback path, and
+    # `setsid` for the detached loop start (the `nohup` fallback when
+    # setsid is absent; the macOS base has no setsid). The
+    # floating-pane stage is the binary itself, so no shell pipeline or
+    # extra tools run there. Remote rows need `ssh` and `base64` on
+    # the remote host (the message crosses the boundary as a base64
+    # blob). Remote source roots additionally need `ssh`,
     # reachable by the alias in the root, and the same
     # `rushi-sessions` and `rushi` on the remote host. The open actions
     # additionally need `rushi-tui` there: the local pane runs it over
@@ -303,45 +301,31 @@ in
   };
 
   actions.send_message = {
-    # Multi-line form: the repo TOML holds a multi-line basic string,
-    # whose value carries a trailing newline. The multi-line Nix string
-    # matches that value leaf for leaf. The fork cds to the session's
-    # recorded working dir (the `cwd` file, or the
-    # dirname(dirname(session_dir)) fallback) before it runs `rushi
-    # run`: the loop re-anchors the `cwd` file to the starter's CWD on
-    # every start. The send is one detached `rushi run` call for both
-    # loop states: the kernel branches on the session lock itself, a
-    # live loop drains the appended message, an idle session starts
-    # the loop. The caller probes no pid. The detach uses `setsid`
-    # when it is on PATH (Linux) and falls back to `nohup` otherwise
-    # (macOS has no setsid in its base).
-        description = ''
-      Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with one detached `rushi run <session> <msg>` call, run in the session's recorded working dir. The kernel branches on the session lock itself: a live loop drains the appended message, an idle session starts the loop. An empty message cancels. When tv runs inside tmux 3.8+, the editor and the send step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the session's recorded working dir, so typed relative paths complete against it.
-    '';
+    #
+    # send_message (ctrl-t) opens the editor on a message file, then pokes
+# the session with one detached `rushi run <session> <msg>` call, run in
+# the session's recorded working dir. The kernel branches on the session
+# lock itself: a live loop drains the appended message, an idle session
+# starts the loop.
+#
+# The action logic runs in the rushi-sessions binary. Stage 1 runs in
+# the television fork: it resolves the row, the host prefix, the
+# working dir and the editor, creates the prompt file, then spawns a
+# floating pane (tmux 3.8+) or falls back to the fork's pane. Stage 2
+# is the pane's own command (the binary's absolute path): it runs the
+# editor, then the send step, and the pane dies when it exits. The
+# handoff is a JSON args file, so no value crosses a shell.
+#
+# The pane is not modal: the panes below keep their layout, and
+# copy-mode, window switching and the prefix bindings stay available.
+# A broken step is a visible flash, not a silent fallback. Tmux below
+# 3.8, or running outside tmux, falls back to the fork's pane.
+    # Single-line form: the repo TOML holds a single-line basic string,
+    # whose value carries no trailing newline.
+    description = "Open $EDITOR (falling back to nvim) on a message file, then send the result to the session with one detached `rushi run <session> <msg>` call, run in the session's recorded working dir. The kernel branches on the session lock itself: a live loop drains the appended message, an idle session starts the loop. An empty message cancels. When tv runs inside tmux 3.8+, the editor and the send step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the session's recorded working dir, so typed relative paths complete against it. The action logic runs in the rushi-sessions binary: the pane's command is the binary itself, so no shell quoting crosses the tmux boundary.";
     shell = "bash";
     mode = "fork";
-    # The command branches on tmux. When $TMUX is set, the tmux binary
-    # is on PATH, and `tmux -V` reports 3.8+, the prompt runs in a
-    # floating pane (`tmux new-pane -f`) above tv. The editor and the
-    # send step run as the pane pipeline: a sh file written through
-    # an unquoted heredoc (the pipeline's $ and backslash are
-    # escaped for that layer), run by the multi-arg `sh <pipeline>`
-    # form; the values pass as the pane command's positional
-    # arguments. The pane dies when the pipeline exits; the fork
-    # returns at pane creation, so
-    # a broken pipeline is a visible pane flash, not a silent
-    # fallback. The pane is not modal: the panes below keep their
-    # layout, and copy-mode, window switching and the prefix
-    # bindings stay available. Below 3.8, or outside tmux, only the
-    # pane editor runs:
-    # $EDITOR on the message file with the stty state saved and
-    # restored around it.
-    command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then w=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); else w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] || w=$(dirname "$(dirname "$rp")"); fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-msg.XXXXXX"); mv "$f" "$f.md"; f="$f.md"; ed=$EDITOR; [ -n "$ed" ] || ed=nvim; tv=$(tmux -V 2>/dev/null); set -- $tv; v=$2; m=$(printf "%s" "$v" | cut -d. -f1); n=$(printf "%s" "$v" | cut -d. -f2); n=$(printf "%s" "$n" | tr -cd 0-9); tmo=no; if [ -n "$TMUX" ] && command -v tmux >/dev/null; then if [ "$m" -gt 3 ] 2>/dev/null; then tmo=yes; fi; if [ "$m" -eq 3 ] && [ "$n" -ge 8 ] 2>/dev/null; then tmo=yes; fi; fi;  if [ "$tmo" = yes ]; then g=$(mktemp "$d/tv-rushi-pipe.XXXXXX"); cat > "$g" <<PIPE
-      RP=\\$1; HOST=\\$2; W=\\$3; F=\\$4; ED=\\$5; st=\\$(stty -g 2>/dev/null); \\$ED \"\\$F\"; [ -n \"\\$st\" ] && stty \"\\$st\" 2>/dev/null || stty raw -echo 2>/dev/null; m=\\$(cat \"\\$F\" 2>/dev/null); rm -f \"\\$F\"; if [ -z \"\\$(printf \"%s\" \"\\$m\" | tr -d \"[:space:]\")\" ]; then echo \"No message entered, nothing sent.\"; rm -f \"\\$0\"; exit 0; fi; if [ -n \"\\$HOST\" ]; then m64=\\$(printf \"%s\" \"\\$m\" | base64 | tr -d \"\\\\n\"); if command -v setsid >/dev/null 2>&1; then setsid ssh -T \"\\$HOST\" \"cd \\\\\"\\$W\\\\\" && rushi run \\\\\"\\$RP\\\\\" \\\\\"\\\\\\$(printf %s \\$m64 | base64 -d)\\\\\"\" </dev/null >/dev/null 2>&1 & else nohup ssh -T \"\\$HOST\" \"cd \\\\\"\\$W\\\\\" && rushi run \\\\\"\\$RP\\\\\" \\\\\"\\\\\\$(printf %s \\$m64 | base64 -d)\\\\\"\" </dev/null >/dev/null 2>&1 & fi; echo \"message queued for \\$RP on \\$HOST\"; sleep 2; else cd \"\\$W\" && if command -v setsid >/dev/null 2>&1; then setsid rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"\\$RP\" \"\\$m\" </dev/null >/dev/null 2>&1 & fi; echo \"message queued for \\$RP\"; sleep 2; fi; rm -f \"\\$0\"
-      PIPE
-      if [ -n "$host" ]; then tmux new-pane -f -x 80% -y 60% -X 10% -Y 20% -T "tv-rushi message" sh "$g" "$rp" "$host" "$w" "$f" "$ed"; else tmux new-pane -f -c "$w" -x 80% -y 60% -X 10% -Y 20% -T "tv-rushi message" sh "$g" "$rp" "$host" "$w" "$f" "$ed"; fi; exit 0; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; if [ -z "$host" ] && [ -n "$w" ]; then cd "$w" 2>/dev/null; fi; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; m=$(cat "$f" 2>/dev/null); rm -f "$f"; if [ -z "$(printf "%s" "$m" | tr -d "[:space:]")" ]; then echo "No message entered, nothing sent."; exit 0; fi; if [ -n "$host" ]; then m64=$(printf "%s" "$m" | base64 | tr -d "\n"); if command -v setsid >/dev/null 2>&1; then setsid ssh -T "$host" "cd \"$w\" && rushi run \"$rp\" \"\$(printf %s $m64 | base64 -d)\"" </dev/null >/dev/null 2>&1 & else nohup ssh -T "$host" "cd \"$w\" && rushi run \"$rp\" \"\$(printf %s $m64 | base64 -d)\"" </dev/null >/dev/null 2>&1 & fi; else cd "$w" && if command -v setsid >/dev/null 2>&1; then setsid rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & else nohup rushi run "$rp" "$m" </dev/null >/dev/null 2>&1 & fi; fi' sh '{split:@TAB@:6}'
-    '';
+        command = "rushi-sessions send-message '{split:	:6}'";
   };
 
   actions.browse_events = {
@@ -390,54 +374,34 @@ in
   };
 
   actions.new_session = {
-    # Create a sibling session next to the selected entry. The prompt
-    # opens $EDITOR (fallback nvim) on a temp file: line 1 is the
-    # session name, the rest is the message. The project dir is the
-    # entry's own dirname(dirname(session_dir)): a new session anchors
-    # to the project where the entry lives, not to the entry's
-    # recorded cwd file. The command keeps $vars plain (no ${...}) so
-    # the Nix single-quote string does not interpolate them. The body
-    # stays brace-free: a stray {group} would break the television
-    # template and leave the split placeholder unsubstituted.
     #
-    # The prompt file starts with a hint line. The hint text is stored
-    # in a variable and sed-stripped from line 1, so the name may sit
-    # before, after, or instead of the hint.
-    #
-    # rushi run takes --sessions-root <project>/sessions (rushi
-    # 0.1.1+), so the new session's recorded working dir is the
-    # sessions root's parent: the project dir itself.
-    #
-    # The loop starts detached (setsid when it is on PATH, the
-    # nohup fallback otherwise, + &, stdio to /dev/null): a new
-    # session has no live loop, so the kernel's rushi run blocks
-    # as the loop. An empty message omits the task: the session is
-    # created idle.
-    #
-    # A remote row (host: prefix) prompts locally, resolves the
-    # project dir on the remote host with one read-only ssh -T call
-    # (dirname dirname of the session path), and creates the session
-    # there over ssh -T: the message passes as base64.
-    description = "Create a new session next to the selected entry. The action opens $EDITOR (fallback nvim) on a temp file: line 1 is the session name, the rest is the message. The file starts with a hint line; the hint text is stripped from line 1, so the name may sit before, after, or instead of the hint. The session lands in the entry's project dir: dirname(dirname(session dir)), sessions root <project>/sessions. It runs `rushi run NAME MSG --sessions-root <project>/sessions` from that project dir, detached (setsid or the nohup fallback, stdio to /dev/null). An empty message creates the session idle. An empty or unusable name (line 1 empty after the hint is stripped, or it holds /, . or ..) cancels. Remote rows (host: prefix) prompt locally and create the session over ssh. When tv runs inside tmux 3.8+, the editor and the create step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the entry's project dir, so typed relative paths complete against it.";
+    # Create a sibling session next to the selected entry. The prompt opens
+# $EDITOR (fallback nvim) on a temp file: line 1 is the session name,
+# the rest is the message. The project dir is the entry's own
+# dirname(dirname(session_dir)): a new session anchors to the project
+# where the entry lives, not to the entry's recorded cwd file.
+# rushi run takes --sessions-root <project>/sessions (rushi 0.1.1+),
+# so the new session's recorded working dir is the sessions root's
+# parent: the project dir itself.
+#
+# The action logic runs in the rushi-sessions binary (the same
+# two-stage handoff as send_message): stage 1 in the television fork
+# resolves the row, the project dir and the editor, writes the hint
+# line, then spawns the floating pane or falls back to the fork's
+# pane. Stage 2 runs the editor, strips the hint from line 1,
+# validates the name, then the detached
+# `rushi run NAME MSG --sessions-root <project>/sessions` (idle when
+# the message is blank).
+#
+# A remote row (host: prefix) prompts locally, resolves the project dir
+# on the remote host with one read-only ssh -T call (dirname dirname of
+# the session path), and creates the session there over ssh -T: the
+# message passes as a base64 blob.
+    # Single-line form: the repo TOML holds a single-line basic string,
+    # whose value carries no trailing newline.
+    description = "Create a new session next to the selected entry. The action opens $EDITOR (fallback nvim) on a temp file: line 1 is the session name, the rest is the message. The file starts with a hint line; the hint text is stripped from line 1, so the name may sit before, after, or instead of the hint. The session lands in the entry's project dir: dirname(dirname(session dir)), sessions root <project>/sessions. It runs `rushi run NAME MSG --sessions-root <project>/sessions` from that project dir, detached (setsid or the nohup fallback, stdio to /dev/null). An empty message creates the session idle. An empty or unusable name (line 1 empty after the hint is stripped, or it holds /, . or ..) cancels. Remote rows (host: prefix) prompt locally and create the session over ssh. When tv runs inside tmux 3.8+, the editor and the create step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the entry's project dir, so typed relative paths complete against it. The action logic runs in the rushi-sessions binary: the pane's command is the binary itself, so no shell quoting crosses the tmux boundary.";
     shell = "bash";
     mode = "fork";
-    # The command branches on tmux, like send_message. When $TMUX is
-    # set, the tmux binary is on PATH, and `tmux -V` reports 3.8+,
-    # the prompt runs in a floating pane (`tmux new-pane -f`) above
-    # tv: the editor and the create step run as the pane pipeline
-    # (a sh file written through an unquoted heredoc, run by the
-    # multi-arg `sh <pipeline>` form; the values pass as the pane
-    # command's positional arguments). The pane dies when the
-    # pipeline exits; the fork returns at pane creation, so a
-    # broken pipeline is a visible pane
-    # flash. Below 3.8, or outside tmux, only the pane editor runs:
-    # $EDITOR on the prompt file with the stty state saved and
-    # restored around it.
-    command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "printf \"%s\" \"\$(dirname \"\$(dirname \"$rp\")\")\""); else r=$(dirname "$(dirname "$rp")"); fi; d=$TMPDIR; [ -n "$d" ] || d=/tmp; f=$(mktemp "$d/tv-rushi-new.XXXXXX"); mv "$f" "$f.md"; f="$f.md"; hint="# line 1: session name, then the message"; printf "%s\n" "$hint" > "$f"; ed=$EDITOR; [ -n "$ed" ] || ed=nvim; tv=$(tmux -V 2>/dev/null); set -- $tv; v=$2; m=$(printf "%s" "$v" | cut -d. -f1); n=$(printf "%s" "$v" | cut -d. -f2); n=$(printf "%s" "$n" | tr -cd 0-9); tmo=no; if [ -n "$TMUX" ] && command -v tmux >/dev/null; then if [ "$m" -gt 3 ] 2>/dev/null; then tmo=yes; fi; if [ "$m" -eq 3 ] && [ "$n" -ge 8 ] 2>/dev/null; then tmo=yes; fi; fi;  if [ "$tmo" = yes ]; then g=$(mktemp "$d/tv-rushi-pipe.XXXXXX"); cat > "$g" <<PIPE
-      RP=\\$1; HOST=\\$2; R=\\$3; HINT=\\$4; F=\\$5; ED=\\$6; st=\\$(stty -g 2>/dev/null); \\$ED \"\\$F\"; [ -n \"\\$st\" ] && stty \"\\$st\" 2>/dev/null || stty raw -echo 2>/dev/null; name=\\$(head -n1 \"\\$F\" | sed -e \"s/\\$HINT//\" -e \"s/^[[:space:]]*//\" -e \"s/[[:space:]]*\\$//\"); m=\\$(tail -n +2 \"\\$F\"); rm -f \"\\$F\"; case \"\\$name\" in \"\"|\"#\"*|*/*|\".\"|\"..\") echo \"new_session: empty or unusable session name, nothing created.\"; rm -f \"\\$0\"; exit 0;; esac; msg=\\$(printf \"%s\" \"\\$m\" | tr -d \"[:space:]\"); if [ -n \"\\$HOST\" ]; then m64=\\$(printf \"%s\" \"\\$m\" | base64 | tr -d \"\\\\n\"); if [ -n \"\\$msg\" ]; then if command -v setsid >/dev/null 2>&1; then setsid ssh -T \"\\$HOST\" \"cd \\\\\"\\$R\\\\\" && rushi run \\\\\"\\$name\\\\\" \\\\\"\\\\\\$(printf %s \\$m64 | base64 -d)\\\\\" --sessions-root \\\\\"\\$R/sessions\\\\\"\" </dev/null >/dev/null 2>&1 & else nohup ssh -T \"\\$HOST\" \"cd \\\\\"\\$R\\\\\" && rushi run \\\\\"\\$name\\\\\" \\\\\"\\\\\\$(printf %s \\$m64 | base64 -d)\\\\\" --sessions-root \\\\\"\\$R/sessions\\\\\"\" </dev/null >/dev/null 2>&1 & fi; echo \"new session \\$name starting in \\$R/sessions on \\$HOST\"; sleep 2; else if command -v setsid >/dev/null 2>&1; then setsid ssh -T \"\\$HOST\" \"cd \\\\\"\\$R\\\\\" && rushi run \\\\\"\\$name\\\\\" --sessions-root \\\\\"\\$R/sessions\\\\\"\" </dev/null >/dev/null 2>&1 & else nohup ssh -T \"\\$HOST\" \"cd \\\\\"\\$R\\\\\" && rushi run \\\\\"\\$name\\\\\" --sessions-root \\\\\"\\$R/sessions\\\\\"\" </dev/null >/dev/null 2>&1 & fi; echo \"new idle session \\$name starting in \\$R/sessions on \\$HOST\"; sleep 2; fi; else cd \"\\$R\" 2>/dev/null || echo \"new_session: project dir \\$R missing, nothing created.\"; [ -d \"\\$R\" ] || { rm -f \"\\$0\"; exit 1; }; if [ -n \"\\$msg\" ]; then if command -v setsid >/dev/null 2>&1; then setsid rushi run \"\\$name\" \"\\$m\" --sessions-root \"\\$R/sessions\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"\\$name\" \"\\$m\" --sessions-root \"\\$R/sessions\" </dev/null >/dev/null 2>&1 & fi; echo \"new session \\$name starting in \\$R/sessions (working dir \\$R)\"; sleep 2; else if command -v setsid >/dev/null 2>&1; then setsid rushi run \"\\$name\" --sessions-root \"\\$R/sessions\" </dev/null >/dev/null 2>&1 & else nohup rushi run \"\\$name\" --sessions-root \"\\$R/sessions\" </dev/null >/dev/null 2>&1 & fi; echo \"new idle session \\$name starting in \\$R/sessions (working dir \\$R)\"; sleep 2; fi; fi; rm -f \"\\$0\"
-      PIPE
-      if [ -n "$host" ]; then tmux new-pane -f -x 80% -y 60% -X 10% -Y 20% -T "tv-rushi new session" sh "$g" "$rp" "$host" "$r" "$hint" "$f" "$ed"; else tmux new-pane -f -c "$r" -x 80% -y 60% -X 10% -Y 20% -T "tv-rushi new session" sh "$g" "$rp" "$host" "$r" "$hint" "$f" "$ed"; fi; exit 0; fi; st=$(stty -g 2>/dev/null); ed=$EDITOR; [ -n "$ed" ] || ed=nvim; if [ -z "$host" ] && [ -n "$r" ]; then cd "$r" 2>/dev/null; fi; $ed "$f"; [ -n "$st" ] && stty "$st" 2>/dev/null || stty raw -echo 2>/dev/null; name=$(head -n1 "$f" | sed -e "s/$hint//" -e "s/^[[:space:]]*//" -e "s/[[:space:]]*$//"); m=$(tail -n +2 "$f"); rm -f "$f"; case "$name" in ""|"#"*|*/*|"."|"..") echo "new_session: empty or unusable session name, nothing created."; exit 0;; esac; msg=$(printf "%s" "$m" | tr -d "[:space:]"); if [ -n "$host" ]; then m64=$(printf "%s" "$m" | base64 | tr -d "\n"); if [ -n "$msg" ]; then if command -v setsid >/dev/null 2>&1; then setsid ssh -T "$host" "cd \"$r\" && rushi run \"$name\" \"\$(printf %s $m64 | base64 -d)\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & else nohup ssh -T "$host" "cd \"$r\" && rushi run \"$name\" \"\$(printf %s $m64 | base64 -d)\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & fi; echo "new session $name starting in $r/sessions on $host"; else if command -v setsid >/dev/null 2>&1; then setsid ssh -T "$host" "cd \"$r\" && rushi run \"$name\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & else nohup ssh -T "$host" "cd \"$r\" && rushi run \"$name\" --sessions-root \"$r/sessions\"" </dev/null >/dev/null 2>&1 & fi; echo "new idle session $name starting in $r/sessions on $host"; fi; else cd "$r" 2>/dev/null || echo "new_session: project dir $r missing, nothing created."; [ -d "$r" ] || exit 1; if [ -n "$msg" ]; then if command -v setsid >/dev/null 2>&1; then setsid rushi run "$name" "$m" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & else nohup rushi run "$name" "$m" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & fi; echo "new session $name starting in $r/sessions (working dir $r)"; else if command -v setsid >/dev/null 2>&1; then setsid rushi run "$name" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & else nohup rushi run "$name" --sessions-root "$r/sessions" </dev/null >/dev/null 2>&1 & fi; echo "new idle session $name starting in $r/sessions (working dir $r)"; fi; fi' sh '{split:@TAB@:6}'
-    '';
+        command = "rushi-sessions new-session '{split:	:6}'";
   };
 }
