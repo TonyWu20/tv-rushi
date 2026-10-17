@@ -136,7 +136,10 @@ fn events_channel_toml_parses() {
     // The CWD-mode variant: the binary reads the session's recorded
     // working dir itself (the cwd file read moved into the binary).
     assert!(sm.contains("rushi-sessions send-message --events"), "binary call: {sm}");
-    assert!(sm.contains("'{split:\t:6}'"), "tab token: {sm}");
+    // The events source rows carry only the seq token (four fields),
+    // so the command takes no split placeholder. It stays brace-free:
+    // television treats a stray {group} as a template token.
+    assert!(!sm.contains("split:"), "no split placeholder: {sm}");
     assert!(!sm.contains(";"), "no shell sequencing: {sm}");
     assert!(!sm.contains("setsid rushi run"), "no detached send in the command: {sm}");
     assert!(!sm.contains("loop.pid"), "no loop pid probe: {sm}");
