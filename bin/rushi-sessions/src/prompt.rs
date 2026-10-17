@@ -361,8 +361,8 @@ fn random_suffix() -> String {
 
 /// Create the prompt temp file (`tv-rushi-<what>.XXXXXX` + `.md`) and
 /// return its path.
-pub(crate) fn new_prompt_file(what: &str, hint: Option<&str>) -> Result<PathBuf, String> {
-    let d = tmp_dir();
+pub(crate) fn new_prompt_file(what: &str, hint: Option<&str>, workdir: Option<&str>) -> Result<PathBuf, String> {
+    let d = workdir.map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(tmp_dir);
     let p = d.join(format!("tv-rushi-{what}.{}", random_suffix()));
     let text = hint.map(|h| format!("{h}\n")).unwrap_or_default();
     std::fs::write(&p, &text).map_err(|e| format!("write {}: {e}", p.display()))?;
@@ -499,7 +499,12 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         None
     };
     let r_root = if kind == "new" { Some(resolve_project_root(&host, &rp)) } else { None };
-    let file = match new_prompt_file(kind, if kind == "new" { Some(HINT_LINE) } else { None }) {
+    let prompt_dir = match kind {
+        "message" if host.is_none() => w.as_deref(),
+        "new" if host.is_none() => r_root.as_deref(),
+        _ => None,
+    };
+    let file = match new_prompt_file(kind, if kind == "new" { Some(HINT_LINE) } else { None }, prompt_dir) {
         Ok(p) => p.to_string_lossy().into_owned(),
         Err(e) => {
             eprintln!("rushi-sessions: {e}");

@@ -256,13 +256,13 @@ fn rewind_marker(seq: u64, mode: &str) -> String {
 /// here). `None` when the file comes back blank, the caller's
 /// cancel. The editor opens in the session's recorded working dir.
 fn editor_instruction(base: &Path) -> Option<String> {
-    let file = new_prompt_file("summarize", None).ok()?;
+    let w = local_workdir(base);
+    let file = new_prompt_file("summarize", None, Some(&w)).ok()?;
     let editor = std::env::var_os("EDITOR")
         .filter(|e| !e.is_empty())
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_else(|| "nvim".into());
     let st = stty_save();
-    let w = local_workdir(base);
     let mut c = Command::new(&editor);
     c.arg(&file)
         .stdin(Stdio::inherit())

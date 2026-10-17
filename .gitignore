@@ -7,3 +7,6 @@ result-*
 
 # cargo build artifacts
 /target
+
+# rushi-sessions prompt buffers (created in the working dir, removed on a clean exit)
+tv-rushi-*.md
