@@ -1,3 +1,22 @@
+## 74. Events channel tree view: the depth column and the branch actions (2026-10-17)
+
+The events channel list now carries a fifth source column: the
+tree-depth box connector of the session's branch structure (the
+`rushi-tui` tree view's indent, ported to the flat television list
+in `src/tree.rs`). The display template leads with the indent
+column; the seq token stays in column 0.
+
+The three tree-view options of the TUI are channel actions
+(`src/branch.rs`): `rewind` (alt-r, append a rewind marker through
+the kernel's `log` binary), `summarize` (alt-s, the kernel's
+`compact --branch`), and `summarize-prompt` (alt-p, the same
+through the editor prompt flow, a blank file cancels). Both need
+the loop idle: the binary probes the kernel's `.loop.lock` flock
+and refuses a live loop.
+
+The `requirements` gain `rushi` (the binary resolves the kernel's
+`log` and `compact` siblings through it). The Nix mirror tracks
+the new actions, bindings, requirements and display template.
 ## 73. Prompt actions move into the rushi-sessions binary (2026-10-17)
 
 The three prompt actions (main send_message, main new_session, events

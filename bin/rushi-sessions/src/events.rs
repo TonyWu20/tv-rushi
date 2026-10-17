@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 
 use rushi_common::rewind::{parse_rewind_event, seq_in_ranges};
 
-use crate::format::{flatten_ws, marker_summary, ts_local, value_inline};
+use crate::format::{flatten_ws, marker_summary, short_tag, ts_local, value_inline};
+use crate::tree::{indent_for, tree_depths};
 
 /// The 1-based line numbers of the parseable lines of the session's
 /// events.jsonl, paired with those events. Unparseable lines are
@@ -41,17 +42,23 @@ pub(crate) fn log_active_ranges(rows: &[(u64, Value)]) -> Vec<(usize, usize)> {
     rushi_common::rewind::active_ranges(rows.len(), &refs)
 }
 /// One TSV row per numbered event, oldest first. The caller prints
-/// them reversed. The columns are seq, type, ts, summary. With
-/// `chat`, only the active-path user and assistant messages print.
-/// A row masked by a rewind marker carries a `[masked]` summary
-/// prefix. The marker itself never carries it.
+/// them reversed. The columns are seq, tag, ts, summary, indent.
+/// The tag is the short marker of the entry type (at most two
+/// capitalized letters, `[U]` in the display template). The indent
+/// is the tree-depth box connector (three spaces per level, the
+/// `└─` branch marker, empty on the trunk), the port of the TUI tree
+/// view's indent. With `chat`, only the active-path user and
+/// assistant messages print. A row masked by a rewind marker carries
+/// a `[masked]` summary prefix. The marker itself never carries it.
 pub(crate) fn event_rows(
     rows: &[(u64, Value)],
     ranges: &[(usize, usize)],
     chat: bool,
 ) -> Vec<String> {
+    let depths = tree_depths(rows);
     rows.iter()
-        .filter_map(|(seq, o)| {
+        .enumerate()
+        .filter_map(|(i, (seq, o))| {
             let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
             let active = seq_in_ranges(*seq as usize, ranges);
             let is_message = matches!(ty, "user_message" | "assistant_message");
@@ -63,17 +70,21 @@ pub(crate) fn event_rows(
             if !chat && !active && ty != "rewind" {
                 summary = format!("[masked] {summary}");
             }
-            Some(format!("{seq}\t{ty}\t{ts}\t{summary}"))
+            let tag = short_tag(ty);
+            let indent = indent_for(depths[i]);
+            Some(format!("{seq}\t{tag}\t{ts}\t{summary}\t{indent}"))
         })
         .collect()
 }
 /// One TSV row per entry of the session's events.jsonl. The columns
-/// are seq (the 1-based line number), type, ts (local wall-clock
-/// time), and a one-line summary. The summary carries no tabs or
-/// newlines, so the row stays a single TSV line. Nothing is clipped;
-/// the list side truncates. The rows come newest first. With `chat`,
-/// only the active-path user and assistant messages print. A row
-/// masked by a rewind marker carries a `[masked]` summary prefix.
+/// are seq (the 1-based line number), tag (the short marker of the
+/// entry type), ts (local wall-clock time), a one-line summary, and
+/// the tree-depth indent (the TUI tree view's box connector, empty
+/// on the trunk). The summary carries no tabs or newlines, so the
+/// row stays a single TSV line. Nothing is clipped; the list side
+/// truncates. The rows come newest first. With `chat`, only the
+/// active-path user and assistant messages print. A row masked by a
+/// rewind marker carries a `[masked]` summary prefix.
 pub fn events(dir: Option<PathBuf>, chat: bool) {
     let base = match dir {
         Some(d) => d,

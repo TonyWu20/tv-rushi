@@ -136,8 +136,8 @@ fn events_channel_toml_parses() {
     // The CWD-mode variant: the binary reads the session's recorded
     // working dir itself (the cwd file read moved into the binary).
     assert!(sm.contains("rushi-sessions send-message --events"), "binary call: {sm}");
-    // The events source rows carry only the seq token (four fields),
-    // so the command takes no split placeholder. It stays brace-free:
+    // The events source rows carry only the seq token (the first of the
+    // five columns), so the send command takes no split placeholder.
     // television treats a stray {group} as a template token.
     assert!(!sm.contains("split:"), "no split placeholder: {sm}");
     assert!(!sm.contains(";"), "no shell sequencing: {sm}");
@@ -148,4 +148,44 @@ fn events_channel_toml_parses() {
         sm.contains("--events"),
         "events variant flag: {sm}"
     );
+
+
+    // Decision 74: the tree port. The source rows carry a fifth
+    // column (the tree-depth box connector), so the display template
+    // puts the indent first. The seq token stays in column 0, so
+    // every action still reads `{split:\t:0}`.
+    let disp = v["source"]["display"].as_str().expect("display template");
+    assert!(
+        disp.contains("split:\t:4"),
+        "display leads with the indent column: {disp}"
+    );
+    assert!(
+        disp.contains("split:\t:1"),
+        "display keeps the tag column: {disp}"
+    );
+    assert!(
+        disp.starts_with("{split:\t:4}"),
+        "the indent column leads the display: {disp}"
+    );
+    let out = v["source"]["output"].as_str().unwrap();
+    assert!(out.contains("split:\t:0"), "output is the seq: {out}");
+
+    // The three tree-view actions: rewind and summarize (with and
+    // without the custom prompt). Each is one binary call with the
+    // seq token, fork mode, and no shell sequencing.
+    for (a, extra) in [("rewind", ""), ("summarize", ""), ("summarize-prompt", " --prompt")] {
+        let act = v["actions"][a].clone();
+        let c = act["command"].as_str().unwrap();
+        assert!(c.contains("rushi-sessions"), "{a} binary call: {c}");
+        assert!(c.contains("'{split:\t:0}'"), "{a} takes the seq token: {c}");
+        assert!(c.ends_with(extra), "{a} flags: {c}");
+        assert!(!c.contains(";"), "{a} no shell sequencing: {c}");
+        assert_eq!(act["mode"].as_str().unwrap(), "fork", "{a} fork mode");
+        assert!(act["shell"].as_str().unwrap().contains("bash"), "{a} bash shell");
+    }
+
+    // The keybindings bind the three actions.
+    assert_eq!(v["keybindings"]["alt-r"].as_str().unwrap(), "actions:rewind");
+    assert_eq!(v["keybindings"]["alt-s"].as_str().unwrap(), "actions:summarize");
+    assert_eq!(v["keybindings"]["alt-p"].as_str().unwrap(), "actions:summarize-prompt");
 }

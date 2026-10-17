@@ -28,9 +28,26 @@
 //!   "Catppuccin Macchiato"); otherwise plain TOML is printed.
 //! - `rushi-sessions events [DIR] [--chat]`
 //!   Print one TSV row per entry of the session's events.jsonl, newest
-//!   first. `--chat` keeps only the active-path user and assistant
-//!   messages. A row masked by a rewind marker carries a `[masked]`
-//!   summary prefix in the full view.
+//!   first. Columns: seq, tag (the short marker of the entry type), ts,
+//!   summary, and the tree-depth indent (the TUI tree view's box
+//!   connector, empty on the trunk). `--chat` keeps only the active-path
+//!   user and assistant messages. A row masked by a rewind marker carries
+//!   a `[masked]` summary prefix in the full view.
+//!
+//! - `rushi-sessions rewind [DIR] SEQ [--events]`
+//!   Append a `rewind` marker (the tree view's "Rewind without summary")
+//!   through the kernel's `log` binary. A user-message target rewinds
+//!   `before` it, every other target rewinds `on` it. Needs an idle
+//!   loop (the kernel's `.loop.lock` probe). With `--events` the CWD is
+//!   the session dir.
+//!
+//! - `rushi-sessions summarize [DIR] SEQ [--events] [--prompt]`
+//!   Summarize the abandoned branch of the last top-level rewind through
+//!   the kernel's `compact --branch` (the tree view's "Summarize the
+//!   branch"). The picked SEQ must sit on the active path; the loop must
+//!   be idle. With `--prompt`, the instruction is typed in the editor on
+//!   a .md file first (a blank file cancels) and passed as `--prompt`.
+//!   With `--events` the CWD is the session dir.
 //!
 //! - `rushi-sessions event-preview DIR SEQ [--print-lang]`
 //!   Render one events.jsonl entry as a document: markdown for message
@@ -43,6 +60,7 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod branch;
 mod doc;
 mod events;
 mod format;
@@ -51,6 +69,7 @@ mod prompt;
 mod remote;
 mod scan;
 mod state;
+mod tree;
 mod usage;
 
 #[derive(Parser)]
@@ -90,7 +109,7 @@ enum Command {
         path: String,
     },
     /// Print one TSV row per entry of the session's events.jsonl.
-    /// Columns: seq, type, ts, summary. The rows come newest first.
+    /// Columns: seq, tag (the short marker of the entry type), ts, summary, and the tree-depth indent. The rows come newest first.
     /// Without DIR, the CWD is the session dir. `--chat` keeps the
     /// active-path user and assistant messages. Rows masked by a
     /// rewind marker carry a `[masked]` summary prefix.
@@ -118,6 +137,37 @@ enum Command {
         /// Use the CWD as the session dir (the events channel).
         #[arg(long)]
         events: bool,
+    },
+    /// Append a `rewind` marker to the session (the tree view's
+    /// "Rewind without summary"). SEQ is the picked entry's 1-based
+    /// log seq: a user-message target rewinds `before` it (the
+    /// message leaves the context), every other target rewinds `on`
+    /// it. Needs an idle loop. The marker is appended through the
+    /// kernel's `log` binary (the sibling of `rushi`). The session
+    /// dir is the CWD (the events channel) or `--dir`.
+    Rewind {
+        /// The picked entry's 1-based log seq (the row token).
+        seq: u64,
+        /// The session dir. Absent: the CWD (the events channel).
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+    },
+    /// Summarize the abandoned branch of the last top-level rewind
+    /// through the kernel's `compact --branch` (the tree view's
+    /// "Summarize the branch"). The picked SEQ must sit on the
+    /// active path; the loop must be idle. With `--prompt`, the
+    /// instruction is typed in the editor on a .md file first (a
+    /// blank file cancels) and passed as `--prompt`. The session
+    /// dir is the CWD (the events channel) or `--dir`.
+    Summarize {
+        /// The picked entry's 1-based log seq (the row token).
+        seq: u64,
+        /// The session dir. Absent: the CWD (the events channel).
+        #[arg(long, value_name = "DIR")]
+        dir: Option<PathBuf>,
+        /// Open the editor for a custom summarize instruction.
+        #[arg(long)]
+        prompt: bool,
     },
     /// [hidden] The floating-pane stage of the prompt actions. It
     /// reads its inputs from the JSON args file, runs the editor,
@@ -170,6 +220,10 @@ fn main() {
         Command::NewSession { row } => std::process::exit(prompt::new_session(&row)),
         Command::SendMessage { row, events } => {
             std::process::exit(prompt::send_message(row.as_deref(), events))
+        }
+        Command::Rewind { dir, seq } => std::process::exit(branch::rewind(dir, seq)),
+        Command::Summarize { dir, seq, prompt } => {
+            std::process::exit(branch::summarize(dir, seq, prompt))
         }
         Command::RunPane { args } => std::process::exit(prompt::run_pane(&args)),
         Command::EventPreview {

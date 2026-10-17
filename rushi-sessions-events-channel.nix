@@ -42,7 +42,7 @@
 # The repo copy rushi-sessions-events.toml carries the default (bat)
 # and is the manual-install baseline.
 #
-# The channel carries two actions. `send_message` (bound to ctrl-t) is
+# The channel carries five actions. `send_message` (bound to ctrl-t) is
 # the same design as the main channel's, local only. The session dir
 # is the CWD of the channel, so the body reads it with `$(pwd)` and
 # takes no split placeholder. It cds to the session's recorded
@@ -137,6 +137,7 @@ in
     description = "Fuzzy-search one session's events.jsonl entries and preview them";
     requirements = [
       "rushi-sessions"
+      "rushi"
     ];
   };
 
@@ -157,7 +158,7 @@ in
         run = "rushi-sessions events";
       }
     ];
-    display = untab "[{split:@TAB@:1}] {split:@TAB@:2} {split:@TAB@:3}";
+    display = untab "{split:@TAB@:4}[{split:@TAB@:1}] {split:@TAB@:2} {split:@TAB@:3}";
     output = untab "{split:@TAB@:0}";
     frecency = false;
   };
@@ -178,6 +179,9 @@ in
 
   keybindings = {
     "ctrl-t" = "actions:send_message";
+    "alt-r" = "actions:rewind";
+    "alt-s" = "actions:summarize";
+    "alt-p" = "actions:summarize-prompt";
     "enter" = "actions:view_message";
   };
 
@@ -214,5 +218,32 @@ in
     shell = "bash";
     mode = "fork";
     command = viewCommand;
+  };
+
+  actions.rewind = {
+    description = ''
+      Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log binary. A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+    '';
+    shell = "bash";
+    mode = "fork";
+    command = untab "rushi-sessions rewind '{split:@TAB@:0}'";
+  };
+
+  actions.summarize = {
+    description = ''
+      Summarize the branch left of a fork (the tree view's `Summarize the branch` option). The binary guards the pick (a rewind marker must exist and the pick must be on the active path) and runs the kernel's compact binary with --branch in the session's recorded working dir. The loop applies the summary on its next step.
+    '';
+    shell = "bash";
+    mode = "fork";
+    command = untab "rushi-sessions summarize '{split:@TAB@:0}'";
+  };
+
+  actions."summarize-prompt" = {
+    description = ''
+      Summarize the branch left of a fork with a custom prompt (the tree view's `Summarize with custom prompt` option). The binary guards the pick, opens the editor for one instruction line (the same prompt flow as the send action; a blank file cancels), and runs the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
+    '';
+    shell = "bash";
+    mode = "fork";
+    command = untab "rushi-sessions summarize '{split:@TAB@:0}' --prompt";
   };
 }

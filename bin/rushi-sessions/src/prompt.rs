@@ -313,7 +313,7 @@ fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) {
 }
 
 /// Save the terminal state (`stty -g`), empty on failure.
-fn stty_save() -> String {
+pub(crate) fn stty_save() -> String {
     Command::new("stty")
         .arg("-g")
         .output()
@@ -397,7 +397,7 @@ pub(crate) fn valid_session_name(n: &str) -> bool {
 }
 
 /// All-POSIX-space check (the shell `tr -d "[:space:]"` test).
-fn is_blank(s: &str) -> bool {
+pub(crate) fn is_blank(s: &str) -> bool {
     s.bytes()
         .all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r' | b'\x0b' | b'\x0c'))
 }

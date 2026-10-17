@@ -16,16 +16,22 @@
 # events` prints one TSV row per entry of the CWD's events.jsonl,
 # newest first:
 #   0 seq     1-based line number of the entry in events.jsonl
-#   1 type    the event type
+#   1 tag     the short marker of the entry type (at most two
+#             capitalized letters, `[U]`, `[A]`, ... in the display)
 #   2 ts      the local wall-clock time of the entry
 #   3 summary the full one-line summary (the list side truncates)
+#   4 indent  the tree-depth box connector (the rushi-tui tree view's
+#             indent: three spaces per level, the `└─` branch marker,
+#             empty on the trunk)
 #
 # Two views: `User+Assistant` (the default, the first source command)
 # lists only the user and assistant messages, and `All` lists every
 # entry. Television runs the first command on startup and cycles the
 # rest on Ctrl+S.
 #
-# The list shows [type] ts summary. The preview panel renders the
+# The list shows [tag] ts summary, indented by the tree depth of
+# the branch structure (the rushi-tui tree view's box connector).
+# The preview panel renders the
 # selected entry as a document: markdown for user_message,
 # assistant_message and compaction_summary, toml for tool_call,
 # tool_result and everything else. The document pipes through a
@@ -57,6 +63,13 @@
 # The `view_message` action needs its viewers on PATH (`mdfried`
 # and `bat` in this baseline copy).
 #
+# The `rewind`, `summarize` and `summarize-prompt` actions (the
+# tree view's options) need `rushi` on PATH: the action logic runs
+# in the `rushi-sessions` binary, which calls the kernel's `log` and
+# `compact` binaries (the siblings of the resolved `rushi`). Both
+# need the loop to be idle: the binary probes the kernel's
+# `.loop.lock` flock and refuses a live loop.
+#
 # When tv runs inside tmux 3.8+, the prompt runs in a floating
 # pane (`tmux new-pane -f`) above tv: the editor and the send step
 # run in the pane, the pane dies on exit, the panes below keep
@@ -70,11 +83,11 @@
 [metadata]
 name = "rushi-sessions-events"
 description = "Fuzzy-search one session's events.jsonl entries and preview them"
-requirements = ["rushi-sessions"]
+requirements = ["rushi-sessions", "rushi"]
 
 [source]
 shell = "bash"
-display = "[{split:\t:1}] {split:\t:2} {split:\t:3}"
+display = "{split:\t:4}[{split:\t:1}] {split:\t:2} {split:\t:3}"
 output = "{split:\t:0}"
 frecency = false
 
@@ -111,6 +124,9 @@ word_wrap = true
 
 [keybindings]
 ctrl-t = "actions:send_message"
+alt-r = "actions:rewind"
+alt-s = "actions:summarize"
+alt-p = "actions:summarize-prompt"
 enter = "actions:view_message"
 
 # The session dir is the CWD of this channel: television chdirs to the
@@ -155,3 +171,44 @@ mode = "fork"
 command = """
 sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then rushi-sessions event-preview . \"$q\" | bat; else rushi-sessions event-preview . \"$q\" | mdfried; fi' sh '{split:\t:0}'
 """
+
+[actions.rewind]
+# Rewinds the session to the selected event, the rushi-tui tree
+# view's `Rewind without summary` option. The fork runs the binary
+# with the selected seq: it validates the seq, probes the kernel's
+# `.loop.lock` flock, and appends the `rewind` marker through the
+# kernel's `log` binary. The loop applies it on its next step.
+# A user_message pick rewinds before it, every other type on it.
+description = """
+Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log binary. A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+"""
+shell = "bash"
+mode = "fork"
+command = "rushi-sessions rewind '{split:\t:0}'"
+
+[actions.summarize]
+# Summarizes the branch left of a fork, the rushi-tui tree view's
+# `Summarize the branch` option. The fork runs the binary with the
+# selected seq: it guards the pick (a rewind marker must exist and
+# the pick must be on the active path) and runs the kernel's
+# `compact` binary with `--branch` in the session's recorded
+# working dir. The loop applies the summary on its next step.
+description = """
+Summarize the branch left of a fork (the tree view's `Summarize the branch` option). The binary guards the pick (a rewind marker must exist and the pick must be on the active path) and runs the kernel's compact binary with --branch in the session's recorded working dir. The loop applies the summary on its next step.
+"""
+shell = "bash"
+mode = "fork"
+command = "rushi-sessions summarize '{split:\t:0}'"
+
+[actions.summarize-prompt]
+# The `Summarize with custom prompt` option: the same guard as
+# `summarize`, then the binary opens the editor for one instruction
+# line (the same prompt flow as `send_message`) and runs the
+# kernel's `compact` binary with `--branch --prompt TEXT`. A blank
+# file cancels.
+description = """
+Summarize the branch left of a fork with a custom prompt (the tree view's `Summarize with custom prompt` option). The binary guards the pick, opens the editor for one instruction line (the same prompt flow as the send action; a blank file cancels), and runs the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
+"""
+shell = "bash"
+mode = "fork"
+command = "rushi-sessions summarize '{split:\t:0}' --prompt"

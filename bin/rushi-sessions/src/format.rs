@@ -201,6 +201,36 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
+
+/// The short list marker of one event type: at most two capitalized
+/// letters, the way the channel's display template prints it in the
+/// brackets (`[U]`, `[A]`, `[C]`, ...). The full type name stays in
+/// the preview document; the list column carries the short tag. An
+/// unknown type takes its first two letters, uppercased.
+pub(crate) fn short_tag(t: &str) -> String {
+    let tag = match t {
+        "user_message" => "U",
+        "assistant_message" => "A",
+        "tool_call" => "C",
+        "tool_result" => "R",
+        "ext_status" => "S",
+        "rewind" => "W",
+        "user_message_retract" => "T",
+        "cancel" => "X",
+        "error" => "E",
+        "compaction_summary" => "M",
+        "compaction_started" => "K",
+        "compaction_failed" => "F",
+        "context_exhausted" => "CE",
+        "approval_request" => "AR",
+        "approval" => "D",
+        _ => {
+            let c: Vec<char> = t.chars().take(2).map(|c| c.to_ascii_uppercase()).collect();
+            return c.iter().collect();
+        }
+    };
+    tag.to_string()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

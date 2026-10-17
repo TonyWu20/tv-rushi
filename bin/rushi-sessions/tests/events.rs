@@ -74,10 +74,11 @@ fn events_lists_every_entry_newest_first() {
     // the command unclipped.
     let call = rows[2];
     let f: Vec<&str> = call.split('\t').collect();
-    assert_eq!(f[1], "tool_call");
+    assert_eq!(f[1], "C");
     assert_eq!(f[3], "bash ls -la");
     // The user message content flattened to one line, unclipped.
     let user = rows[5].split('\t').collect::<Vec<&str>>();
+    assert_eq!(user[1], "U");
     assert_eq!(user[3], "line one line two");
     // The ts column is the local wall-clock time: 19 chars, no Z.
     let ts = f[2];
@@ -93,11 +94,11 @@ fn events_chat_lists_only_the_messages() {
     // Only the user and assistant messages, newest first.
     let seqs: Vec<&str> = rows.iter().map(|r| r.split('\t').next().unwrap()).collect();
     assert_eq!(seqs, vec!["4", "1"], "{out}");
-    let types: Vec<&str> = rows
+    let tags: Vec<&str> = rows
         .iter()
         .map(|r| r.split('\t').nth(1).unwrap())
         .collect();
-    assert_eq!(types, vec!["assistant_message", "user_message"], "{out}");
+    assert_eq!(tags, vec!["A", "U"], "{out}");
     // The unfiltered list still carries every entry.
     let all = run(&["events"], &d);
     assert_eq!(all.trim().lines().count(), 6, "{all}");
@@ -179,7 +180,7 @@ fn events_all_view_tags_masked_rows() {
     assert!(!marker.contains("[masked]"), "{marker}");
     // Seq 3 is the abandoned tool_call. It carries the tag.
     let abandoned = rows.iter().find(|r| r.starts_with("3\t")).unwrap();
-    assert!(abandoned.starts_with("3\ttool_call\t"), "{abandoned}");
+    assert!(abandoned.starts_with("3\tC\t"), "{abandoned}");
     assert!(abandoned.contains("[masked]"), "{abandoned}");
     // The active rows carry no tag.
     for seq in ["1", "2", "5", "6"] {
