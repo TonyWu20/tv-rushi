@@ -160,7 +160,7 @@ in
     "alt-v" = "actions:open_dir_tmux_v";
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
-    "alt-e" = "actions:browse_events";
+    "enter" = "actions:browse_events";
     "alt-n" = "actions:new_session";
   };
 
