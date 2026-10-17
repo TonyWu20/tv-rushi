@@ -1,3 +1,36 @@
+## 72. send_message: one detached `rushi run` call for both loop states (2026-10-17)
+
+The `send_message` actions of `rushi-sessions` and `rushi-sessions-events`
+probed the loop pid and branched on it. They read `loop.pid` and checked it
+with `kill -0` (remote rows via ssh). A live loop took the plain `rushi run`
+append. An idle session took the detached start. The echo diverged:
+`message sent to` on the live branch, `message queued for` on the idle
+branch.
+
+The harness now makes `rushi run <session> <task>` the single canonical
+poke (rust-unix-harness commit fb8c521 retired `run --no-run`). The kernel
+branches on the session lock (`.loop.lock`) itself: a live loop appends
+the message and exits 0, a free lock starts the loop. The caller never
+branches on the loop state.
+
+The channel now issues one detached `rushi run` call for both states, in
+the session's recorded working dir. The call keeps the detach form. It
+uses `setsid` + `&` with stdio to `/dev/null`, or the `nohup` fallback
+when setsid is absent. The idle call still blocks, because the kernel
+starts the loop. The live call appends and exits fast, so the detach is
+harmless.
+
+The pid probe, the `LIVE` and `$live` plumbing, and both `if [ "$live" =
+yes ]` branches are gone from all four channel files. The branches sat in
+the w-region, the tmux popup pipeline body, and the plain tail. The pane
+pipeline args drop the live flag: `RP HOST W F ED` (main) and `RP W F ED`
+(events). One echo line: `message queued for <session>`. The header
+comments and `description` strings state the new contract.
+
+Locked in `tests/toml_channel.rs`: the send commands carry no `loop.pid`,
+no `kill -0`, no `$live`, and they keep the detached `setsid rushi run`
+call.
+
 ## 71. Events-channel test: fix the stale rp assertion in the events test (2026-10-16)
 
 The events test asserted `rp=$(pwd)`, but the channel command resolves

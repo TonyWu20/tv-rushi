@@ -340,14 +340,16 @@ Decisions (user, 2026-10-04):
     Outside tmux, it is the plain fork, like open_dir_tmux_h. Remote
     rows are the same ssh -t local pane, with the -v split.
   - `ctrl-t` send_message: open `$EDITOR` (fallback `nvim`) on a `mktemp`
-    file, then `rushi run <abs-session-dir> <msg>`, from the session's
-    recorded working dir (the `cwd` file; the path rule is the
-    fallback). Idle: it starts the loop detached (`setsid` + `&`, stdio to
-    `/dev/null`). The kernel's idle `rushi run` blocks, so the detach
-    keeps tv responsive (decision 54). Live: it appends with a plain
-    `rushi run`; the installed kernel (0.1.0) branches on the session
-    lock itself, so a live append takes the log-line lock only (decision
-    53). An empty file cancels. The command saves and restores the stty
+    file, then one detached `rushi run <abs-session-dir> <msg>` call,
+    from the session's recorded working dir (the `cwd` file; the path
+    rule is the fallback). The call runs detached in both loop states.
+    It uses `setsid` + `&` with stdio to `/dev/null`, or the `nohup`
+    fallback when setsid is absent. An idle `rushi run` blocks, because
+    the kernel starts the loop. The detach keeps tv responsive
+    (decisions 54 and 72). A live loop drains the appended message and
+    exits fast. The detach is harmless there. The kernel branches on
+    the session lock itself, so the action probes no pid (decision 72).
+    An empty file cancels. The command saves and restores the stty
     state around the editor launch. The kernel re-anchors the `cwd` file
     to the starter's CWD on every loop start, so the action cds to the
     recorded working dir first: without that, a worktree session
@@ -620,8 +622,9 @@ replaces the manual `cp`. The channel stays pure data in the store.
   confirms before pressing alt-k.
 - `send_message` on an idle session starts the loop detached, so tv
   resumes at once. The loop's stdout and stderr go to `/dev/null`, so
-  watch progress in the preview panel. The loop writes its own `loop.pid`
-  on start, so the next send takes the live path.
+  watch progress in the preview panel. The send issues one detached
+  `rushi run` call and probes no pid file. The kernel branches on the
+  session lock (decision 72).
 - `send_message` opens `$EDITOR` (fallback `nvim`) on a temp file. An empty
   or whitespace-only file cancels the send.
 - Action command strings pass through television's string-pipeline templater.

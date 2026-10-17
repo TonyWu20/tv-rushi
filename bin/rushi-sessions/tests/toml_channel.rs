@@ -78,13 +78,16 @@ fn session_channel_toml_parses() {
     let od = v["actions"]["open_dir"]["command"].as_str().unwrap();
     assert!(od.contains("cd \\\"$r\\\" && exec"), "open_dir project dir: {od}");
 
-    // Decision 53: the live branch appends with a plain `rushi run`
-    // (the kernel branches on the session lock itself). No action
-    // carries the dropped `--no-run` flag.
+    // Decision 72: the send is one detached `rushi run` call for both
+    // loop states. The kernel branches on the session lock itself, so
+    // no action probes the loop pid and no action carries the dropped
+    // `--no-run` flag.
     let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
     assert!(!sm.contains("--no-run"), "send_message: {sm}");
     assert!(sm.contains("cd \"$w\" &&"), "send_message cds to the working dir: {sm}");
-    assert!(sm.contains("setsid rushi run"), "idle branch starts the loop: {sm}");
+    assert!(sm.contains("setsid rushi run"), "the detached call starts the loop when it is idle: {sm}");
+    assert!(!sm.contains("loop.pid"), "no loop pid probe: {sm}");
+    assert!(!sm.contains("kill -0"), "no pid liveness check: {sm}");
 
     // The prompt file is a markdown (.md) file, so $EDITOR detects the
     // markdown filetype. The pane editor opens in the session's recorded
@@ -106,7 +109,7 @@ fn session_channel_toml_parses() {
     // entry's project dir with an explicit --sessions-root (rushi
     // 0.1.1+). The prompt is an $EDITOR file (line 1 the name, the
     // rest the message); an unusable name cancels; the new loop
-    // starts detached, like the send_message idle branch.
+    // starts detached, like the send_message call.
     let ns = v["actions"]["new_session"]["command"].as_str().unwrap();
     assert!(
         ns.contains("--sessions-root \"$r/sessions\""),
@@ -150,13 +153,17 @@ fn events_channel_toml_parses() {
     // reload resets the preview panel's scroll position, so reloads
     // stay one-run CLI flags (`tv rushi-sessions-events --watch N`).
     assert!(v.get("watch").is_none());
-    // Decision 52/53: the action cds to the session's recorded
+    // Decision 52/72: the action cds to the session's recorded
     // working dir (the CWD of this channel is the session dir, not
-    // the project dir) and appends with a plain `rushi run`.
+    // the project dir) and pokes with one detached `rushi run` call.
+    // The kernel branches on the session lock itself.
     let sm = v["actions"]["send_message"]["command"].as_str().unwrap();
     assert!(sm.contains("rp=$(pwd 2>/dev/null)"), "session dir from CWD: {sm}");
     assert!(sm.contains("cat \"$rp/cwd\""), "cwd file read: {sm}");
     assert!(!sm.contains("--no-run"), "no dropped flag: {sm}");
+    assert!(sm.contains("setsid rushi run"), "the detached call starts the loop when it is idle: {sm}");
+    assert!(!sm.contains("loop.pid"), "no loop pid probe: {sm}");
+    assert!(!sm.contains("kill -0"), "no pid liveness check: {sm}");
     // The prompt file is a markdown (.md) file, so $EDITOR detects the
     // markdown filetype. The pane editor opens in the session's recorded
     // working dir, so typed relative paths complete against it.
