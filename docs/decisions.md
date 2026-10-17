@@ -17,6 +17,30 @@ and refuses a live loop.
 The `requirements` gain `rushi` (the binary resolves the kernel's
 `log` and `compact` siblings through it). The Nix mirror tracks
 the new actions, bindings, requirements and display template.
+
+The list marker column now prints a short tag of at most two
+capitalized letters (`short_tag` in `src/format.rs`): `U` is
+user_message, `A` is assistant_message, `C` is tool_call, `R` is
+tool_result, `S` is ext_status, `W` is rewind, `T` is
+user_message_retract, `X` is cancel, `E` is error, `M` is
+compaction_summary, `K` is compaction_started, `F` is
+compaction_failed, `CE` is context_exhausted, `AR` is
+approval_request, and `D` is approval. An unknown type prints its
+first two letters. The full type name stays in the preview
+document; the list column carries the tag.
+
+The source row is now five TSV columns: seq, tag, ts, summary,
+indent. The seq stays in column 0, so the `output` token and
+every action command keep reading `{split:\t:0}`.
+
+Verified: `cargo test -p rushi-sessions` is green (the tree depth
+unit tests carry the kernel's three-rewind chain; the branch tests
+run against a stubbed kernel bin dir with the idle guard held
+through a real flock). The flake `rushi-sessions-events-channel`
+derivation is byte-identical to the repo TOML (`cmp`). The Nix
+attrset decodes to the same value as the repo TOML (`nix eval`
+JSON against the TOML decode).
+
 ## 73. Prompt actions move into the rushi-sessions binary (2026-10-17)
 
 The three prompt actions (main send_message, main new_session, events
