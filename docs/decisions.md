@@ -1,3 +1,46 @@
+## 75. Events channel yank_entry: the full-document copy on ctrl-y (2026-10-19)
+
+The native ctrl-y of television copies the raw source row of the
+selected entry (the one-line TSV). It cannot carry the
+newline-preserving document. The copy content is the raw row,
+fixed in code (tv 0.15.9 and main both join `e.raw`), and the
+source is line-based. No channel knob changes it. The `[source]
+output` template feeds only the exit-printed text, and it is a
+template over the same one-line row.
+
+Decision: a custom action `yank_entry` bound to ctrl-y (the
+channel keybinding overrides the built-in, like ctrl-t to
+send_message). The fork runs the binary's new
+`copy-entry DIR SEQ` subcommand. It renders the entry the way
+`event-preview` does (markdown for messages, toml for
+everything else). It copies the document through two routes: the
+OSC 52 terminal clipboard escape is written to the controlling
+tty first, then a local clipboard tool takes the pipe when one is
+on PATH. The tool order is pbcopy, termux-clipboard-set,
+wl-copy, xclip, and xsel (television's own order). The tool
+write lands last, so it wins on hosts that have one. Without
+either route the subcommand exits 1 with a stderr line.
+
+The host baseline has no clipboard tool (a TTY-only session).
+The live route there is the OSC 52 escape. tmux 3.8 with
+`set-clipboard on` forwards it to the outer terminal's system
+clipboard. The escape matches television's own write: the
+standard-alphabet base64 payload, the ST terminator.
+
+The channel TOML gains the action, the ctrl-y binding, and the
+header note. The Nix mirror and the `toml_channel` lock track
+them. The README's two binding lists name it. No new channel
+requirement: the action needs only `rushi-sessions`, already
+required.
+
+Verified: `cargo test -p rushi-sessions` is green (the yank unit
+tests carry the RFC 4648 base64 vectors, the escape shape, and
+the missing-seq guard). A pty smoke test shows the exit-0
+status line and the decoded document with newlines. A fake
+`wl-copy` on PATH proves the tool route. The Nix attrset
+decodes to the same value as the repo TOML (`nix eval` JSON
+against the TOML decode, leaf for leaf).
+
 ## 74. Events channel tree view: the depth column and the branch actions (2026-10-17)
 
 The events channel list now carries a fifth source column: the

@@ -35,7 +35,12 @@ action (alt-e) launches it from the session list.
   `view_message`, which forks a viewer on the selected entry's
   document. The fork picks the viewer from the document language:
   markdown goes to `eventViewer` (default `mdfried`), toml goes to
-  `eventTomlViewer` (default `bat`).
+  `eventTomlViewer` (default `bat`). Ctrl-y binds `yank_entry`,
+  which copies the selected entry's full document to the clipboard,
+  newlines preserved. Its fork runs the binary's `copy-entry`
+  subcommand. It writes the OSC 52 escape to the controlling tty
+  and pipes the document into a clipboard tool when one is on
+  PATH.
 
 ## Requirements
 
@@ -157,7 +162,12 @@ The events channel binds the same `ctrl-t` to its own `send_message`.
 It binds enter to `view_message`, which forks a viewer chosen from
 the entry's document language: markdown goes to `eventViewer`
 (default `mdfried`), toml goes to `eventTomlViewer` (default `bat`).
-It acts on the session dir the channel was launched from (its CWD).
+Ctrl-y binds `yank_entry`, which copies the selected entry's full
+document to the clipboard, newlines preserved. Its fork runs the
+binary's `copy-entry` subcommand. It writes the OSC 52 escape to
+the controlling tty and pipes the document into a clipboard tool
+when one is on PATH. It acts on the session dir the channel was
+launched from (its CWD).
 
 ## Install
 

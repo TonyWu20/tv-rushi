@@ -24,7 +24,7 @@ fn doc_lang(o: &Value) -> &'static str {
 /// id of a user_message does not print. The call ids of a tool_call
 /// (the id and call_id keys) do not print. The `id` key of a
 /// `[[tool_calls]]` entry does not print either.
-fn doc_for(o: &Value) -> String {
+pub(crate) fn doc_for(o: &Value) -> String {
     if doc_lang(o) == "markdown" {
         markdown_doc(o)
     } else {

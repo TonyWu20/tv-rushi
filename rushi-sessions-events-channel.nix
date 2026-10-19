@@ -42,7 +42,7 @@
 # The repo copy rushi-sessions-events.toml carries the default (bat)
 # and is the manual-install baseline.
 #
-# The channel carries five actions. `send_message` (bound to ctrl-t) is
+# The channel carries six actions. `send_message` (bound to ctrl-t) is
 # the same design as the main channel's, local only. The session dir
 # is the CWD of the channel, so the body reads it with `$(pwd)` and
 # takes no split placeholder. It cds to the session's recorded
@@ -81,6 +81,15 @@
 # (`--print-lang`), then branches: markdown to the `eventViewer`
 # command, toml to the `eventTomlViewer` command. The body takes
 # the seq through one split placeholder (`{split:\t:0}`).
+#
+# `yank_entry` (bound to ctrl-y) copies the full document of the
+# selected entry to the clipboard. It keeps the newlines, which
+# the native television ctrl-y drops. The native yank copies the
+# raw source row, which is one tab-separated line. The fork runs
+# the binary's copy-entry subcommand on the selected seq. It
+# writes the OSC 52 escape to the controlling tty and pipes the
+# document into a local clipboard tool when one is on PATH. It
+# adds no binary requirement.
 
 { eventPreviewer ? "bat", eventTomlPreviewer ? "bat", eventViewer ? "mdfried", eventTomlViewer ? "bat", ... }:
 
@@ -183,6 +192,9 @@ in
     "alt-s" = "actions:summarize";
     "alt-p" = "actions:summarize-prompt";
     "enter" = "actions:view_message";
+    # Replaces the native ctrl-y, which copies the raw source row
+    # (one line, tab-separated).
+    "ctrl-y" = "actions:yank_entry";
   };
 
   actions.send_message = {
@@ -218,6 +230,16 @@ in
     shell = "bash";
     mode = "fork";
     command = viewCommand;
+  };
+
+  actions.yank_entry = {
+    # Single-line form, like send_message: the repo TOML holds a
+    # single-line basic string, whose value carries no trailing
+    # newline.
+    description = "Copy the selected entry's full document (newlines preserved) to the clipboard. The fork runs the binary's copy-entry subcommand. It renders the entry the way event-preview does: markdown for messages, toml for everything else. The OSC 52 terminal clipboard escape is written to the controlling tty first. A supporting terminal, or tmux 3.8+ with set-clipboard on, lands it on the system clipboard. A local clipboard tool (pbcopy, wl-copy, xclip, xsel) takes the pipe when one is on PATH.";
+    shell = "bash";
+    mode = "fork";
+    command = untab "rushi-sessions copy-entry . '{split:@TAB@:0}'";
   };
 
   actions.rewind = {

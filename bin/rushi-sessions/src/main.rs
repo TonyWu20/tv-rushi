@@ -54,6 +54,14 @@
 //!   entries, toml for everything else. `--print-lang` prints only the
 //!   document language.
 //!
+//! - `rushi-sessions copy-entry DIR SEQ`
+//!   Copy one entry's full document (newlines preserved) to the
+//!   clipboard. The OSC 52 terminal clipboard escape goes to the
+//!   controlling tty first. A local clipboard tool (pbcopy,
+//!   termux-clipboard-set, wl-copy, xclip, xsel) takes the pipe
+//!   when one is on PATH. Without either route the command exits
+//!   1 with a stderr line.
+//!
 //! `source` calls `fd` for the directory walk (a hard dependency of the
 //! channel) and replaces the channel's previous `python3` reader.
 
@@ -71,6 +79,7 @@ mod scan;
 mod state;
 mod tree;
 mod usage;
+mod yank;
 
 #[derive(Parser)]
 #[command(
@@ -190,6 +199,17 @@ enum Command {
         #[arg(long)]
         print_lang: bool,
     },
+    /// Copy one entry's full document (newlines preserved) to the
+    /// clipboard. SEQ is the 1-based line number of the entry in
+    /// events.jsonl. The OSC 52 escape goes to the controlling tty
+    /// first; a local clipboard tool takes the pipe when one is on
+    /// PATH.
+    CopyEntry {
+        /// The session dir (the dir that holds events.jsonl).
+        dir: PathBuf,
+        /// The 1-based line number of the entry in events.jsonl.
+        seq: u64,
+    },
 }
 
 fn main() {
@@ -231,5 +251,6 @@ fn main() {
             seq,
             print_lang,
         } => doc::event_preview(&dir, seq, print_lang),
+        Command::CopyEntry { dir, seq } => std::process::exit(yank::copy_entry(&dir, seq)),
     }
 }

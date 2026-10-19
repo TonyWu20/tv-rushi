@@ -63,6 +63,15 @@
 # The `view_message` action needs its viewers on PATH (`mdfried`
 # and `bat` in this baseline copy).
 #
+# The `yank_entry` action (bound to ctrl-y, in place of
+# television's native raw-row yank) copies the selected entry's
+# full document to the clipboard. It keeps the newlines, which the
+# native yank (the raw source row) drops. The fork runs the
+# binary's copy-entry subcommand on the selected seq. It writes the
+# OSC 52 escape to the controlling tty and pipes the document into
+# a local clipboard tool when one is on PATH. It needs no new
+# binary beyond rushi-sessions.
+#
 # The `rewind`, `summarize` and `summarize-prompt` actions (the
 # tree view's options) need `rushi` on PATH: the action logic runs
 # in the `rushi-sessions` binary, which calls the kernel's `log` and
@@ -128,6 +137,9 @@ alt-r = "actions:rewind"
 alt-s = "actions:summarize"
 alt-p = "actions:summarize-prompt"
 enter = "actions:view_message"
+# Replaces the native ctrl-y, which copies the raw source row
+# (one line, tab-separated).
+ctrl-y = "actions:yank_entry"
 
 # The session dir is the CWD of this channel: television chdirs to the
 # [PATH] argument, and the main channel's browse_events action starts
@@ -171,6 +183,19 @@ mode = "fork"
 command = """
 sh -c 'q=$1; l=$(rushi-sessions event-preview . \"$q\" --print-lang); if [ \"$l\" = toml ]; then rushi-sessions event-preview . \"$q\" | bat; else rushi-sessions event-preview . \"$q\" | mdfried; fi' sh '{split:\t:0}'
 """
+
+[actions.yank_entry]
+# Copies the selected entry's full document to the clipboard,
+# newlines preserved. The native ctrl-y copies the raw source row
+# instead, one tab-separated line. The fork runs the binary's
+# copy-entry subcommand on the selected seq. It writes the OSC 52
+# escape to the controlling tty and pipes the document into a
+# local clipboard tool when one is on PATH. The source rows carry
+# only the seq token, so the command takes one split placeholder.
+description = "Copy the selected entry's full document (newlines preserved) to the clipboard. The fork runs the binary's copy-entry subcommand. It renders the entry the way event-preview does: markdown for messages, toml for everything else. The OSC 52 terminal clipboard escape is written to the controlling tty first. A supporting terminal, or tmux 3.8+ with set-clipboard on, lands it on the system clipboard. A local clipboard tool (pbcopy, wl-copy, xclip, xsel) takes the pipe when one is on PATH."
+shell = "bash"
+mode = "fork"
+command = "rushi-sessions copy-entry . '{split:\t:0}'"
 
 [actions.rewind]
 # Rewinds the session to the selected event, the rushi-tui tree

@@ -188,4 +188,20 @@ fn events_channel_toml_parses() {
     assert_eq!(v["keybindings"]["alt-r"].as_str().unwrap(), "actions:rewind");
     assert_eq!(v["keybindings"]["alt-s"].as_str().unwrap(), "actions:summarize");
     assert_eq!(v["keybindings"]["alt-p"].as_str().unwrap(), "actions:summarize-prompt");
+
+    // The yank_entry action: the full-document copy that replaces
+    // the native ctrl-y (the raw-row copy). One binary call with
+    // the seq token, fork mode, no shell sequencing.
+    let ye = v["actions"]["yank_entry"].clone();
+    let yc = ye["command"].as_str().unwrap();
+    assert!(yc.contains("rushi-sessions copy-entry"), "binary call: {yc}");
+    assert!(yc.contains("'{split:\t:0}'"), "seq token: {yc}");
+    assert!(!yc.contains(";"), "no shell sequencing: {yc}");
+    assert_eq!(ye["mode"].as_str().unwrap(), "fork", "fork mode");
+    assert!(ye["shell"].as_str().unwrap().contains("bash"), "bash shell");
+    assert_eq!(
+        v["keybindings"]["ctrl-y"].as_str().unwrap(),
+        "actions:yank_entry",
+        "ctrl-y binds yank_entry"
+    );
 }
