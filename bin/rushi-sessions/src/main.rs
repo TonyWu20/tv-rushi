@@ -161,13 +161,16 @@ enum Command {
         #[arg(long, value_name = "DIR")]
         dir: Option<PathBuf>,
     },
-    /// Summarize the abandoned branch of the last top-level rewind
-    /// through the kernel's `compact --branch` (the tree view's
-    /// "Summarize the branch"). The picked SEQ must sit on the
-    /// active path; the loop must be idle. With `--prompt`, the
+    /// One-shot fork-and-summarize (the tree view's "Summarize the
+    /// branch", rushi-tui #37/#38): append the `rewind` marker at
+    /// the picked SEQ (mode `on`: the picked event stays in the
+    /// context), then run the kernel's `compact --branch` on the
+    /// open span the marker abandons. No pre-existing marker is
+    /// needed. The loop must be idle. With `--prompt`, the
     /// instruction is typed in the editor on a .md file first (a
-    /// blank file cancels) and passed as `--prompt`. The session
-    /// dir is the CWD (the events channel) or `--dir`.
+    /// blank file cancels, no marker is appended) and passed as
+    /// `--prompt`. The session dir is the CWD (the events channel)
+    /// or `--dir`.
     Summarize {
         /// The picked entry's 1-based log seq (the row token).
         seq: u64,

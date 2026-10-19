@@ -212,27 +212,28 @@ mode = "fork"
 command = "rushi-sessions rewind '{split:\t:0}'"
 
 [actions.summarize]
-# Summarizes the branch left of a fork, the rushi-tui tree view's
-# `Summarize the branch` option. The fork runs the binary with the
-# selected seq: it guards the pick (a rewind marker must exist and
-# the pick must be on the active path) and runs the kernel's
-# `compact` binary with `--branch` in the session's recorded
-# working dir. The loop applies the summary on its next step.
+# One-shot fork-and-summarize, the rushi-tui tree view's `Summarize
+# the branch` option (rushi-tui #37/#38). The fork runs the binary
+# with the selected seq: it appends the `rewind` marker at the pick
+# (mode `on`: the picked event stays in the context) and runs the
+# kernel's `compact` binary with `--branch` on the open span the
+# marker abandons. No pre-existing marker is needed.
 description = """
-Summarize the branch left of a fork (the tree view's `Summarize the branch` option). The binary guards the pick (a rewind marker must exist and the pick must be on the active path) and runs the kernel's compact binary with --branch in the session's recorded working dir. The loop applies the summary on its next step.
+One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. The loop applies the summary on its next step.
 """
 shell = "bash"
 mode = "fork"
 command = "rushi-sessions summarize '{split:\t:0}'"
 
 [actions.summarize-prompt]
-# The `Summarize with custom prompt` option: the same guard as
-# `summarize`, then the binary opens the editor for one instruction
-# line (the same prompt flow as `send_message`) and runs the
-# kernel's `compact` binary with `--branch --prompt TEXT`. A blank
-# file cancels.
+# The `Summarize with custom prompt` option (the one-shot with a
+# prompt, rushi-tui #37/#38): the binary opens the editor for one
+# instruction line (the same prompt flow as `send_message`), then
+# appends the `rewind` marker at the pick and runs the kernel's
+# `compact` binary with `--branch --prompt TEXT`. A blank file
+# cancels (no marker is appended).
 description = """
-Summarize the branch left of a fork with a custom prompt (the tree view's `Summarize with custom prompt` option). The binary guards the pick, opens the editor for one instruction line (the same prompt flow as the send action; a blank file cancels), and runs the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
+One-shot with a custom prompt (the tree view's `Summarize with custom prompt` option): open the editor for one instruction line (the same prompt flow as the send action; a blank file cancels and appends no marker), then append a rewind marker at the picked event and run the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
 """
 shell = "bash"
 mode = "fork"

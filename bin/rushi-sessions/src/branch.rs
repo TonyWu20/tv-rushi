@@ -1,7 +1,8 @@
 //! The tree-view actions on one session: `rewind` (append a `rewind`
-//! marker, the tree's "Rewind without summary") and `summarize` (the
-//! kernel's `compact --branch`, the two branch-summarize options of
-//! the tree view).
+//! marker, the tree's "Rewind without summary") and `summarize`
+//! (the one-shot fork-and-summarize, the two branch-summarize options
+//! of the tree view, rushi-tui #37/#38: append the `rewind` marker
+//! at the picked event, then run the kernel's `compact --branch`).
 //!
 //! Both call the kernel's own binaries, the way the TUI does: the
 //! marker is appended through the kernel's `log` binary (the one
@@ -21,9 +22,8 @@ use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use crate::events::{log_active_ranges, numbered_events};
+use crate::events::numbered_events;
 use crate::prompt::{is_blank, new_prompt_file, stty_save, which};
-use rushi_common::rewind::{parse_rewind_event, seq_in_ranges};
 
 /// The stage entry of the `rewind` command. Without DIR, the CWD is
 /// the session dir (the events channel runs in it).
@@ -61,45 +61,17 @@ pub(crate) fn rewind(dir: Option<PathBuf>, seq: u64) -> i32 {
         return 1;
     }
     let mode = if ty == Some("user_message") { "before" } else { "on" };
-    let marker = rewind_marker(seq, mode);
-    let log_bin = kernel_bin("log");
-    let mut c = Command::new(&log_bin);
-    c.arg("--session").arg(&base);
-    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::inherit());
-    let mut child = match c.spawn() {
-        Ok(ch) => ch,
-        Err(e) => {
-            eprintln!("rushi-sessions: cannot start {log_bin}: {e}");
-            return 1;
-        }
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        let mut line = marker;
-        line.push_str("\n");
-        if let Err(e) = stdin.write_all(line.as_bytes()) {
-            eprintln!("rushi-sessions: cannot write the rewind marker: {e}");
-            return 1;
-        }
+    if let Err(e) = append_rewind_marker(&base, seq, mode) {
+        eprintln!("rushi-sessions: {e}");
+        return 1;
     }
-    match child.wait() {
-        Ok(s) if s.success() => {
-            println!("rewound to seq {seq} ({mode})");
-            if mode == "before" {
-                println!(
-                    "the user message at seq {seq} left the context; send it again to re-ask"
-                );
-            }
-            0
-        }
-        Ok(s) => {
-            eprintln!("rushi-sessions: {log_bin} exited with {s}");
-            1
-        }
-        Err(e) => {
-            eprintln!("rushi-sessions: cannot wait on {log_bin}: {e}");
-            1
-        }
+    println!("rewound to seq {seq} ({mode})");
+    if mode == "before" {
+        println!(
+            "the user message at seq {seq} left the context; send it again to re-ask"
+        );
     }
+    0
 }
 
 /// The stage entry of the `summarize` command. With `prompt`, the
@@ -125,20 +97,15 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
             return 1;
         }
     }
-    // The branch to summarize: the abandoned span of the last
-    // top-level rewind (the kernel's `compact --branch`). The picked
-    // entry must sit on the active path, the TUI's guard.
+    // The one-shot fork-and-summarize (rushi-tui #37/#38): the
+    // picked entry becomes the rewind target. No pre-existing marker
+    // is needed, and the pick may sit on the active path or in an
+    // abandoned span (the kernel re-enters the branch). The picked
+    // event stays in the context, so the marker is always mode `on`.
     let rows = numbered_events(&base);
-    let has_marker = rows
-        .iter()
-        .any(|(s, v)| parse_rewind_event(v, *s as usize).is_some());
-    if !has_marker {
-        println!("no abandoned branch to summarize (no rewind marker)");
-        return 1;
-    }
-    let ranges = log_active_ranges(&rows);
-    if !seq_in_ranges(seq as usize, &ranges) {
-        println!("pick an active-path event to summarize its branch");
+    let last = rows.last().map(|(s, _)| *s).unwrap_or(0);
+    if seq > last {
+        eprintln!("rushi-sessions: seq {seq} is past the end of the log ({last})");
         return 1;
     }
     let prompt_text: Option<String> = if prompt {
@@ -152,6 +119,12 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     } else {
         None
     };
+    // The marker must land in the log before the compact child reads
+    // it, so the append comes first and blocks.
+    if let Err(e) = append_rewind_marker(&base, seq, "on") {
+        eprintln!("rushi-sessions: {e}");
+        return 1;
+    }
     // One `compact --branch` call, the TUI outcome. It runs in the
     // session's recorded working dir so the config tier finds the
     // same project config the loop uses.
@@ -164,7 +137,10 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     }
     c.current_dir(&w);
     match c.status() {
-        Ok(s) if s.success() => 0,
+        Ok(s) if s.success() => {
+            println!("summarized the branch left of seq {seq}");
+            0
+        }
         Ok(s) => {
             eprintln!("rushi-sessions: {compact} exited with {s}");
             1
@@ -249,6 +225,36 @@ fn rewind_marker(seq: u64, mode: &str) -> String {
         "reason": "tv_pick",
     })
     .to_string()
+}
+
+/// Append the one `rewind` marker of a pick through the kernel's
+/// `log` binary (the locked single-write append, FT-005), and wait
+/// for it. The marker must land in the log before a `compact` child
+/// reads it, so the append is synchronous.
+fn append_rewind_marker(base: &Path, seq: u64, mode: &str) -> Result<(), String> {
+    let marker = rewind_marker(seq, mode);
+    let log_bin = kernel_bin("log");
+    let mut c = Command::new(&log_bin);
+    c.arg("--session").arg(base);
+    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::inherit());
+    let mut child = c
+        .spawn()
+        .map_err(|e| format!("cannot start {log_bin}: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let mut line = marker;
+        line.push('\n');
+        stdin
+            .write_all(line.as_bytes())
+            .map_err(|e| format!("cannot write the rewind marker: {e}"))?;
+    }
+    let s = child
+        .wait()
+        .map_err(|e| format!("cannot wait on {log_bin}: {e}"))?;
+    if s.success() {
+        Ok(())
+    } else {
+        Err(format!("{log_bin} exited with {s}"))
+    }
 }
 
 /// The custom-summarize instruction: the editor on a .md file, the

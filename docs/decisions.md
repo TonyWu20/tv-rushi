@@ -1,3 +1,32 @@
+## 76. Events-channel summarize follows the TUI one-shot (rushi-tui #37/#38) (2026-10-19)
+
+The two summarize actions kept the old TUI guards: a rewind
+marker had to exist, and the pick had to sit on the active path.
+The TUI one-shot redesign (issue #37, PR #38) dropped both. The
+picked entry becomes the rewind target.
+
+Decision: the channel's `summarize` and `summarize-prompt` follow
+the one-shot flow. The binary validates the seq, then takes the
+prompt when asked. A blank cancel appends no marker. It appends
+the `rewind` marker at the pick through the kernel's `log`
+binary. The marker is mode `on` (the picked event stays in the
+context), reason `tv_pick`. It then runs the kernel's `compact
+--branch` in the recorded working dir. The marker append
+blocks, so it lands before the compact child reads the log. No
+pre-existing marker is needed. A pick in an abandoned span
+commits: the marker re-enters the branch.
+
+The `rewind` action keeps its own semantics (a user_message pick
+rewinds `before` it). The idle-loop guard stays on all three
+actions.
+
+Verified: `cargo test -p rushi-sessions` is green. The branch
+suite covers the one-shot: the marker-less pick appends the
+marker and runs the compact. The masked pick re-enters. The
+past-end seq refuses. The prompt cancel appends nothing. The Nix
+mirror keeps the same action descriptions. The flake channel file
+and the home-manager attrset stay in lockstep with the repo TOML.
+
 ## 75. Events channel yank_entry: the full-document copy on ctrl-y (2026-10-19)
 
 The native ctrl-y of television copies the raw source row of the

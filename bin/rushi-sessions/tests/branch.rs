@@ -52,7 +52,8 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
         );
     }
     std::fs::write(session.join("events.jsonl"), lines.join("\n") + "\n").unwrap();
-    std::fs::write(&session.join("cwd"), project.to_string_lossy().as_ref()).unwrap();
+    let cwd = project.to_string_lossy().into_owned();
+    std::fs::write(session.join("cwd"), cwd).unwrap();
     // The stub kernel bin dir: `rushi` (the resolver's anchor),
     // `log` (the marker append), `compact` (the branch summary).
     // The stubs record their calls through the STUB_* env vars.
@@ -189,41 +190,92 @@ fn rewind_rejects_a_seq_past_the_end() {
 }
 
 #[test]
-fn summarize_needs_a_rewind_marker() {
+fn summarize_without_a_marker_is_one_shot() {
+    // No rewind marker in the log: the one-shot appends one at the
+    // picked seq, then runs the compact (rushi-tui #37/#38).
     let f = fixture("br-nomarker", false);
+    let log_file = f.dir.join("log-calls.txt");
+    let compact_file = f.dir.join("compact-calls.txt");
     let (code, out, err) = run(
         &f,
         &["summarize", "1", "--dir", &dir_arg(&f)],
-        &[("STUB_COMPACT_FILE", f.dir.to_str().unwrap())],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
     );
-    assert_eq!(code, 1, "stdout: {out} stderr: {err}");
-    assert!(out.contains("no abandoned branch to summarize"), "{out}");
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    assert!(out.contains("summarized the branch left of seq 1"), "{out}");
+    // The marker append comes first: mode `on` (the picked event
+    // stays in the context), the channel's reason.
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let marker = calls.lines().next().unwrap();
+    let v: serde_json::Value = serde_json::from_str(marker).unwrap();
+    assert_eq!(v["type"], "rewind");
+    assert_eq!(v["target_seq"], 1);
+    assert_eq!(v["mode"], "on");
+    assert_eq!(v["reason"], "tv_pick");
+    let compact = std::fs::read_to_string(&compact_file).unwrap();
+    let args = compact.lines().next().unwrap();
+    assert!(args.contains("--branch"), "{args}");
 }
 
 #[test]
-fn summarize_rejects_a_masked_pick() {
+fn summarize_on_a_masked_pick_reenters_the_branch() {
     // Seq 3 is in the abandoned span of the marker at seq 4. The
-    // TUI guard: only active-path picks summarize.
+    // one-shot commits: the marker re-enters the abandoned branch,
+    // the compact runs on the new open span.
     let f = fixture("br-masked", true);
+    let log_file = f.dir.join("log-calls.txt");
+    let compact_file = f.dir.join("compact-calls.txt");
     let (code, out, err) = run(
         &f,
         &["summarize", "3", "--dir", &dir_arg(&f)],
-        &[("STUB_COMPACT_FILE", f.dir.to_str().unwrap())],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let marker = calls.lines().next().unwrap();
+    let v: serde_json::Value = serde_json::from_str(marker).unwrap();
+    assert_eq!(v["target_seq"], 3);
+    assert_eq!(v["mode"], "on");
+}
+
+#[test]
+fn summarize_rejects_a_seq_past_the_end() {
+    let f = fixture("br-past-sum", false);
+    let (code, out, err) = run(
+        &f,
+        &["summarize", "99", "--dir", &dir_arg(&f)],
+        &[("STUB_LOG_FILE", f.dir.to_str().unwrap())],
     );
     assert_eq!(code, 1, "stdout: {out} stderr: {err}");
-    assert!(out.contains("pick an active-path event"), "{out}");
+    assert!(err.contains("past the end"), "{err}");
 }
 
 #[test]
 fn summarize_calls_compact_branch_in_the_recorded_dir() {
     let f = fixture("br-compact", true);
     let compact_file = f.dir.join("compact-calls.txt");
+    let log_file = f.dir.join("log-calls.txt");
     let (code, out, err) = run(
         &f,
         &["summarize", "6", "--dir", &dir_arg(&f)],
-        &[("STUB_COMPACT_FILE", compact_file.to_str().unwrap())],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
     );
     assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    // The one-shot marker append comes before the compact.
+    let logs = std::fs::read_to_string(&log_file).unwrap();
+    let m: serde_json::Value =
+        serde_json::from_str(logs.lines().next().unwrap()).unwrap();
+    assert_eq!(m["target_seq"], 6);
+    assert_eq!(m["mode"], "on");
     let calls = std::fs::read_to_string(&compact_file).unwrap();
     // The args: the session dir, `--branch`, no `--prompt`.
     let args = calls.lines().next().unwrap();
@@ -250,6 +302,7 @@ fn summarize_prompt_uses_the_editor_file() {
         &f,
         &["summarize", "6", "--dir", &dir_arg(&f), "--prompt"],
         &[
+            ("STUB_LOG_FILE", f.dir.join("log-calls.txt").to_str().unwrap()),
             ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
             ("EDITOR", editor.to_str().unwrap()),
         ],
@@ -273,7 +326,8 @@ fn summarize_prompt_cancels_on_a_blank_file() {
         &f,
         &["summarize", "6", "--dir", &dir_arg(&f), "--prompt"],
         &[
-            ("STUB_COMPACT_FILE", f.dir.to_str().unwrap()),
+            ("STUB_LOG_FILE", f.dir.join("log-calls.txt").to_str().unwrap()),
+            ("STUB_COMPACT_FILE", f.dir.join("compact-calls.txt").to_str().unwrap()),
             ("EDITOR", editor.to_str().unwrap()),
         ],
     );

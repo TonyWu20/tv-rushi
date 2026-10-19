@@ -253,7 +253,7 @@ in
 
   actions.summarize = {
     description = ''
-      Summarize the branch left of a fork (the tree view's `Summarize the branch` option). The binary guards the pick (a rewind marker must exist and the pick must be on the active path) and runs the kernel's compact binary with --branch in the session's recorded working dir. The loop applies the summary on its next step.
+      One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. The loop applies the summary on its next step.
     '';
     shell = "bash";
     mode = "fork";
@@ -262,7 +262,7 @@ in
 
   actions."summarize-prompt" = {
     description = ''
-      Summarize the branch left of a fork with a custom prompt (the tree view's `Summarize with custom prompt` option). The binary guards the pick, opens the editor for one instruction line (the same prompt flow as the send action; a blank file cancels), and runs the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
+      One-shot with a custom prompt (the tree view's `Summarize with custom prompt` option): open the editor for one instruction line (the same prompt flow as the send action; a blank file cancels and appends no marker), then append a rewind marker at the picked event and run the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
     '';
     shell = "bash";
     mode = "fork";
