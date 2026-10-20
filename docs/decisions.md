@@ -1,3 +1,47 @@
+## 77. send_message: escape the task with `--`, report spawn failures honestly (2026-10-20)
+
+The `send_message` action lost every message that starts with a
+hyphen. The detached send is `setsid rushi run <session> <msg>`;
+the kernel's clap rejected a hyphen-leading `task` as an unknown
+flag (`unexpected argument '- ...'`, exit 2), and the detached
+call sends stderr to /dev/null. The action still printed
+`message queued for <session>`, so the loss was silent. A review
+message that opens a bullet list (`- Too many they...`) hit this
+on three attempts; a plain first character always worked, which
+read as an occasional failure.
+
+Decision: the local message-mode call becomes
+`rushi run <session> -- <msg>`, and the remote form gains the
+same escape before the base64 task (`rushi run '<rp>' --
+"$(printf %s <b64> | base64 -d)"`). The `--` escape is valid on
+kernels with and without the clap fix (the kernel now carries
+`allow_hyphen_values` on `run` task and session, rushi 0.1.4, and
+on `user` content, user 0.1.3). The remote escape applies to the
+message mode only: a trailing `--sessions-root` after `--` would
+parse as a positional.
+
+The spawn helpers return a result. The action prints
+`message queued` only when the spawn started; a failed spawn
+prints `nothing sent` on stderr and exits 1, so the terminal
+state is observable. The new_session spawn reports the same way.
+
+Verified: `cargo test -p rushi-sessions` is green (the remote
+command shape test locks the `--` position). An end-to-end
+`run-pane` against the installed 0.1.3 kernel with a
+hyphen-leading multi-line message appends the message verbatim
+(newlines intact) to a live session's log. The same call against
+a free lock starts the loop and seeds the message.
+
+The kernel side is filed as rushi issue #52, fixed in
+rushi PR #53 (`allow_hyphen_values` on `run` session/task and
+`user` content; rushi 0.1.4, user 0.1.3).
+
+Out of scope: a hyphen-leading new_session name (the name is the
+first positional; the trailing `--sessions-root` blocks the
+escape). The TUI multi-line paste defect (newlines land at the
+end of the pasted message under tmux; bracketed paste is dropped
+outright) is a separate issue in the rushi-tui repo.
+
 ## 76. Events-channel summarize follows the TUI one-shot (rushi-tui #37/#38) (2026-10-19)
 
 The two summarize actions kept the old TUI guards: a rewind

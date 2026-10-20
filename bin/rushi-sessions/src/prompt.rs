@@ -197,19 +197,34 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         }
         let host = cfg.host.as_deref();
         let w = cfg.w.clone().unwrap_or_default();
-        if host.is_some() {
+        let sent = if host.is_some() {
             let m64 = b64_encode(m.as_bytes());
             let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None);
-            detached(&cfg.ssh, &cfg.detach, &["-T", host.unwrap(), &cmd]);
+            detached(&cfg.ssh, &cfg.detach, &["-T", host.unwrap(), &cmd])
         } else {
-            detached_rushi(cfg, &[&cfg.rp, m], &w);
-        }
+            // The `--` escape keeps a hyphen-leading message (a
+            // bullet list, a dash) as the task positional: kernels
+            // without allow_hyphen_values reject it as an unknown
+            // flag, and the detached stderr goes to /dev/null, so
+            // the loss would be silent. The escape stays valid on
+            // the fixed kernels (allow_hyphen_values).
+            detached_rushi(cfg, &[&cfg.rp, "--", m], &w)
+        };
         if let Some(h) = host {
-            println!("message queued for {} on {}", cfg.rp, h);
-        } else {
+            if sent {
+                println!("message queued for {} on {}", cfg.rp, h);
+            } else {
+                eprintln!(
+                    "rushi-sessions: nothing sent for {} on {} (the remote send call did not start).",
+                    cfg.rp, h
+                );
+            }
+        } else if sent {
             println!("message queued for {}", cfg.rp);
+        } else {
+            eprintln!("rushi-sessions: nothing sent for {} (the send call did not start).", cfg.rp);
         }
-        true
+        sent
     } else {
         let n = name.unwrap_or("");
         if !valid_session_name(n) {
@@ -221,7 +236,11 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         if let Some(host) = cfg.host.as_deref() {
             let msg64 = if msg { Some(b64_encode(m.as_bytes())) } else { None };
             let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r));
-            detached(&cfg.ssh, &cfg.detach, &["-T", host, &cmd]);
+            let ok = detached(&cfg.ssh, &cfg.detach, &["-T", host, &cmd]);
+            if !ok {
+                eprintln!("rushi-sessions: nothing created for {n} on {host} (the remote call did not start).");
+                return false;
+            }
             if msg {
                 println!("new session {} starting in {}/sessions on {host}", n, r);
             } else {
@@ -238,7 +257,11 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
             } else {
                 vec![n, "--sessions-root", &sr]
             };
-            detached_rushi(cfg, &args, &r);
+            let ok = detached_rushi(cfg, &args, &r);
+            if !ok {
+                eprintln!("rushi-sessions: nothing created for {n} (the send call did not start).");
+                return false;
+            }
             if msg {
                 println!("new session {n} starting in {r}/sessions (working dir {r})");
             } else {
@@ -263,6 +286,15 @@ pub(crate) fn remote_run_command(
     let mut run = vec!["rushi".to_string(), "run".to_string()];
     run.push(remote_quote(target));
     if let Some(b) = msg64 {
+        // The `--` escape keeps a hyphen-leading message (a bullet
+        // list, a dash) as the task positional: kernels whose clap
+        // lacks allow_hyphen_values reject `-...` as an unknown
+        // flag, and the remote loss would be silent. Only the message
+        // mode (no --sessions-root after the task) may escape: a
+        // trailing flag after `--` would parse as a positional.
+        if sessions_root.is_none() {
+            run.push("--".to_string());
+        }
         // Double-quoted: the remote shell must not word-split the
         // decoded message (it may hold spaces).
         run.push(format!("\"$(printf %s {b} | base64 -d)\""));
@@ -282,7 +314,10 @@ pub(crate) fn remote_quote(s: &str) -> String {
 
 /// Run `detach cmd args...` detached (new session when setsid is
 /// available), stdio to /dev/null. The caller does not wait.
-fn detached(tool: &str, detach: &str, args: &[&str]) {
+/// Returns whether the spawn succeeded (the caller must not report
+/// a send on a failed spawn: the caller cannot observe the
+/// detached failure any other way).
+fn detached(tool: &str, detach: &str, args: &[&str]) -> bool {
     let mut c = Command::new(detach);
     c.arg(tool);
     for a in args {
@@ -291,13 +326,18 @@ fn detached(tool: &str, detach: &str, args: &[&str]) {
     c.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if c.spawn().is_err() {
-        eprintln!("rushi-sessions: cannot start {detach} {tool}");
+    match c.spawn() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("rushi-sessions: cannot start {detach} {tool}: {e}");
+            false
+        }
     }
 }
 
 /// The detached local `rushi run` from the working dir.
-fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) {
+/// Returns whether the spawn succeeded.
+fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) -> bool {
     let mut c = Command::new(&cfg.detach);
     c.arg(&cfg.rushi).arg("run");
     for a in args {
@@ -307,8 +347,12 @@ fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    if c.spawn().is_err() {
-        eprintln!("rushi-sessions: cannot start {}", cfg.rushi);
+    match c.spawn() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("rushi-sessions: cannot start {}: {e}", cfg.rushi);
+            false
+        }
     }
 }
 
@@ -727,6 +771,15 @@ mod tests {
         assert_eq!(c, "cd '/w/with space' && rushi run 'my session' \"$(printf %s QQ== | base64 -d)\" --sessions-root '/r'");
         let c2 = remote_run_command("/w", "s", None, None);
         assert_eq!(c2, "cd '/w' && rushi run 's'");
+    }
+
+    /// Message mode (no --sessions-root) escapes the task with
+    /// `--`, so a hyphen-leading decoded message stays the task
+    /// positional on kernels without allow_hyphen_values.
+    #[test]
+    fn remote_command_message_mode_escapes_the_task() {
+        let c = remote_run_command("/w", "s", Some("QQ=="), None);
+        assert_eq!(c, "cd '/w' && rushi run 's' -- \"$(printf %s QQ== | base64 -d)\"");
     }
 
     #[test]
