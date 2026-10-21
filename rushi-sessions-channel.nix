@@ -96,7 +96,9 @@ in
     # `setsid` for the detached loop start (the `nohup` fallback when
     # setsid is absent; the macOS base has no setsid). The
     # floating-pane stage is the binary itself, so no shell pipeline or
-    # extra tools run there. Remote rows need `ssh` and `base64` on
+    # extra tools run there. The open* pane lookup adds `sed`, `sort`,
+    # `tail` and the shell `printf` builtin, all in the standard Unix
+    # base. Remote rows need `ssh` and `base64` on
     # the remote host (the message crosses the boundary as a base64
     # blob). Remote source roots additionally need `ssh`,
     # reachable by the alias in the root, and the same
@@ -176,15 +178,23 @@ in
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
-    # current window. The pane sits to the right of tv (-h, a vertical
-    # split) and starts in the repo dir (-c). It runs rushi-tui there.
-    # The pane closes when rushi-tui exits. The pane command cds to the
-    # resolved dir itself: a tmux server whose own cwd was deleted
-    # fails its getcwd, and tmux (3.7) skips the -c chdir for every
-    # new pane on such a server. The explicit cd keeps the pane
-    # anchored. Outside tmux, or when the
-    # tmux binary is missing, keep the original behavior: it runs `cd`
-    # to the sessions root, then rushi-tui in this fork.
+    # current window. The split targets the newest pane of the window,
+    # not the tv pane. tmux pane ids are monotonic per server. The
+    # largest live id is the newest pane. The first open lands next
+    # to tv. Each later open stacks next to the pane it created.
+    # Floating prompt panes are excluded from the lookup, so a
+    # send_message or new_session pane never wins. The pane starts in
+    # the repo dir (-c). It runs rushi-tui there. The pane closes
+    # when rushi-tui exits. The pane command cds to the resolved dir
+    # itself. A tmux server whose own cwd was deleted fails its
+    # getcwd. tmux (3.7) then skips the -c chdir for every new pane
+    # on such a server. The explicit cd keeps the pane anchored. The
+    # newest-pane lookup builds its tmux format at runtime from the
+    # printf octal escapes. A literal brace group would break the
+    # television template pass. An empty lookup falls back to the
+    # tmux default target, the active pane. Outside tmux, or when
+    # the tmux binary is missing, keep the original behavior: it runs
+    # `cd` to the sessions root, then rushi-tui in this fork.
     #
     # A remote row (host: prefix) also opens a pane in the LOCAL tmux
     # server, never on the remote one. The pane runs
@@ -199,24 +209,25 @@ in
     # treats a stray {group} as a template token and then leaves the
     # split placeholder unsubstituted. That is why the check reads
     # plain $TMUX instead of ${TMUX:-}.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of tv runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
+    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && rushi-tui \"$n\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; fi; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_v = {
-    # Same as open, but the new pane stacks below tv instead of sitting
-    # to the right. tmux's flags are easy to mix up: -v puts the new
-    # pane below the current one (a horizontal divider). The remote-row
-    # behavior is the same ssh -t local pane, with the -v split.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane below tv runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
+    # Same as open, but the split is below the newest pane instead of
+    # to its right. tmux's flags are easy to mix up: -v puts the new
+    # pane below the target pane (a horizontal divider). The
+    # remote-row behavior is the same ssh -t local pane, with the -v
+    # split.
+    description = "Open this session in rushi-tui. Inside tmux, a new pane below the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && rushi-tui \"$n\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; fi; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -249,17 +260,21 @@ in
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
-    # current window. The pane sits to the right of tv (-h, a vertical
-    # split) and starts in the repo dir (-c). It runs the shell there.
-    # The pane closes when the shell exits. tmux runs the pane command
-    # through its default shell, so the pane command is the plain shell
-    # path. The pane command cds to the resolved dir first: a tmux
-    # server whose own cwd was deleted fails its getcwd, and tmux
-    # (3.7) skips the -c chdir for every new pane on such a server.
-    # The explicit cd keeps the pane anchored. Outside tmux, or when
-    # the tmux binary is missing, the fork
-    # cds to the repo dir and execs the shell; tv resumes when the
-    # shell exits.
+    # current window. The split targets the newest pane of the window,
+    # not the tv pane. The first open lands next to tv. Each later
+    # open stacks next to the pane it created. Floating prompt panes
+    # are excluded from the lookup. The pane starts in the repo dir
+    # (-c). It runs the shell there. The pane closes when the shell
+    # exits. tmux runs the pane command through its default shell, so
+    # the pane command is the plain shell path. The pane command cds
+    # to the resolved dir first. A tmux server whose own cwd was
+    # deleted fails its getcwd. tmux (3.7) then skips the -c chdir
+    # for every new pane on such a server. The explicit cd keeps the
+    # pane anchored. The newest-pane lookup stays brace-free, as in
+    # open. An empty lookup falls back to the tmux default target, the
+    # active pane. Outside tmux, or when the tmux binary is missing,
+    # the fork cds to the repo dir and execs the shell. tv resumes
+    # when the shell exits.
     #
     # A remote row (host: prefix) also opens a pane in the LOCAL tmux
     # server, never on the remote one. The pane runs
@@ -274,29 +289,29 @@ in
     # brace-free for the same reason as open: a stray {group} would
     # break the television template and leave the split placeholder
     # unsubstituted.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -h -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_dir_tmux_v = {
-    # Same as open_dir_tmux_h, but the new pane stacks below tv instead
-    # of sitting to the right. tmux's flags are easy to mix up: -v puts
-    # the new pane below the current one (a horizontal divider). The
-    # remote-row behavior is the same ssh -t local pane, with the -v
-    # split. Outside tmux, the behavior is the same plain fork as
+    # Same as open_dir_tmux_h, but the split is below the newest pane
+    # instead of to its right. tmux's flags are easy to mix up: -v
+    # puts the new pane below the target pane (a horizontal divider).
+    # The remote-row behavior is the same ssh -t local pane, with the
+    # -v split. Outside tmux, the behavior is the same plain fork as
     # open_dir_tmux_h.
     #
     # The command keeps $vars plain (no ${...}) so the Nix
     # single-quote string does not interpolate them.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below tv runs it. Outside tmux, it runs in this fork; tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
+    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" "ssh -t $host \"$c\""; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -v -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -336,16 +351,20 @@ in
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
-    # current window. The pane sits to the right of tv (-h, a vertical
-    # split) and starts in the session dir (-c). It runs the nested
-    # tv there. The pane closes when the nested tv exits. The pane
-    # command cds to the session dir first: a tmux server whose own
-    # cwd was deleted fails its getcwd, and tmux (3.7) skips the -c
-    # chdir for every new pane on such a server. The explicit cd keeps
-    # the nested tv in the session dir. Outside tmux, or when the
-    # tmux binary is missing, the fork cds to the
-    # session dir and runs the nested tv here. The outer tv pauses
-    # and resumes when the nested tv exits.
+    # current window. The split targets the newest pane of the window,
+    # not the tv pane, as in the open* actions. The first open lands
+    # next to tv. Each later open stacks next to the pane it created.
+    # The pane starts in the session dir (-c). It runs the nested tv
+    # there. The pane closes when the nested tv exits. The pane
+    # command cds to the session dir first. A tmux server whose own
+    # cwd was deleted fails its getcwd. tmux (3.7) then skips the
+    # -c chdir for every new pane on such a server. The explicit cd
+    # keeps the nested tv in the session dir. The newest-pane lookup
+    # stays brace-free, as in open. An empty lookup falls back to the
+    # tmux default target, the active pane. Outside tmux, or when the
+    # tmux binary is missing, the fork cds to the session dir and runs
+    # the nested tv here. The outer tv pauses and resumes when the
+    # nested tv exits.
     #
     # Remote rows (`host:` prefix) run the nested tv on the remote
     # host over `ssh -t` (a pty, the nested tv is a TUI). The remote
@@ -356,11 +375,11 @@ in
     # single-quote string does not interpolate them. The body stays
     # brace-free for the same reason as open: a stray {group} would
     # break the television template.
-    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane to the right of tv runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
+    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events"; else tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; fi; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 

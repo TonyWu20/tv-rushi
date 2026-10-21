@@ -1,3 +1,74 @@
+## 79. The browse_events action also splits the newest pane (2026-10-21)
+
+The user asked for the decision 78 lookup on the browse_events
+action. Its nested tv pane fanned out of the tv pane like the old
+open* panes.
+
+Decision: the browse_events tmux branch runs the same newest-pane
+lookup as the open* actions and passes it to split-window as
+`-t "%$pn"`, with the same no-`-t` fallback when the lookup is
+empty. The remote-row branch runs the nested tv over `ssh -t` and
+keeps its shape. The lookup stays brace-free, as in decision 67.
+The Nix attrset and the repo TOML stay in sync on the command
+value, the description, and the section comments.
+
+Verified the same way as decision 78: the exact TOML command text
+in a scratch tmux session. The first browse_events lands next to
+tv. The next one after a `select-pane` back to the tv pane
+anchors to the newest pane, not the tv pane. A live floating pane
+does not win the lookup. `sh -n` accepts the command. The Nix
+attrset and the TOML agree byte-for-byte on every value.
+
+This entry supersedes the out-of-scope note of decision 78.
+
+## 78. The open* actions split the newest pane, not the tv pane (2026-10-21)
+
+The open, open_v, open_dir_tmux_h and open_dir_tmux_v actions
+created their pane with `tmux split-window` without a `-t` target.
+The default target is the active pane of the current window. When
+the user moved focus back to the tv pane, the next open re-anchored
+to the tv pane. The panes fanned out of tv instead of stacking.
+Each open landed next to tv, whatever the user wanted.
+
+Decision: each open* action resolves the newest pane of the tv
+window and passes it as the split target (`-t "%$pn"`). tmux pane
+ids are monotonic per server. The largest live id is the newest
+pane. The lookup runs `tmux list-panes` with the `#{pane_id}` and
+`#{pane_floating_flag}` formats, keeps the regular panes only,
+sorts the ids, and takes the largest. The first open lands next to
+tv. Each later open stacks next to the pane it just created.
+
+Floating panes are excluded by the flag. A prompt pane from
+send_message or new_session never wins the lookup. An empty lookup
+falls back to the tmux default target, the active pane (the old
+behavior). Outside tmux, or without the tmux binary, the fork
+behavior is unchanged.
+
+The lookup stays brace-free, as the television template pass
+requires (decision 67). The tmux format builds at runtime from the
+`printf "{"` and `printf "}"` octal escapes. No brace group
+appears in the command text. The `sed`, `sort`, `tail` and shell
+`printf` steps run in the fork; both ship in the standard Unix
+base.
+
+Verified on tmux 3.8 with the exact TOML command text in a scratch
+session. The open action put the first pane to the right of the tv
+pane. The open_v action put the next pane below the open pane, not
+below the tv pane. The open action after a `select-pane` back to
+the tv pane anchored to the newest pane, not the tv pane. The
+open_dir_tmux_h and open_dir_tmux_v actions stack the same way,
+and the shell panes start in the session project dir. A live
+floating pane in the window did not win the lookup; the split
+anchored to the newest regular pane. The Nix attrset and the repo
+TOML agree byte-for-byte on every action value (`nix-instantiate`
+JSON against the TOML decode). `sh -n` accepts every rewritten
+command.
+
+Out of scope: the browse_events action kept the default target.
+That note is superseded by decision 79. The remote-row branches
+of the open* actions get the same targeting; they need a live
+ssh host to test.
+
 ## 77. send_message: escape the task with `--`, report spawn failures honestly (2026-10-20)
 
 The `send_message` action lost every message that starts with a
