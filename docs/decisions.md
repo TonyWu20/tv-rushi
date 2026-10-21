@@ -1,4 +1,30 @@
-## 81. Read the zstd session logs (kernel PR #54) (2026-10-21)
+## 82. The zstd read layer is shared via `rushi-common` (2026-10-21)
+
+The `logtext` module of this repo is a copy of the kernel's
+`logstream` read layer. The TUI repo needs the same layer. Three
+copies of one layout logic would scatter across repos.
+
+Decision: the shared home is `rushi-common`. Kernel PR #54 puts
+`logstream` in `crates/rushi`. That crate publishes as
+`rushi-common`. The kernel `lib.rs` already exports it.
+
+Main carries 0.1.7 at the merge. The next release after the
+merge carries the module. A spec note tells consumers to pin
+that release. The note names no version number.
+
+This repo keeps the `logtext` mirror until the release
+publishes. After the publish, the mirror goes away. The two
+call sites use `rushi_common::logstream::read_log_text`
+directly. The TUI repo gets the same switch.
+
+The TUI also adapts its live tailer. The tailer is a
+byte-offset design. It only works on plain text.
+
+Verification: the kernel branch checks clean. The spec note
+lands in the compression spec. It names no version number.
+The mirror in this repo is the only copy in a consumer repo.
+
+## 81. Read the zstd session logs (kernel PR #54) (2026-10-21) Read the zstd session logs (kernel PR #54) (2026-10-21)
 
 Kernel PR #54 (TonyWu20/rushi) makes the session log a zstd stream.
 Each commit writes one zstd frame. The idle pass consolidates the

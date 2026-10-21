@@ -13,6 +13,13 @@
 //! The read semantics mirror the kernel's `logstream::read_log_text`
 //! (rushi PR #54). The consumer keeps only the read side: no frame
 //! compression, no consolidation.
+//!
+//! This file is the interim mirror (decision 82). `logstream` is
+//! public in `rushi-common`, the kernel's published crate. Main
+//! carries 0.1.7 at the PR merge. The next release after the
+//! merge carries the module. When that release publishes, this
+//! module becomes a re-export of
+//! `rushi_common::logstream::read_log_text` and then goes away.
 
 use std::fs;
 use std::io;
