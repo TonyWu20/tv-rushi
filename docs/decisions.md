@@ -1,4 +1,21 @@
-## 82. The zstd read layer is shared via `rushi-common` (2026-10-21)
+## 83. The zstd read layer switches to the shared `rushi-common` (2026-10-21)
+
+`rushi-common` 0.1.7 publishes with the public `logstream`
+module. The interim mirror is done.
+
+Decision: delete `logtext.rs`. `numbered_events` and `last_phase`
+call `rushi_common::logstream::read_log_text` directly. The
+workspace pins `rushi-common` 0.1.7. The phase sniff reads four
+bytes and compares the shared `ZSTD_MAGIC` constant. That keeps
+the 100 KB tail read on the plain layout. The `zstd` crate is a
+dev-dependency now. Only the test fixtures build frames.
+
+Verification: all 108 tests pass. The nix build stays hermetic.
+The zstd and plain fixtures give identical rows. The torn tail
+shows the complete frames only. Decision 82 is resolved by this
+entry.
+
+## 82. The zstd read layer is shared via `rushi-common` (2026-10-21) The zstd read layer is shared via `rushi-common` (2026-10-21)
 
 The `logtext` module of this repo is a copy of the kernel's
 `logstream` read layer. The TUI repo needs the same layer. Three

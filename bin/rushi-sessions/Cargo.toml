@@ -15,4 +15,6 @@ serde_json = { workspace = true }
 libc = { workspace = true }
 chrono = { workspace = true }
 toml = "1.1.6"
+
+[dev-dependencies]
 zstd = { workspace = true }

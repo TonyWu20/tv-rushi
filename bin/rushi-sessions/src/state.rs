@@ -22,8 +22,8 @@ fn read_tail(p: &str, n: usize) -> Result<Vec<u8>, std::io::Error> {
 pub(crate) fn last_phase(ev: &str) -> String {
     use std::path::Path;
     let p = Path::new(ev);
-    let tail: Box<[u8]> = if crate::logtext::is_zstd_file(p) {
-        match crate::logtext::read_log_text(p) {
+    let tail: Box<[u8]> = if zstd_stream_head(p) {
+        match rushi_common::logstream::read_log_text(p) {
             Ok(t) => tail_of(t.as_bytes()),
             Err(_) => return "?".into(),
         }
@@ -36,6 +36,21 @@ pub(crate) fn last_phase(ev: &str) -> String {
     match phase_scan(&tail) {
         Some(v) => v,
         None => "?".into(),
+    }
+}
+
+/// True when the file head carries the zstd magic bytes, the
+/// shared kernel constant. The sniff reads the first four bytes.
+/// A missing or short file is not a stream.
+fn zstd_stream_head(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut f) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut head = [0u8; 4];
+    match f.read_exact(&mut head) {
+        Ok(()) => rushi_common::logstream::is_zstd_stream(&head),
+        Err(_) => false,
     }
 }
 

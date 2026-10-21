@@ -18,11 +18,12 @@ use crate::tree::{indent_for, tree_depths};
 /// events.jsonl, paired with those events. Unparseable lines are
 /// skipped but still occupy a line number, so the numbering is stable
 /// against the log text. The log text is the plain layout read
-/// verbatim, or the zstd stream decoded in frame order (kernel PR
-/// #54); a torn tail frame stops at the last complete frame.
+/// verbatim, or the zstd stream decoded in frame order, through
+/// the shared `rushi_common::logstream` reader. A torn tail frame
+/// stops at the last complete frame.
 pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
     let path = dir.join("events.jsonl");
-    let content = match crate::logtext::read_log_text(&path) {
+    let content = match rushi_common::logstream::read_log_text(&path) {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
