@@ -161,6 +161,7 @@ in
     "ctrl-t" = "actions:send_message";
     "alt-k" = "actions:kill";
     "enter" = "actions:browse_events";
+    "alt-e" = "actions:browse_events_v";
     "alt-n" = "actions:new_session";
   };
 
@@ -380,6 +381,27 @@ in
     mode = "fork";
     command = untab ''
       sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events"; else tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; fi; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+    '';
+  };
+
+  actions.browse_events_v = {
+    # Same as browse_events, but the split is below the newest pane
+    # instead of to its right. tmux's flags are easy to mix up: -v
+    # puts the new pane below the target pane (a horizontal divider).
+    # Only the local tmux branch changes: both split-window calls swap
+    # -h for -v. The remote-row branch runs the nested tv over
+    # `ssh -t` unchanged, as in browse_events. Outside tmux, the
+    # plain-fork behavior is unchanged.
+    #
+    # The command keeps $vars plain (no ${...}) so the Nix
+    # single-quote string does not interpolate them. The body stays
+    # brace-free for the same reason as open: a stray {group} would
+    # break the television template.
+    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane below the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events"; else tmux split-window -v -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; fi; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 

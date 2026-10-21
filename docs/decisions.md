@@ -1,3 +1,28 @@
+## 80. The browse_events_v action splits the events channel below the newest pane (2026-10-21)
+
+The user asked for the events channel to open below the newest pane.
+The browse_events action opens the events channel to the right
+of the newest pane (a -h split), per decisions 78 and 79.
+browse_events_v opens the same channel below the newest pane instead (a -v split).
+
+Decision: browse_events_v keeps the decision 78 newest-pane target and
+changes both local tmux split-window calls from -h to -v. The tmux -v
+flag puts the pane below the target, a horizontal divider. The remote-row
+branch runs the nested tv over ssh -t, unchanged. Outside tmux, the
+plain-fork fallback is unchanged. The Nix attrset and the repo TOML stay
+in sync on the command value, the description, and the section comments.
+
+The action binds to alt-e. That key is free because browse_events moved
+to enter in 41c6432. The alt-e key is a proposed default. Confirm it or
+pick another key.
+
+Verification: nix-instantiate JSON against a TOML decode shows all four
+action fields match byte for byte. sh -n and bash -n accept the command.
+A live tmux 3.8 scratch session confirms the layout. The newest pane sat
+to the right of the tv pane, and focus was back on the tv pane. The
+action put the new pane below the newest pane, not the tv pane. The
+pane ran the nested tv from the session dir.
+
 ## 79. The browse_events action also splits the newest pane (2026-10-21)
 
 The user asked for the decision 78 lookup on the browse_events

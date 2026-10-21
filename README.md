@@ -7,7 +7,7 @@ and last activity. The preview panel shows a TOML status card. The card lists
 the last user and assistant messages and the recent events. A second channel,
 `rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
 and previews each entry as a markdown or toml document. The `browse_events`
-action (alt-e) launches it from the session list.
+action (enter) launches it from the session list.
 
 ## Features
 
@@ -22,7 +22,7 @@ action (alt-e) launches it from the session list.
   the loop starts detached. Live: `rushi run` appends (the kernel
   branches on the session lock).
 - Stop the session loop with alt-k (SIGTERM).
-- Fuzzy-search a session's `events.jsonl` with alt-e. A nested
+ - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
   selected one. The default view lists the user and assistant
   messages, newest first. Ctrl+S cycles to the `All` view (every
@@ -156,7 +156,8 @@ Keybindings:
 | ctrl-e         | Open the session in `rushi-tui`                     |
 | ctrl-t         | Edit a message in `$EDITOR` (fallback `nvim`), then send it |
 | alt-k          | Send SIGTERM to the session loop                    |
-| alt-e          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
+| enter          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
+| alt-e          | Open the events channel below the newest pane (-v) |
 
 The events channel binds the same `ctrl-t` to its own `send_message`.
 It binds enter to `view_message`, which forks a viewer chosen from
