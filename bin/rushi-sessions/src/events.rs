@@ -7,7 +7,6 @@
 //! that survive every marker. The `chat` view shows the active path
 //! only. The full view keeps every row and tags the masked ones.
 use serde_json::Value;
-use std::fs;
 use std::path::{Path, PathBuf};
 
 use rushi_common::rewind::{parse_rewind_event, seq_in_ranges};
@@ -18,10 +17,12 @@ use crate::tree::{indent_for, tree_depths};
 /// The 1-based line numbers of the parseable lines of the session's
 /// events.jsonl, paired with those events. Unparseable lines are
 /// skipped but still occupy a line number, so the numbering is stable
-/// against the raw file.
+/// against the log text. The log text is the plain layout read
+/// verbatim, or the zstd stream decoded in frame order (kernel PR
+/// #54); a torn tail frame stops at the last complete frame.
 pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
     let path = dir.join("events.jsonl");
-    let content = match fs::read_to_string(&path) {
+    let content = match crate::logtext::read_log_text(&path) {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
@@ -287,5 +288,70 @@ mod tests {
         assert!(all[3].contains("rewind -> seq 2 (on)"), "{}", all[3]);
     }
 
+    /// One zstd frame per line, the kernel's per-commit layout (P1).
+    fn zst_line(s: &str) -> Vec<u8> {
+        zstd::encode_all(s.as_bytes(), 9).unwrap()
+    }
 
+    /// One temp dir per test, unique against the sibling tests of
+    /// this binary (same pid, parallel threads).
+    static ZST_DIR_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn zst_dir() -> std::path::PathBuf {
+        let n = ZST_DIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!(
+            "rushi-evzst-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn numbered_events_reads_zstd_streams() {
+        // The kernel per-commit layout (P1): one zstd frame per
+        // line. The seq numbering is the decoded line number, the
+        // same as the plain layout.
+        let d = zst_dir();
+        let mut buf = zst_line(r#"{"type":"user_message","content":"one"}
+"#);
+        buf.extend(zst_line(r#"{"type":"assistant_message","content":"two"}
+"#));
+        buf.extend(zst_line(r#"{"type":"cancel"}
+"#));
+        std::fs::write(d.join("events.jsonl"), &buf).unwrap();
+        let rows = numbered_events(&d);
+        let seqs: Vec<u64> = rows.iter().map(|(n, _)| *n).collect();
+        assert_eq!(seqs, vec![1, 2, 3]);
+        let types: Vec<&str> = rows
+            .iter()
+            .map(|(_, v)| v.get("type").and_then(|t| t.as_str()).unwrap_or(""))
+            .collect();
+        assert_eq!(types, vec!["user_message", "assistant_message", "cancel"]);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn numbered_events_keeps_complete_frames_of_a_torn_tail() {
+        // P4: a torn final frame keeps the complete frames. The
+        // torn line is unparseable, so it drops out of the rows.
+        let d = zst_dir();
+        let ok = zst_line(r#"{"type":"user_message","content":"one"}
+"#);
+        let torn = zst_line(r#"{"type":"assistant_message","content":"two"}
+"#);
+        let mut buf = ok;
+        buf.extend_from_slice(&torn[..torn.len() / 2]);
+        std::fs::write(d.join("events.jsonl"), &buf).unwrap();
+        let rows = numbered_events(&d);
+        // The complete frame parses. A partial line, when present,
+        // fails the JSON parse and drops.
+        assert!(!rows.is_empty());
+        assert_eq!(
+            rows[0].1.get("type").and_then(|t| t.as_str()),
+            Some("user_message")
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

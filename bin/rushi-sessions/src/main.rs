@@ -72,6 +72,7 @@ mod branch;
 mod doc;
 mod events;
 mod format;
+mod logtext;
 mod preview;
 mod prompt;
 mod remote;

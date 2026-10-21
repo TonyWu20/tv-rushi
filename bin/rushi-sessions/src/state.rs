@@ -15,28 +15,47 @@ fn read_tail(p: &str, n: usize) -> Result<Vec<u8>, std::io::Error> {
 }
 /// The value of the most recent `loop_phase` ext_status in the log tail.
 /// Mirrors the old string scan: the last `"id":"loop_phase"` marker, then
-/// the following `"value":"..."`.
+/// the following `"value":"..."`. The scan runs on the log text: the
+/// plain layout is tail-read, the zstd layout decodes in full (a zstd
+/// stream is not random access), and the tail of the decoded text
+/// carries the scan (kernel PR #54, P3).
 pub(crate) fn last_phase(ev: &str) -> String {
-    let data = match read_tail(ev, 100_000) {
-        Ok(d) => d,
-        Err(_) => return "?".into(),
+    use std::path::Path;
+    let p = Path::new(ev);
+    let tail: Box<[u8]> = if crate::logtext::is_zstd_file(p) {
+        match crate::logtext::read_log_text(p) {
+            Ok(t) => tail_of(t.as_bytes()),
+            Err(_) => return "?".into(),
+        }
+    } else {
+        match read_tail(ev, 100_000) {
+            Ok(d) => d.into_boxed_slice(),
+            Err(_) => return "?".into(),
+        }
     };
+    match phase_scan(&tail) {
+        Some(v) => v,
+        None => "?".into(),
+    }
+}
+
+/// The last 100 KB of the log text, the scan window of both
+/// layouts.
+fn tail_of(data: &[u8]) -> Box<[u8]> {
+    let start = data.len().saturating_sub(100_000);
+    data[start..].to_vec().into_boxed_slice()
+}
+
+/// The value of the most recent `loop_phase` marker in `data`, or
+/// None when no marker or no value is present.
+fn phase_scan(data: &[u8]) -> Option<String> {
     let idm = b"\"id\":\"loop_phase\"";
-    let i = match data.windows(idm.len()).rposition(|w| w == idm) {
-        Some(x) => x,
-        None => return "?".into(),
-    };
+    let i = data.windows(idm.len()).rposition(|w| w == idm)?;
     let vmark = b"\"value\":\"";
-    let jrel = match data[i..].windows(vmark.len()).position(|w| w == vmark) {
-        Some(x) => x,
-        None => return "?".into(),
-    };
+    let jrel = data[i..].windows(vmark.len()).position(|w| w == vmark)?;
     let vstart = i + jrel + vmark.len();
-    let kend = match data[vstart..].iter().position(|b| *b == b'"') {
-        Some(x) => vstart + x,
-        None => return "?".into(),
-    };
-    String::from_utf8_lossy(&data[vstart..kend]).into_owned()
+    let kend = data[vstart..].iter().position(|b| *b == b'"')? + vstart;
+    Some(String::from_utf8_lossy(&data[vstart..kend]).into_owned())
 }
 /// Whether a pid is alive (`kill(pid, 0)` succeeds).
 pub(crate) fn alive(pid: &str) -> bool {
@@ -65,5 +84,83 @@ pub(crate) fn fmt_local(secs: i64) -> String {
     match Local.timestamp_opt(secs, 0).single() {
         Some(dt) => dt.format("%m-%d %H:%M").to_string(),
         None => String::new(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// One temp dir per test, unique against the sibling tests of
+    /// this binary (same pid, parallel threads).
+    static DIR_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    fn zst_dir() -> std::path::PathBuf {
+        let n = DIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let d = std::env::temp_dir().join(format!(
+            "rushi-zst-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    /// One `loop_phase` marker line, the kernel's ext_status shape.
+    fn phase_line(value: &str) -> String {
+        format!(
+            "{{\"type\":\"ext_status\",\"id\":\"loop_phase\",\"value\":\"{}\"}}\n",
+            value
+        )
+    }
+
+    #[test]
+    fn last_phase_plain_tail_scan() {
+        let d = zst_dir();
+        let p = d.join("events.jsonl");
+        let mut text = phase_line("think");
+        text.push_str(&phase_line("tool"));
+        std::fs::write(&p, text).unwrap();
+        assert_eq!(last_phase(p.to_str().unwrap()), "tool");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn last_phase_zstd_stream_decodes() {
+        // The zstd layout: one frame per line (P1). The scan runs on
+        // the decoded text.
+        let d = zst_dir();
+        let p = d.join("events.jsonl");
+        let mut buf = zstd::encode_all(
+            phase_line("think").as_bytes(),
+            9,
+        )
+        .unwrap();
+        buf.extend(
+            zstd::encode_all(phase_line("tool").as_bytes(), 9).unwrap(),
+        );
+        std::fs::write(&p, &buf).unwrap();
+        assert_eq!(last_phase(p.to_str().unwrap()), "tool");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn last_phase_torn_tail_keeps_the_marker() {
+        // P4: the marker of a complete frame is found even when the
+        // final frame is torn.
+        let d = zst_dir();
+        let p = d.join("events.jsonl");
+        let ok = zstd::encode_all(phase_line("think").as_bytes(), 9).unwrap();
+        let torn = zstd::encode_all(&b"garbage\n"[..], 9).unwrap();
+        let mut buf = ok;
+        buf.extend_from_slice(&torn[..torn.len() / 2]);
+        std::fs::write(&p, &buf).unwrap();
+        assert_eq!(last_phase(p.to_str().unwrap()), "think");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn last_phase_missing_file_is_unknown() {
+        assert_eq!(last_phase("/no/such/events.jsonl"), "?");
     }
 }

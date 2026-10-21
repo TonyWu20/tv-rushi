@@ -56,7 +56,9 @@
             cargoLock = {
               lockFile = ./Cargo.lock;
             };
-            nativeBuildInputs = [ rustToolchain ];
+            # libzstd for the `zstd` crate (kernel PR #54: session
+            # logs become zstd streams; the read layer decodes them).
+            nativeBuildInputs = [ rustToolchain pkgs.zstd ];
             cargoBuildFlags = [ "--workspace" ];
             doCheck = false;
             meta = with pkgLib; {

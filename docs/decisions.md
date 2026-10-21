@@ -1,4 +1,43 @@
-## 80. The browse_events_v action splits the events channel below the newest pane (2026-10-21)
+## 81. Read the zstd session logs (kernel PR #54) (2026-10-21)
+
+Kernel PR #54 (TonyWu20/rushi) makes the session log a zstd stream.
+Each commit writes one zstd frame. The idle pass consolidates the
+stream into one level-19 frame. A legacy plain text log stays plain
+for its life (P2). The format is decided at creation.
+
+The backend read sites assumed plain text. The zstd layout broke
+them. The `events` rows printed nothing. The phase column showed
+`?`. The `events`, `event-preview`, `copy-entry`, `rewind`,
+`summarize` and `preview` commands all read through
+`numbered_events`.
+
+Decision: add the `logtext` read layer. It mirrors the kernel's
+`logstream::read_log_text`. It sniffs the four zstd magic bytes (P3)
+and reads both layouts. It decodes the zstd frames in order. A torn
+tail frame stops the read at the last complete frame (P4). The
+partial line drops at parse time.
+
+`numbered_events` reads through the layer. `last_phase` sniffs the
+layout per file. The plain layout keeps the 100 KB tail read. The
+zstd layout decodes in full, and the scan runs on the decoded text.
+The seq numbering is the decoded line number. It is the same as the
+plain layout. The kernel `target_seq` markers keep pointing at the
+same lines.
+
+The backend links the `zstd` crate at 0.14.3, the kernel's exact
+pin. The build links the bundled C library statically. No new
+runtime requirement. The channel TOML files stay unchanged. The
+flake adds `pkgs.zstd` to the `rushi-sessions` nativeBuildInputs.
+That mirrors the kernel hermetic build recipe.
+
+Verification: `cargo test` is green. New tests cover the zstd
+per-commit frames, the consolidated single frame, and the torn tail
+frame of both `numbered_events` and `last_phase`. The nix-built
+binary ran `events` and `source` on zstd fixtures. The seq
+numbering matched the plain fixture row for row. The torn tail
+showed the complete frames only.
+
+## 80. The browse_events_v action splits the events channel below the newest pane (2026-10-21) The browse_events_v action splits the events channel below the newest pane (2026-10-21)
 
 The user asked for the events channel to open below the newest pane.
 The browse_events action opens the events channel to the right
