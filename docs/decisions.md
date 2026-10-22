@@ -1,3 +1,124 @@
+## 85. The consumer reads move to the shared P8 reader (2026-10-23)
+
+`rushi-common` 0.1.8 (rushi PR #56, issue #55 P8) publishes the
+frame-index sidecar, the indexed reads (`open_indexed`, `line_at`,
+`tail_lines`, `lines_range`), and the shared tail scan
+(`read_log_tail`). This is the consumer switch decision 84's
+out-of-scope note pointed at: the local tail-window probe goes
+away, and the seq-point reads stop decoding the whole log.
+
+Decision:
+
+- The workspace pins `rushi-common = "0.1.8"`.
+- The `last_phase` probe keeps the decision-84 stat cache and
+  dispatches the read on the layout. Plain logs keep the 100 KB
+  tail read. A zstd stream with a validated sidecar takes the
+  indexed read: `tail_lines` with the kernel's own 4096-line
+  window. A zstd stream without a sidecar (pre-P8 logs, the
+  current corpus) takes the shared `read_log_tail` window scan,
+  512 KiB budget, full read when the window holds no frame start.
+  A sidecar existence stat keeps the no-index path to one whole-
+  file read: `open_indexed` would add a second whole-file read
+  before it knows the index is absent.
+- `event-preview` and `copy-entry` read their one entry through
+  the new `event_at`: `open_indexed` plus `line_at`, the record
+  range of the seq with a sidecar, the full-text fallback
+  without. An unparseable line at the seq is absent, as the
+  `numbered_events` numbering has always treated it.
+- The full-log reads stay where the whole stream is the point:
+  the `events` listing (seq numbering over every line), `preview`
+  (active ranges over the full log), and `branch` (the total
+  count behind its past-end check).
+- `zstd` returns to a dev-dependency: the main build decodes no
+  zstd by hand; the streaming decoder sits in `rushi-common`.
+  The test fixtures still build frames, so the dev-dependency
+  and the flake build input stay.
+
+Verification: all 118 tests pass. The state suite's six window-
+probe tests are replaced by the layout-split probe tests: the
+indexed tail on a `LogLine::commit` fixture (the sidecar lands),
+the no-index window scan, the torn tail, the deep-marker window
+rule, and the cache identity round trip. `event_at` tests cover
+the indexed, plain, and past-end paths. `source` rows match the
+decision-84 binary row for row on the static corpus and on a
+three-layout fixture (indexed, frames-only, plain). `event-
+preview` renders the marker entry of the indexed fixture and
+keeps its `no event at line N` error on a past-end seq. Timings
+on the local corpus: the warm refresh runs 0.19 to 0.24 s
+(decision 84 ran 0.2 s); the cold run runs 3.2 s (decision 84
+ran 2.4 s). The shared `read_log_tail` runs equal or better in
+isolation over the corpus: 1.4 s against the decision-84 probe's
+1.5 s across the 308 zstd logs. The extra one-time cold delta
+does not reproduce in the isolated probe loop, and no algorithmic
+difference accounts for it.
+
+Out of scope: a tail-windowed `events` view would change the
+listing UX and waits on a user decision. `preview` and `branch`
+keep their full-log reads. The `read_log_tail` whole-file read
+is a kernel-side improvement candidate (seek to the window start
+instead of reading the file) for a later `rushi-common`. The
+remote hosts pick the binary up on their first ssh run after the
+channel redeploys. The `rushi-tui` live-tailer migration stays
+in the rushi-tui repo, as issue #55 files it.
+
+## 84. The phase probe reads the tail window and caches the result (2026-10-22)
+
+The zstd layout of kernel PR #54 makes `last_phase` decode the
+whole session log. The plain layout read a 100 KB tail. A zstd
+stream cannot be tail-read, so the probe decodes in full. Every
+`--watch` refresh re-runs `source`, and `source` probes every
+session. Measured on the local corpus (493 logs, 308 zstd, 81 MB
+compressed): 1.8 s per refresh. The `--watch` cycle blinks.
+
+Decision: two cuts to the probe cost, both in the binary.
+
+- A new `zstd_tail_probe` reads the last 512 KiB of the stream.
+  Every zstd frame opens with the shared magic bytes, so the probe
+  decodes from the first frame start inside the window. When the
+  decoded tail covers the 100 KB scan window, the marker scan runs
+  on that tail alone. A consolidated single frame, or a tail too
+  short to cover the window, falls back to the shared full read of
+  decision 81. A false magic occurrence inside a compressed payload
+  fails its decode and the next candidate takes over. The torn-tail
+  note (P4) keeps its meaning: the decode stops at the last
+  complete frame.
+- The new `phasecache` module caches the probe result under the
+  log's (mtime_ns, size) identity in `$RUSHI_SESSIONS_CACHE_DIR`
+  (default `$XDG_CACHE_HOME/rushi-sessions`). An unchanged log
+  returns its cached phase without touching the log. The cache is
+  advisory: a temp-file plus rename write, and any read trouble
+  re-runs the probe.
+
+The `zstd` crate returns to the main dependencies. Decision 83
+made it a dev-dependency when the mirror went away. The window
+probe needs the streaming decoder in the main build. The flake
+already carries `pkgs.zstd` in the `rushi-sessions` build inputs.
+
+Verification: all 119 tests pass, up from 108. The new tests
+cover the window probe on a per-commit stream, the consolidated
+fallback, the torn tail inside the window, a false magic
+candidate, and the cache round trip, the stale key, and the
+corrupt entry. `source` rows match the pre-fix binary row for row
+on the static corpus (496 rows; the one live session row moves
+with its own log). Measured on the local corpus: the pre-fix
+steady refresh runs 1.8 s; the post-fix cold run runs 2.4 s
+once and builds the cache; the warm run runs 0.2 s. The six-
+session zstd fixture runs 0.125 s cold and 0.023 s warm.
+
+Out of scope (as of 84): the `events` subcommand and `preview`
+still decode the whole log on every run: the seq numbering needs
+the full stream. The kernel-side fix is filed as rushi issue
+#55: a frame index sidecar (P8) plus the shared tail and seq
+reader in `rushi-common`, the single mechanism for every consumer
+crate. A loop-written phase sidecar was rejected in that issue:
+it duplicates a fact the log already holds, and it cannot serve
+the seq reads or the TUI tailer. PR #56 ships it as
+`rushi-common` 0.1.8; decision 85 takes the consumer switch.
+Remote roots still pay the ssh round trip on every refresh. The
+remote host caches after its first run once the channel redeploys
+there. A `ControlMaster` ssh config shortens the connection cost.
+Cache entries of deleted sessions linger as one small file each.
+
 ## 83. The zstd read layer switches to the shared `rushi-common` (2026-10-21)
 
 `rushi-common` 0.1.7 publishes with the public `logstream`

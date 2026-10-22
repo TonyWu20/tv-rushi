@@ -6,7 +6,7 @@
 use serde_json::Value;
 use std::path::Path;
 
-use crate::events::numbered_events;
+use crate::events::event_at;
 use crate::format::{rfc3339_local, ts_local, value_inline};
 
 /// The document language of an event: markdown for the message types,
@@ -222,10 +222,7 @@ fn strip_nulls(v: &Value) -> Value {
     }
 }
 pub fn event_preview(dir: &Path, seq: u64, print_lang: bool) {
-    let found = numbered_events(dir)
-        .into_iter()
-        .find(|(n, _)| *n == seq)
-        .map(|(_, v)| v);
+    let found = event_at(dir, seq);
     let o = match found {
         Some(v) => v,
         None => {
@@ -395,10 +392,11 @@ mod tests {
         std::fs::write(d.join("events.jsonl"),
             "{\"type\":\"tool_result\"}\n{\"type\":\"user_message\",\"content\":\"x\"}\n")
             .unwrap();
-        let rows = numbered_events(&d);
-        assert_eq!(rows.len(), 2);
-        assert_eq!(doc_lang(&rows[0].1), "toml");
-        assert_eq!(doc_lang(&rows[1].1), "markdown");
+        let e1 = event_at(&d, 1).unwrap();
+        let e2 = event_at(&d, 2).unwrap();
+        assert_eq!(doc_lang(&e1), "toml");
+        assert_eq!(doc_lang(&e2), "markdown");
+        assert!(event_at(&d, 3).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
 

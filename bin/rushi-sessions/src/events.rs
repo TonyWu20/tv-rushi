@@ -20,7 +20,9 @@ use crate::tree::{indent_for, tree_depths};
 /// against the log text. The log text is the plain layout read
 /// verbatim, or the zstd stream decoded in frame order, through
 /// the shared `rushi_common::logstream` reader. A torn tail frame
-/// stops at the last complete frame.
+/// stops at the last complete frame. This is the full-log read:
+/// the seq-numbered consumers of a single line read through
+/// `event_at` instead, which takes the P8 indexed path.
 pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
     let path = dir.join("events.jsonl");
     let content = match rushi_common::logstream::read_log_text(&path) {
@@ -32,6 +34,19 @@ pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
         .enumerate()
         .filter_map(|(i, l)| serde_json::from_str::<Value>(l.trim()).ok().map(|v| (i as u64 + 1, v)))
         .collect()
+}
+
+/// The parseable entry at 1-based line `seq`, read through the
+/// shared logstream. With a frame index (P8) the read decodes the
+/// one record range that holds the line. Without one, or on a
+/// plain log, the read falls back to the full text, as
+/// `numbered_events` does. An unparseable line at the seq is
+/// absent, matching the `numbered_events` numbering.
+pub(crate) fn event_at(dir: &Path, seq: u64) -> Option<Value> {
+    let path = dir.join("events.jsonl");
+    let stream = rushi_common::logstream::open_indexed(&path).ok()?;
+    let line = stream.line_at(seq)?;
+    serde_json::from_str(line.trim()).ok()
 }
 /// The active path of one numbered log: the 1-based seq ranges that
 /// survive every `rewind` marker, per the kernel's `active_ranges`.

@@ -64,6 +64,13 @@
 //!
 //! `source` calls `fd` for the directory walk (a hard dependency of the
 //! channel) and replaces the channel's previous `python3` reader.
+//! The phase column probes the log tail (decision 84, the P8
+//! switch of decision 85): a 100 KB tail read on the plain layout,
+//! the indexed tail read on a zstd stream with its frame-index
+//! sidecar, the shared tail-window scan on a zstd stream without
+//! one. The probe caches its result under the log's mtime-plus-size
+//! identity in the user cache dir, so an unchanged log costs no
+//! re-read on a `--watch` refresh.
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -72,6 +79,7 @@ mod branch;
 mod doc;
 mod events;
 mod format;
+mod phasecache;
 mod preview;
 mod prompt;
 mod remote;

@@ -13,7 +13,7 @@
 use std::path::Path;
 
 use crate::doc::doc_for;
-use crate::events::numbered_events;
+use crate::events::event_at;
 use crate::format::which;
 
 /// The local clipboard tools, in television's own try order. The
@@ -31,11 +31,7 @@ const CLIPBOARD_TOOLS: [(&str, &[&str]); 5] = [
 /// route carried the document, 1 when the entry is absent or no
 /// route is usable.
 pub fn copy_entry(dir: &Path, seq: u64) -> i32 {
-    let o = match numbered_events(dir)
-        .into_iter()
-        .find(|(n, _)| *n == seq)
-        .map(|(_, v)| v)
-    {
+    let o = match event_at(dir, seq) {
         Some(v) => v,
         None => {
             eprintln!("rushi-sessions: no event at line {seq}");
