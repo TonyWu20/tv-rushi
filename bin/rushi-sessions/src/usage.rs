@@ -29,8 +29,7 @@ pub(crate) fn last_usage(events: &[Value]) -> Option<(u64, u64, u64)> {
 pub(crate) fn usage_line(used: u64, window: Option<u64>) -> String {
     match window {
         Some(w) if w > 0 => {
-            let pct =
-                (u128::from(used).saturating_mul(100) + u128::from(w) / 2) / u128::from(w);
+            let pct = (u128::from(used).saturating_mul(100) + u128::from(w) / 2) / u128::from(w);
             format!("{used}/{w} tokens ({pct}%)")
         }
         _ => format!("{used} tokens"),
@@ -116,7 +115,6 @@ mod tests {
         assert_eq!(last_usage(&[]), None);
     }
 
-
     #[test]
     fn usage_line_formats_with_and_without_window() {
         assert_eq!(
@@ -128,7 +126,6 @@ mod tests {
         assert_eq!(usage_line(200, Some(100)), "200/100 tokens (200%)");
         assert_eq!(usage_line(10_000, Some(0)), "10000 tokens");
     }
-
 
     #[test]
     fn config_window_prefers_active_model() {
@@ -144,7 +141,6 @@ context_budget_tokens = 333
 "#;
         assert_eq!(context_window_from_config(text), Some(222));
     }
-
 
     #[test]
     fn config_window_falls_backs_down() {
@@ -171,6 +167,4 @@ read_limit = 2000
         // Invalid TOML: None.
         assert_eq!(context_window_from_config("not toml [[["), None);
     }
-
-
 }

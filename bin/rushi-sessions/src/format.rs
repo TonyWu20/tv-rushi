@@ -155,7 +155,11 @@ pub(crate) fn clip(s: &str, n: usize) -> String {
 /// not RFC3339. The local time is the running host's time zone.
 pub(crate) fn rfc3339_local(s: &str) -> Option<String> {
     let dt = chrono::DateTime::parse_from_rfc3339(s).ok()?;
-    Some(dt.with_timezone(&Local).format("%Y-%m-%d %H:%M:%S").to_string())
+    Some(
+        dt.with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string(),
+    )
 }
 /// The event ts as a local wall-clock time. A value that is not
 /// RFC3339 prints as is.
@@ -201,7 +205,6 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-
 /// The short list marker of one event type: at most two capitalized
 /// letters, the way the channel's display template prints it in the
 /// brackets (`[U]`, `[A]`, `[C]`, ...). The full type name stays in
@@ -243,7 +246,6 @@ mod tests {
         assert_eq!(json_str("héllo"), "\"héllo\"");
     }
 
-
     #[test]
     fn clip_truncates_by_chars() {
         let s = "x".repeat(200);
@@ -253,14 +255,11 @@ mod tests {
         assert_eq!(c, "aaaaaaaaaa ...");
     }
 
-
-
     #[test]
     fn rfc3339_local_rejects_garbage() {
         assert!(rfc3339_local("garbage").is_none());
         assert!(rfc3339_local("").is_none());
     }
-
 
     #[test]
     fn rfc3339_local_formats_wall_clock() {
@@ -272,7 +271,6 @@ mod tests {
         assert!(out.starts_with("2026-10-"), "{out}");
     }
 
-
     #[test]
     fn ts_local_passes_through_unparseable() {
         assert_eq!(ts_local(&Value::String("garbage".to_string())), "garbage");
@@ -281,7 +279,6 @@ mod tests {
             19
         );
     }
-
 
     #[test]
     fn flatten_ws_stays_one_line() {
@@ -297,6 +294,4 @@ mod tests {
         let x = serde_json::json!({"type": "user_message_retract", "target": "abc"});
         assert_eq!(brief(&x), Some("retract abc".into()));
     }
-
-
 }

@@ -43,7 +43,10 @@ pub(crate) fn split_roots(roots: Vec<PathBuf>) -> (Vec<PathBuf>, Vec<RemoteGroup
                 }
             }
             if !matched {
-                groups.push(RemoteGroup { host, roots: vec![rp] });
+                groups.push(RemoteGroup {
+                    host,
+                    roots: vec![rp],
+                });
             }
         } else {
             local.push(r);
@@ -181,10 +184,7 @@ pub(crate) fn preview_remote(host: &str, cols: &[&str]) {
             std::process::exit(out.status.code().unwrap_or(1));
         }
         Err(e) => {
-            eprintln!(
-                "rushi-sessions: remote preview failed for {} ({e})",
-                host
-            );
+            eprintln!("rushi-sessions: remote preview failed for {} ({e})", host);
         }
     }
 }
@@ -206,13 +206,11 @@ mod tests {
         assert_eq!(split_remote("a:b/x"), Some(("a", "b/x")));
     }
 
-
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("ab"), "'ab'");
         assert_eq!(shell_quote("a'b"), "'a'\\''b'");
     }
-
 
     #[test]
     fn split_roots_groups_by_host() {
@@ -230,7 +228,6 @@ mod tests {
         assert_eq!(groups[1].roots, vec!["/c".to_string()]);
     }
 
-
     #[test]
     fn parse_remote_line_prefixes_repo_and_path() {
         let line = "ACTIVE\tfoo\trepoA\ttools\t10-02 14:11\t1760000000\t/export/repoA/sessions/foo";
@@ -242,7 +239,6 @@ mod tests {
         assert_eq!(row.name, "foo");
     }
 
-
     #[test]
     fn parse_remote_line_user_at_host_prefix() {
         let line = "ACTIVE\tfoo\trepoA\ttools\t10-02 14:11\t1760000000\t/export/repoA/sessions/foo";
@@ -251,12 +247,10 @@ mod tests {
         assert_eq!(row.path, "u@host:/export/repoA/sessions/foo");
     }
 
-
     #[test]
     fn parse_remote_line_rejects_short_lines() {
         assert!(parse_remote_line("a\tb", "host").is_none());
     }
-
 
     #[test]
     fn parse_remote_line_normalizes_status() {
@@ -265,6 +259,4 @@ mod tests {
         assert_eq!(row.status, "IDLE");
         assert_eq!(row.repo, "h:repo");
     }
-
-
 }

@@ -215,9 +215,9 @@ fn strip_nulls(v: &Value) -> Value {
             }
             Value::Object(m2)
         }
-        Value::Array(a) => Value::Array(
-            a.iter().filter(|x| !x.is_null()).map(strip_nulls).collect(),
-        ),
+        Value::Array(a) => {
+            Value::Array(a.iter().filter(|x| !x.is_null()).map(strip_nulls).collect())
+        }
         other => other.clone(),
     }
 }
@@ -251,7 +251,6 @@ mod tests {
         assert!(doc.contains("hi"), "{doc}");
     }
 
-
     #[test]
     fn assistant_message_doc_keeps_its_id() {
         let o = serde_json::json!({"type": "assistant_message", "id": "a1",
@@ -259,7 +258,6 @@ mod tests {
         let doc = markdown_doc(&o);
         assert!(doc.contains("\nid: a1"), "{doc}");
     }
-
 
     #[test]
     fn tool_call_doc_omits_its_call_ids() {
@@ -272,7 +270,6 @@ mod tests {
         assert!(doc.contains("name = \"bash\""), "{doc}");
     }
 
-
     #[test]
     fn tool_result_doc_keeps_its_id() {
         let o = serde_json::json!({"type": "tool_result", "id": "call_1",
@@ -281,10 +278,16 @@ mod tests {
         assert!(doc.contains("id = \"call_1\""), "{doc}");
     }
 
-
     #[test]
     fn doc_lang_per_type() {
-        let v = |t: &str| Value::Object(serde_json::json!({ "type": t }).as_object().unwrap().clone());
+        let v = |t: &str| {
+            Value::Object(
+                serde_json::json!({ "type": t })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )
+        };
         assert_eq!(doc_lang(&v("user_message")), "markdown");
         assert_eq!(doc_lang(&v("assistant_message")), "markdown");
         assert_eq!(doc_lang(&v("compaction_summary")), "markdown");
@@ -293,7 +296,6 @@ mod tests {
         assert_eq!(doc_lang(&v("ext_status")), "toml");
         assert_eq!(doc_lang(&Value::Object(serde_json::Map::new())), "toml");
     }
-
 
     #[test]
     fn json_to_toml_drops_nulls() {
@@ -306,7 +308,6 @@ mod tests {
         let back: serde_json::Value = toml::from_str(&text).unwrap();
         assert_eq!(back, serde_json::json!({"a": 1, "c": {"e": [1, 2]}}));
     }
-
 
     #[test]
     fn markdown_doc_sections() {
@@ -325,7 +326,6 @@ mod tests {
         assert!(!d.contains("c1"), "{d}");
     }
 
-
     #[test]
     fn toml_doc_tool_result_table() {
         let o = serde_json::json!({"type": "tool_result", "id": "c1", "ts": "T",
@@ -335,7 +335,6 @@ mod tests {
         assert!(d.contains("is_error = false"));
         assert!(d.contains("text = \"ok\""));
     }
-
 
     #[test]
     fn toml_doc_rewind_table() {
@@ -384,14 +383,15 @@ mod tests {
         assert!(!d.contains("## reasoning"), "{d}");
     }
 
-
     #[test]
     fn event_preview_print_lang() {
         let d = std::env::temp_dir().join(format!("rushi-evtest2-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("events.jsonl"),
-            "{\"type\":\"tool_result\"}\n{\"type\":\"user_message\",\"content\":\"x\"}\n")
-            .unwrap();
+        std::fs::write(
+            d.join("events.jsonl"),
+            "{\"type\":\"tool_result\"}\n{\"type\":\"user_message\",\"content\":\"x\"}\n",
+        )
+        .unwrap();
         let e1 = event_at(&d, 1).unwrap();
         let e2 = event_at(&d, 2).unwrap();
         assert_eq!(doc_lang(&e1), "toml");
@@ -399,6 +399,4 @@ mod tests {
         assert!(event_at(&d, 3).is_none());
         let _ = std::fs::remove_dir_all(&d);
     }
-
-
 }

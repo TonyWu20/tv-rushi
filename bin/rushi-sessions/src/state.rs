@@ -114,10 +114,7 @@ fn probe_zstd(p: &std::path::Path) -> Option<String> {
     } else {
         window_scan_lines(p)?
     };
-    Some(
-        phase_scan_lines(lines.iter().map(|s| s.as_str()))
-            .unwrap_or_else(|| "?".into()),
-    )
+    Some(phase_scan_lines(lines.iter().map(|s| s.as_str())).unwrap_or_else(|| "?".into()))
 }
 
 /// The sidecar of the log, mirroring the shared `index_path`:
@@ -154,12 +151,11 @@ fn sniff_head(path: &std::path::Path) -> [u8; 4] {
 /// oldest first. The newest line that carries the marker is the
 /// answer; a marker without its value yields None, as the byte
 /// scan did.
-fn phase_scan_lines<'a>(lines: impl Iterator<Item = &'a str> + std::iter::DoubleEndedIterator) -> Option<String> {
+fn phase_scan_lines<'a>(
+    lines: impl Iterator<Item = &'a str> + std::iter::DoubleEndedIterator,
+) -> Option<String> {
     let idm = "\"id\":\"loop_phase\"";
-    let hit = lines
-        .rev()
-        .find(|l| l.contains(idm))?
-        .as_bytes();
+    let hit = lines.rev().find(|l| l.contains(idm))?.as_bytes();
     let vmark = b"\"value\":\"";
     let i = hit.windows(idm.len()).rposition(|w| w == idm.as_bytes())?;
     let jrel = hit[i..].windows(vmark.len()).position(|w| w == vmark)?;
@@ -209,10 +205,7 @@ mod tests {
 
     fn zst_dir() -> std::path::PathBuf {
         let n = DIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let d = std::env::temp_dir().join(format!(
-            "rushi-zst-{}-{n}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("rushi-zst-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -220,16 +213,12 @@ mod tests {
 
     /// One `loop_phase` marker line, the kernel's ext_status shape.
     fn phase_line(value: &str) -> String {
-        format!(
-            r#"{{"v":1,"type":"ext_status","id":"loop_phase","value":"{value}"}}"#
-        )
+        format!(r#"{{"v":1,"type":"ext_status","id":"loop_phase","value":"{value}"}}"#)
     }
 
     /// One plain user_message line, the kernel's wire shape.
     fn user_line(text: &str) -> String {
-        format!(
-            r#"{{"v":1,"type":"user_message","ts":"t","content":"{text}"}}"#
-        )
+        format!(r#"{{"v":1,"type":"user_message","ts":"t","content":"{text}"}}"#)
     }
 
     /// A per-commit zstd stream without the index sidecar: one
@@ -260,21 +249,14 @@ mod tests {
     /// cache. The env override is read on every cache call; the
     /// process-wide guard serializes the set against the sibling
     /// tests.
-    fn with_private_cache() -> (
-        std::path::PathBuf,
-        std::sync::MutexGuard<'static, ()>,
-    ) {
+    fn with_private_cache() -> (std::path::PathBuf, std::sync::MutexGuard<'static, ()>) {
         use std::sync::Mutex;
         static GUARD: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-        static CACHE_N: std::sync::atomic::AtomicUsize =
-            std::sync::atomic::AtomicUsize::new(0);
+        static CACHE_N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let g = GUARD.get_or_init(|| Mutex::new(()));
         let guard = g.lock().unwrap();
         let n = CACHE_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let d = std::env::temp_dir().join(format!(
-            "rushi-zst-cache-{}-{n}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("rushi-zst-cache-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         unsafe { std::env::set_var("RUSHI_SESSIONS_CACHE_DIR", &d) };
@@ -310,11 +292,7 @@ mod tests {
         let (_c, _g) = with_private_cache();
         let d = zst_dir();
         let p = d.join("events.jsonl");
-        let lines = vec![
-            phase_line("think"),
-            user_line("hi"),
-            phase_line("tool"),
-        ];
+        let lines = vec![phase_line("think"), user_line("hi"), phase_line("tool")];
         std::fs::write(&p, frames_only(&lines)).unwrap();
         assert_eq!(last_phase(p.to_str().unwrap()), "tool");
         let _ = std::fs::remove_dir_all(&d);
@@ -329,11 +307,7 @@ mod tests {
         let p = commit_lines(
             &d,
             "events.jsonl",
-            &[
-                phase_line("think"),
-                user_line("hi"),
-                phase_line("tool"),
-            ],
+            &[phase_line("think"), user_line("hi"), phase_line("tool")],
         );
         let stream = rushi_common::logstream::open_indexed(&p).unwrap();
         assert!(stream.has_index(), "the commit wrote the sidecar");
@@ -406,18 +380,12 @@ mod tests {
         let (_c, _g) = with_private_cache();
         let d = zst_dir();
         let p = d.join("events.jsonl");
-        std::fs::write(
-            &p,
-            frames_only(&[phase_line("think")]),
-        )
-        .unwrap();
+        std::fs::write(&p, frames_only(&[phase_line("think")])).unwrap();
         assert_eq!(last_phase(p.to_str().unwrap()), "think");
         // A new frame lands: new size, new mtime, new value.
         std::thread::sleep(std::time::Duration::from_millis(5));
         let mut buf = std::fs::read(&p).unwrap();
-        buf.extend(
-            rushi_common::logstream::compress_frame(phase_line("tool").as_bytes()).unwrap(),
-        );
+        buf.extend(rushi_common::logstream::compress_frame(phase_line("tool").as_bytes()).unwrap());
         std::fs::write(&p, buf).unwrap();
         assert_eq!(last_phase(p.to_str().unwrap()), "tool");
         let _ = std::fs::remove_dir_all(&d);

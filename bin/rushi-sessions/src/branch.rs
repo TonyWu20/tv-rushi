@@ -60,16 +60,18 @@ pub(crate) fn rewind(dir: Option<PathBuf>, seq: u64) -> i32 {
         eprintln!("rushi-sessions: seq {seq} is past the end of the log ({last})");
         return 1;
     }
-    let mode = if ty == Some("user_message") { "before" } else { "on" };
+    let mode = if ty == Some("user_message") {
+        "before"
+    } else {
+        "on"
+    };
     if let Err(e) = append_rewind_marker(&base, seq, mode) {
         eprintln!("rushi-sessions: {e}");
         return 1;
     }
     println!("rewound to seq {seq} ({mode})");
     if mode == "before" {
-        println!(
-            "the user message at seq {seq} left the context; send it again to re-ask"
-        );
+        println!("the user message at seq {seq} left the context; send it again to re-ask");
     }
     0
 }
@@ -236,7 +238,9 @@ fn append_rewind_marker(base: &Path, seq: u64, mode: &str) -> Result<(), String>
     let log_bin = kernel_bin("log");
     let mut c = Command::new(&log_bin);
     c.arg("--session").arg(base);
-    c.stdin(Stdio::piped()).stdout(Stdio::null()).stderr(Stdio::inherit());
+    c.stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit());
     let mut child = c
         .spawn()
         .map_err(|e| format!("cannot start {log_bin}: {e}"))?;
@@ -297,7 +301,9 @@ fn editor_instruction(base: &Path) -> Option<String> {
 /// project dir (dirname(dirname(session dir))) when the file is
 /// missing or stale.
 fn local_workdir(base: &Path) -> String {
-    let w = fs::read_to_string(base.join("cwd")).ok().map(|s| s.trim().to_string());
+    let w = fs::read_to_string(base.join("cwd"))
+        .ok()
+        .map(|s| s.trim().to_string());
     match w {
         Some(w) if !w.is_empty() && Path::new(&w).is_dir() => w,
         _ => base

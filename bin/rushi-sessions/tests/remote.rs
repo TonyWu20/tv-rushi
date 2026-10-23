@@ -75,7 +75,10 @@ fn source_scans_remote_root_over_fake_ssh() {
     assert_eq!(fields[2], "host:repoR");
     assert_eq!(fields[6], "host:/export/repoR/sessions/remote-fixture");
     let logged = std::fs::read_to_string(&log).unwrap();
-    assert!(logged.contains("rushi-sessions source"), "remote command: {logged}");
+    assert!(
+        logged.contains("rushi-sessions source"),
+        "remote command: {logged}"
+    );
     assert!(logged.contains("/export"), "remote command: {logged}");
 }
 
@@ -92,7 +95,10 @@ fn source_passes_active_only_to_remote() {
         .unwrap();
     assert!(out.status.success());
     let logged = std::fs::read_to_string(&log).unwrap();
-    assert!(logged.contains("source --active-only"), "remote command: {logged}");
+    assert!(
+        logged.contains("source --active-only"),
+        "remote command: {logged}"
+    );
 }
 
 #[test]
@@ -171,7 +177,10 @@ fn preview_runs_remotely_over_fake_ssh() {
     let logged = std::fs::read_to_string(&log).unwrap();
     // The remote call carries the bare remote path, not the prefixed one.
     assert!(logged.contains("/export/repoR/sessions/remote-fixture"));
-    assert!(!logged.contains("host:/export/repoR"), "remote command: {logged}");
+    assert!(
+        !logged.contains("host:/export/repoR"),
+        "remote command: {logged}"
+    );
     assert!(logged.contains("preview"), "remote command: {logged}");
     // The host reaches the remote card render through the env var,
     // not through a new argument.
@@ -210,4 +219,3 @@ fn preview_remote_without_host_prefix_keeps_repo() {
     // A repo column without the prefix passes through unchanged.
     assert!(logged.contains("'repoR'"), "remote command: {logged}");
 }
-

@@ -84,12 +84,28 @@ impl PromptCfg {
         let cfg = Self {
             kind: if g("kind") == "new" { "new" } else { "message" },
             rp: g("rp"),
-            host: if g("host").is_empty() { None } else { Some(g("host")) },
-            w: if g("w").is_empty() { None } else { Some(g("w")) },
-            r_root: if g("r").is_empty() { None } else { Some(g("r")) },
+            host: if g("host").is_empty() {
+                None
+            } else {
+                Some(g("host"))
+            },
+            w: if g("w").is_empty() {
+                None
+            } else {
+                Some(g("w"))
+            },
+            r_root: if g("r").is_empty() {
+                None
+            } else {
+                Some(g("r"))
+            },
             file: g("file"),
             editor: g("editor"),
-            hint: if g("hint").is_empty() { None } else { Some(g("hint")) },
+            hint: if g("hint").is_empty() {
+                None
+            } else {
+                Some(g("hint"))
+            },
             rushi: g("rushi"),
             ssh: g("ssh"),
             detach: g("detach"),
@@ -138,7 +154,11 @@ fn run_body(cfg: &PromptCfg) -> i32 {
     if cfg.pane {
         std::thread::sleep(std::time::Duration::from_secs(2));
     }
-    if ok { 0 } else { 1 }
+    if ok {
+        0
+    } else {
+        1
+    }
 }
 
 /// Run the editor on the prompt file, inheriting the controlling
@@ -152,10 +172,7 @@ fn run_editor(cfg: &PromptCfg) {
     }
     match c.status() {
         Ok(s) if s.success() => {}
-        Ok(s) => eprintln!(
-            "rushi-sessions: editor {} exited with {}",
-            cfg.editor, s
-        ),
+        Ok(s) => eprintln!("rushi-sessions: editor {} exited with {}", cfg.editor, s),
         Err(e) => eprintln!("rushi-sessions: cannot start editor {}: {e}", cfg.editor),
     }
 }
@@ -222,7 +239,10 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         } else if sent {
             println!("message queued for {}", cfg.rp);
         } else {
-            eprintln!("rushi-sessions: nothing sent for {} (the send call did not start).", cfg.rp);
+            eprintln!(
+                "rushi-sessions: nothing sent for {} (the send call did not start).",
+                cfg.rp
+            );
         }
         sent
     } else {
@@ -234,7 +254,11 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         let msg = !is_blank(m);
         let r = cfg.r_root.clone().unwrap_or_default();
         if let Some(host) = cfg.host.as_deref() {
-            let msg64 = if msg { Some(b64_encode(m.as_bytes())) } else { None };
+            let msg64 = if msg {
+                Some(b64_encode(m.as_bytes()))
+            } else {
+                None
+            };
             let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r));
             let ok = detached(&cfg.ssh, &cfg.detach, &["-T", host, &cmd]);
             if !ok {
@@ -244,7 +268,10 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
             if msg {
                 println!("new session {} starting in {}/sessions on {host}", n, r);
             } else {
-                println!("new idle session {} starting in {}/sessions on {host}", n, r);
+                println!(
+                    "new idle session {} starting in {}/sessions on {host}",
+                    n, r
+                );
             }
         } else {
             if !Path::new(&r).is_dir() {
@@ -380,7 +407,9 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
 
 /// The prompt-file dir: $TMPDIR, else /tmp.
 fn tmp_dir() -> PathBuf {
-    std::env::var_os("TMPDIR").map(PathBuf::from).filter(|p| !p.as_os_str().is_empty())
+    std::env::var_os("TMPDIR")
+        .map(PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
@@ -397,16 +426,20 @@ fn random_suffix() -> String {
         }
         Err(_) => buf.fill(0x41),
     }
-    buf
-        .iter()
-        .map(|b| CH[(*b as usize) % 62] as char)
-        .collect()
+    buf.iter().map(|b| CH[(*b as usize) % 62] as char).collect()
 }
 
 /// Create the prompt temp file (`tv-rushi-<what>.XXXXXX` + `.md`) and
 /// return its path.
-pub(crate) fn new_prompt_file(what: &str, hint: Option<&str>, workdir: Option<&str>) -> Result<PathBuf, String> {
-    let d = workdir.map(PathBuf::from).filter(|p| p.is_dir()).unwrap_or_else(tmp_dir);
+pub(crate) fn new_prompt_file(
+    what: &str,
+    hint: Option<&str>,
+    workdir: Option<&str>,
+) -> Result<PathBuf, String> {
+    let d = workdir
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(tmp_dir);
     let p = d.join(format!("tv-rushi-{what}.{}", random_suffix()));
     let text = hint.map(|h| format!("{h}\n")).unwrap_or_default();
     std::fs::write(&p, &text).map_err(|e| format!("write {}: {e}", p.display()))?;
@@ -433,11 +466,7 @@ pub(crate) fn split_row(row: &str) -> (Option<String>, String) {
 /// A usable session name: non-empty, not a comment, not a path, not
 /// `.` or `..` (the shell oneliner's case list).
 pub(crate) fn valid_session_name(n: &str) -> bool {
-    !n.is_empty()
-        && !n.starts_with('#')
-        && !n.contains('/')
-        && n != "."
-        && n != ".."
+    !n.is_empty() && !n.starts_with('#') && !n.contains('/') && n != "." && n != ".."
 }
 
 /// All-POSIX-space check (the shell `tr -d "[:space:]"` test).
@@ -464,7 +493,11 @@ pub(crate) fn b64_encode(data: &[u8]) -> String {
         } else {
             b'='
         } as char);
-        out.push(if c.len() > 2 { T[(n & 63) as usize] } else { b'=' } as char);
+        out.push(if c.len() > 2 {
+            T[(n & 63) as usize]
+        } else {
+            b'='
+        } as char);
     }
     out
 }
@@ -535,20 +568,33 @@ pub(crate) fn send_message(row: Option<&str>, events: bool) -> i32 {
 fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     let (host, rp) = match row {
         Some(r) => split_row(r),
-        None => (None, std::env::current_dir().map(|d| d.to_string_lossy().into_owned()).unwrap_or_default()),
+        None => (
+            None,
+            std::env::current_dir()
+                .map(|d| d.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+        ),
     };
     let w = if kind == "message" {
         Some(resolve_workdir(&host, &rp))
     } else {
         None
     };
-    let r_root = if kind == "new" { Some(resolve_project_root(&host, &rp)) } else { None };
+    let r_root = if kind == "new" {
+        Some(resolve_project_root(&host, &rp))
+    } else {
+        None
+    };
     let prompt_dir = match kind {
         "message" if host.is_none() => w.as_deref(),
         "new" if host.is_none() => r_root.as_deref(),
         _ => None,
     };
-    let file = match new_prompt_file(kind, if kind == "new" { Some(HINT_LINE) } else { None }, prompt_dir) {
+    let file = match new_prompt_file(
+        kind,
+        if kind == "new" { Some(HINT_LINE) } else { None },
+        prompt_dir,
+    ) {
         Ok(p) => p.to_string_lossy().into_owned(),
         Err(e) => {
             eprintln!("rushi-sessions: {e}");
@@ -559,9 +605,17 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         .filter(|e| !e.is_empty())
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_else(|| "nvim".into());
-    let rushi = which("rushi").map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "rushi".into());
-    let ssh = which("ssh").map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|| "ssh".into());
-    let detach = if which("setsid").is_some() { "setsid" } else { "nohup" };
+    let rushi = which("rushi")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "rushi".into());
+    let ssh = which("ssh")
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "ssh".into());
+    let detach = if which("setsid").is_some() {
+        "setsid"
+    } else {
+        "nohup"
+    };
     let cfg = PromptCfg {
         kind,
         rp: rp.clone(),
@@ -570,7 +624,11 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         r_root: r_root.clone(),
         file: file.clone(),
         editor: editor.clone(),
-        hint: if kind == "new" { Some(HINT_LINE.to_string()) } else { None },
+        hint: if kind == "new" {
+            Some(HINT_LINE.to_string())
+        } else {
+            None
+        },
         rushi,
         ssh,
         detach: detach.to_string(),
@@ -601,7 +659,8 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
                 tm.arg("-c").arg(&cwd);
             }
         }
-        tm.arg("-x").arg("80%")
+        tm.arg("-x")
+            .arg("80%")
             .arg("-y")
             .arg("60%")
             .arg("-X")
@@ -623,9 +682,7 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
                 return 0;
             }
             Ok(s) => {
-                eprintln!(
-                    "rushi-sessions: tmux new-pane failed ({s}); using the fork's pane"
-                );
+                eprintln!("rushi-sessions: tmux new-pane failed ({s}); using the fork's pane");
             }
             Err(e) => eprintln!("rushi-sessions: cannot start tmux: {e}; using the fork's pane"),
         }
@@ -668,7 +725,9 @@ fn resolve_workdir(host: &Option<String>, rp: &str) -> String {
 }
 
 fn local_workdir(rp: &str) -> String {
-    let w = std::fs::read_to_string(format!("{rp}/cwd")).ok().map(|s| s.trim().to_string());
+    let w = std::fs::read_to_string(format!("{rp}/cwd"))
+        .ok()
+        .map(|s| s.trim().to_string());
     match w {
         Some(w) if !w.is_empty() && Path::new(&w).is_dir() => w,
         _ => parent_dir(rp),
@@ -692,7 +751,10 @@ fn resolve_project_root(host: &Option<String>, rp: &str) -> String {
 
 fn parent_dir(rp: &str) -> String {
     let p = Path::new(rp);
-    p.parent().and_then(|d| d.parent()).map(|d| d.to_string_lossy().into_owned()).unwrap_or_default()
+    p.parent()
+        .and_then(|d| d.parent())
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Run a remote shell command, return its trimmed stdout (empty on
@@ -711,7 +773,9 @@ fn remote_stdout(host: &str, cmd: &str) -> String {
     match out {
         Some(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => {
-            eprintln!("rushi-sessions: remote resolution for {host} failed; using the local fallback dir");
+            eprintln!(
+                "rushi-sessions: remote resolution for {host} failed; using the local fallback dir"
+            );
             String::new()
         }
     }
@@ -726,9 +790,15 @@ mod tests {
 
     #[test]
     fn split_row_local_and_remote() {
-        assert_eq!(split_row("/home/a/sessions/x"), (None, "/home/a/sessions/x".into()));
+        assert_eq!(
+            split_row("/home/a/sessions/x"),
+            (None, "/home/a/sessions/x".into())
+        );
         assert_eq!(split_row("host:/x"), (Some("host".into()), "/x".into()));
-        assert_eq!(split_row("user@host:/a:b"), (Some("user@host".into()), "/a:b".into()));
+        assert_eq!(
+            split_row("user@host:/a:b"),
+            (Some("user@host".into()), "/a:b".into())
+        );
         // A colon inside a local absolute path with no host part.
         assert_eq!(split_row("/x:y/z"), (None, "/x:y/z".into()));
         // A host-looking first field containing a slash is not a host.
@@ -779,7 +849,10 @@ mod tests {
     #[test]
     fn remote_command_message_mode_escapes_the_task() {
         let c = remote_run_command("/w", "s", Some("QQ=="), None);
-        assert_eq!(c, "cd '/w' && rushi run 's' -- \"$(printf %s QQ== | base64 -d)\"");
+        assert_eq!(
+            c,
+            "cd '/w' && rushi run 's' -- \"$(printf %s QQ== | base64 -d)\""
+        );
     }
 
     #[test]

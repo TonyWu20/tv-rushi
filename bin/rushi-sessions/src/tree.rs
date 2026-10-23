@@ -183,7 +183,14 @@ mod tests {
         let rows: Vec<(u64, Value)> = (1..=10)
             .map(|s| {
                 if matches!(s, 3 | 6 | 9) {
-                    (s, rewind(match s { 3 => 2, 6 => 4, _ => 7 }))
+                    (
+                        s,
+                        rewind(match s {
+                            3 => 2,
+                            6 => 4,
+                            _ => 7,
+                        }),
+                    )
                 } else {
                     (s, v("user_message"))
                 }
@@ -230,7 +237,10 @@ mod tests {
         // target_seq >= the marker's own seq is not a rewind.
         let rows: Vec<(u64, Value)> = vec![
             (1, v("user_message")),
-            (2, serde_json::json!({"type": "rewind", "target_seq": 3, "mode": "on"})),
+            (
+                2,
+                serde_json::json!({"type": "rewind", "target_seq": 3, "mode": "on"}),
+            ),
         ];
         assert_eq!(tree_depths(&rows), vec![0, 0]);
     }

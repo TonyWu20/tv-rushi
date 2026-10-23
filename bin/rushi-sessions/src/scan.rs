@@ -207,19 +207,16 @@ mod tests {
         assert_eq!(repo_of("/home/u/repo/sessions"), "repo");
     }
 
-
     #[test]
     fn resolve_roots_empty_falls_back_to_cwd() {
         let roots = resolve_roots(Vec::new(), true);
         assert_eq!(roots, vec![std::env::current_dir().unwrap()]);
     }
 
-
     #[test]
     fn resolve_roots_empty_without_flag() {
         assert!(resolve_roots(Vec::new(), false).is_empty());
     }
-
 
     #[test]
     fn resolve_roots_joins_relative_to_cwd() {
@@ -228,22 +225,22 @@ mod tests {
         assert_eq!(roots, vec![cwd.join(".")]);
     }
 
-
     #[test]
     fn resolve_roots_skips_missing() {
         let cwd = std::env::current_dir().unwrap();
         // A missing root is skipped; a present absolute root is kept.
-        let roots = resolve_roots(vec![PathBuf::from("/no/rushi/such/dir"), cwd.clone()], false);
+        let roots = resolve_roots(
+            vec![PathBuf::from("/no/rushi/such/dir"), cwd.clone()],
+            false,
+        );
         assert_eq!(roots, vec![cwd]);
     }
-
 
     #[test]
     fn find_sessions_no_roots_no_walk() {
         // With zero roots, no fd walk happens (no CWD fallback here).
         assert!(find_sessions(&[]).is_empty());
     }
-
 
     #[test]
     fn dedup_paths_drops_repeats() {
@@ -252,7 +249,6 @@ mod tests {
         let out = dedup_paths(vec![s.clone(), s.clone(), s.clone()]);
         assert_eq!(out, vec![s]);
     }
-
 
     #[test]
     fn sort_rows_newest_mtime_first() {
@@ -302,6 +298,4 @@ mod tests {
         let out = dedup_paths(vec![a.clone(), b.clone(), a.clone()]);
         assert_eq!(out.len(), 2);
     }
-
-
 }

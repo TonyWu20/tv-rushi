@@ -56,7 +56,11 @@ fn run(args: &[&str], dir: &Path) -> String {
         .current_dir(dir)
         .output()
         .unwrap();
-    assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
@@ -94,10 +98,7 @@ fn events_chat_lists_only_the_messages() {
     // Only the user and assistant messages, newest first.
     let seqs: Vec<&str> = rows.iter().map(|r| r.split('\t').next().unwrap()).collect();
     assert_eq!(seqs, vec!["4", "1"], "{out}");
-    let tags: Vec<&str> = rows
-        .iter()
-        .map(|r| r.split('\t').nth(1).unwrap())
-        .collect();
+    let tags: Vec<&str> = rows.iter().map(|r| r.split('\t').nth(1).unwrap()).collect();
     assert_eq!(tags, vec!["A", "U"], "{out}");
     // The unfiltered list still carries every entry.
     let all = run(&["events"], &d);
@@ -107,7 +108,10 @@ fn events_chat_lists_only_the_messages() {
 #[test]
 fn event_preview_renders_markdown_for_messages() {
     let d = fixture("ev-md");
-    assert_eq!(run(&["event-preview", ".", "1", "--print-lang"], &d), "markdown\n");
+    assert_eq!(
+        run(&["event-preview", ".", "1", "--print-lang"], &d),
+        "markdown\n"
+    );
     let doc = run(&["event-preview", ".", "1"], &d);
     assert!(doc.starts_with("# user_message\n"), "{doc}");
     // The id of a user_message does not print.
@@ -134,7 +138,10 @@ fn event_preview_assistant_message_keeps_its_id() {
 #[test]
 fn event_preview_renders_toml_for_tool_events() {
     let d = fixture("ev-toml");
-    assert_eq!(run(&["event-preview", ".", "5", "--print-lang"], &d), "toml\n");
+    assert_eq!(
+        run(&["event-preview", ".", "5", "--print-lang"], &d),
+        "toml\n"
+    );
     let doc = run(&["event-preview", ".", "5"], &d);
     assert!(doc.starts_with("[tool_call]\n"), "{doc}");
     assert!(doc.contains("name = \"bash\""), "{doc}");
@@ -176,7 +183,10 @@ fn events_all_view_tags_masked_rows() {
     // Newest first. Seq 4 is the rewind marker. Its summary is the
     // kernel marker text, never the `[masked]` tag.
     let marker = rows.iter().find(|r| r.starts_with("4\t")).unwrap();
-    assert!(marker.contains("rewind -> seq 2 (on, tui_pick)"), "{marker}");
+    assert!(
+        marker.contains("rewind -> seq 2 (on, tui_pick)"),
+        "{marker}"
+    );
     assert!(!marker.contains("[masked]"), "{marker}");
     // Seq 3 is the abandoned tool_call. It carries the tag.
     let abandoned = rows.iter().find(|r| r.starts_with("3\t")).unwrap();
@@ -222,5 +232,3 @@ fn events_without_dir_uses_cwd() {
     let cwd = run(&["events"], &d);
     assert_eq!(with_dir, cwd);
 }
-
-

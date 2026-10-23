@@ -32,7 +32,11 @@ pub(crate) fn numbered_events(dir: &Path) -> Vec<(u64, Value)> {
     content
         .lines()
         .enumerate()
-        .filter_map(|(i, l)| serde_json::from_str::<Value>(l.trim()).ok().map(|v| (i as u64 + 1, v)))
+        .filter_map(|(i, l)| {
+            serde_json::from_str::<Value>(l.trim())
+                .ok()
+                .map(|v| (i as u64 + 1, v))
+        })
         .collect()
 }
 
@@ -198,14 +202,12 @@ mod tests {
         assert_eq!(event_summary(&o), "bash ls -la");
     }
 
-
     #[test]
     fn event_summary_tool_call_falls_back_to_arguments() {
         let o = serde_json::json!({"type": "tool_call", "name": "read",
             "arguments": {"file_path": "/x"}});
         assert_eq!(event_summary(&o), "read {\"file_path\":\"/x\"}");
     }
-
 
     #[test]
     fn event_summary_tool_result_carries_value() {
@@ -214,13 +216,11 @@ mod tests {
         assert_eq!(event_summary(&o), "error 12b {\"text\":\"boom\"}");
     }
 
-
     #[test]
     fn event_summary_user_message_flattens() {
         let o = serde_json::json!({"type": "user_message", "content": "a\tb\nc"});
         assert_eq!(event_summary(&o), "a b c");
     }
-
 
     #[test]
     fn event_summary_ext_status_and_compaction() {
@@ -231,14 +231,15 @@ mod tests {
         assert_eq!(event_summary(&b), "reason=threshold ## Goal Do it");
     }
 
-
     #[test]
     fn numbered_events_skip_bad_lines() {
         let d = std::env::temp_dir().join(format!("rushi-evtest-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("events.jsonl"),
-            "{\"type\":\"user_message\",\"content\":\"one\"}\nnot json\n{\"type\":\"cancel\"}\n")
-            .unwrap();
+        std::fs::write(
+            d.join("events.jsonl"),
+            "{\"type\":\"user_message\",\"content\":\"one\"}\nnot json\n{\"type\":\"cancel\"}\n",
+        )
+        .unwrap();
         let rows = numbered_events(&d);
         let seqs: Vec<u64> = rows.iter().map(|(n, _)| *n).collect();
         assert_eq!(seqs, vec![1, 3]);
@@ -266,8 +267,11 @@ mod tests {
             (3, v("rewind")),
             (4, v("user_message")),
             (5, v("assistant_message")),
-            (6, serde_json::json!({"type": "rewind", "target_seq": 4,
-                "mode": "on", "reason": "tui_pick"})),
+            (
+                6,
+                serde_json::json!({"type": "rewind", "target_seq": 4,
+                "mode": "on", "reason": "tui_pick"}),
+            ),
             (7, v("user_message")),
         ];
         // The marker at seq 3 is malformed (no target_seq), so the
@@ -284,8 +288,11 @@ mod tests {
             (1, v("user_message")),
             (2, v("assistant_message")),
             (3, v("tool_call")),
-            (4, serde_json::json!({"type": "rewind", "target_seq": 2,
-                "mode": "on"})),
+            (
+                4,
+                serde_json::json!({"type": "rewind", "target_seq": 2,
+                "mode": "on"}),
+            ),
             (5, v("user_message")),
             (6, v("assistant_message")),
         ];
@@ -315,10 +322,7 @@ mod tests {
 
     fn zst_dir() -> std::path::PathBuf {
         let n = ZST_DIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let d = std::env::temp_dir().join(format!(
-            "rushi-evzst-{}-{n}",
-            std::process::id()
-        ));
+        let d = std::env::temp_dir().join(format!("rushi-evzst-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
@@ -330,12 +334,18 @@ mod tests {
         // line. The seq numbering is the decoded line number, the
         // same as the plain layout.
         let d = zst_dir();
-        let mut buf = zst_line(r#"{"type":"user_message","content":"one"}
-"#);
-        buf.extend(zst_line(r#"{"type":"assistant_message","content":"two"}
-"#));
-        buf.extend(zst_line(r#"{"type":"cancel"}
-"#));
+        let mut buf = zst_line(
+            r#"{"type":"user_message","content":"one"}
+"#,
+        );
+        buf.extend(zst_line(
+            r#"{"type":"assistant_message","content":"two"}
+"#,
+        ));
+        buf.extend(zst_line(
+            r#"{"type":"cancel"}
+"#,
+        ));
         std::fs::write(d.join("events.jsonl"), &buf).unwrap();
         let rows = numbered_events(&d);
         let seqs: Vec<u64> = rows.iter().map(|(n, _)| *n).collect();
@@ -353,10 +363,14 @@ mod tests {
         // P4: a torn final frame keeps the complete frames. The
         // torn line is unparseable, so it drops out of the rows.
         let d = zst_dir();
-        let ok = zst_line(r#"{"type":"user_message","content":"one"}
-"#);
-        let torn = zst_line(r#"{"type":"assistant_message","content":"two"}
-"#);
+        let ok = zst_line(
+            r#"{"type":"user_message","content":"one"}
+"#,
+        );
+        let torn = zst_line(
+            r#"{"type":"assistant_message","content":"two"}
+"#,
+        );
         let mut buf = ok;
         buf.extend_from_slice(&torn[..torn.len() / 2]);
         std::fs::write(d.join("events.jsonl"), &buf).unwrap();

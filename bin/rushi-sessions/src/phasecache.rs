@@ -108,8 +108,7 @@ mod tests {
 
     fn cache_dir_fixture() -> std::path::PathBuf {
         let n = DIR_N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let d = std::env::temp_dir()
-            .join(format!("rushi-phasecache-{}-{n}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rushi-phasecache-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d

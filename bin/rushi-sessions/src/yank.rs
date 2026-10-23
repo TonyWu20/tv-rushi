@@ -71,10 +71,7 @@ fn osc52_write(content: &str) -> bool {
 /// alphabet base64 payload, the ST terminator, the same escape
 /// television itself writes.
 fn osc52_escape(content: &str) -> String {
-    format!(
-        "\u{1b}]52;c;{}\u{1b}\\",
-        base64_encode(content.as_bytes())
-    )
+    format!("\u{1b}]52;c;{}\u{1b}\\", base64_encode(content.as_bytes()))
 }
 
 /// Standard alphabet base64 (RFC 4648, with padding). The OSC 52
@@ -165,8 +162,7 @@ mod tests {
 
     #[test]
     fn copy_entry_missing_seq_exits_1() {
-        let d =
-            std::env::temp_dir().join(format!("rushi-sessions-yank-{:-}", std::process::id()));
+        let d = std::env::temp_dir().join(format!("rushi-sessions-yank-{:-}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(

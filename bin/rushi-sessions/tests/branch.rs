@@ -26,10 +26,7 @@ struct Fixture {
 /// stub kernel bins. The stubs record their calls through the
 /// `STUB_*` env vars the test sets.
 fn fixture(tag: &str, with_marker: bool) -> Fixture {
-    let d = std::env::temp_dir().join(format!(
-        "rushi-sessions-{tag}-{}",
-        std::process::id()
-    ));
+    let d = std::env::temp_dir().join(format!("rushi-sessions-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     let session = d.join("sessions").join(tag);
     let project = d.join("project");
@@ -89,7 +86,14 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
 fn run(f: &Fixture, args: &[&str], extra: &[(&str, &str)]) -> (i32, String, String) {
     let mut c = Command::new(bin());
     c.args(args).current_dir(&f.dir);
-    c.env("PATH", format!("{}:{}", f.stubs.to_string_lossy(), std::env::var("PATH").unwrap_or_default()));
+    c.env(
+        "PATH",
+        format!(
+            "{}:{}",
+            f.stubs.to_string_lossy(),
+            std::env::var("PATH").unwrap_or_default()
+        ),
+    );
     for (k, v) in extra {
         c.env(k, v);
     }
@@ -272,8 +276,7 @@ fn summarize_calls_compact_branch_in_the_recorded_dir() {
     assert_eq!(code, 0, "stdout: {out} stderr: {err}");
     // The one-shot marker append comes before the compact.
     let logs = std::fs::read_to_string(&log_file).unwrap();
-    let m: serde_json::Value =
-        serde_json::from_str(logs.lines().next().unwrap()).unwrap();
+    let m: serde_json::Value = serde_json::from_str(logs.lines().next().unwrap()).unwrap();
     assert_eq!(m["target_seq"], 6);
     assert_eq!(m["mode"], "on");
     let calls = std::fs::read_to_string(&compact_file).unwrap();
@@ -302,7 +305,10 @@ fn summarize_prompt_uses_the_editor_file() {
         &f,
         &["summarize", "6", "--dir", &dir_arg(&f), "--prompt"],
         &[
-            ("STUB_LOG_FILE", f.dir.join("log-calls.txt").to_str().unwrap()),
+            (
+                "STUB_LOG_FILE",
+                f.dir.join("log-calls.txt").to_str().unwrap(),
+            ),
             ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
             ("EDITOR", editor.to_str().unwrap()),
         ],
@@ -326,8 +332,14 @@ fn summarize_prompt_cancels_on_a_blank_file() {
         &f,
         &["summarize", "6", "--dir", &dir_arg(&f), "--prompt"],
         &[
-            ("STUB_LOG_FILE", f.dir.join("log-calls.txt").to_str().unwrap()),
-            ("STUB_COMPACT_FILE", f.dir.join("compact-calls.txt").to_str().unwrap()),
+            (
+                "STUB_LOG_FILE",
+                f.dir.join("log-calls.txt").to_str().unwrap(),
+            ),
+            (
+                "STUB_COMPACT_FILE",
+                f.dir.join("compact-calls.txt").to_str().unwrap(),
+            ),
             ("EDITOR", editor.to_str().unwrap()),
         ],
     );
@@ -344,7 +356,14 @@ fn events_channel_mode_uses_the_cwd() {
     let mut c = Command::new(bin());
     c.args(["rewind", "5"])
         .current_dir(&f.dir)
-        .env("PATH", format!("{}:{}", f.stubs.to_string_lossy(), std::env::var("PATH").unwrap_or_default()))
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                f.stubs.to_string_lossy(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
         .env("STUB_LOG_FILE", log_file.as_os_str());
     let out = c.output().unwrap();
     assert_eq!(out.status.code().unwrap(), 0);
