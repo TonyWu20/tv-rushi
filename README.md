@@ -4,7 +4,8 @@
 channel for the rushi Unix agent harness. It gives a quick-peek window over
 rushi sessions. Each entry shows the session status, repo, last loop phase,
 and last activity. The preview panel shows a TOML status card. The card lists
-the last user and assistant messages and the recent events. A second channel,
+the git branch of the session's working dir (when one resolves), the last
+user and assistant messages, and the recent events. A second channel,
 `rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
 and previews each entry as a markdown or toml document. The `browse_events`
 action (enter) launches it from the session list.

@@ -274,7 +274,9 @@ Decisions (user, 2026-10-04):
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
   seven tab-separated fields they split on.
 - Preview output: a structured TOML card. It has a `[rushi-session]`
-  header (name, repo, host for remote rows, status, pid, phase, think, updated, usage). It has a
+  header (name, repo, host for remote rows, branch when the
+  working dir resolves to a git repo, status, pid, phase, think,
+  updated, usage). It has a
   `[last-user-message]` and a `[last-assistant-message]`. It has a
   `[[recent-event]]` array of the last 5 meaningful events.
 - `usage` shows the context window usage of the last model call. It reads

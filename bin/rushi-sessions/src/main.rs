@@ -21,8 +21,10 @@
 //!   cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
-//!   Render the TOML preview card for one session: the last user/assistant
-//!   messages, the context window usage, and the most recent events. When
+//!   Render the TOML preview card for one session: the git branch of
+//!   the session's recorded working dir, the last user/assistant
+//!   messages, the context window usage, and the most recent events.
+//!   When
 //!   `bat` is on PATH the card is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
 //!   "Catppuccin Macchiato"); otherwise plain TOML is printed.

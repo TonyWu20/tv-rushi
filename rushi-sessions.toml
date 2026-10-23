@@ -36,7 +36,9 @@
 #
 # The list shows status, repo/name, phase, last activity; remote rows
 # carry the host in the repo field. The preview shows a status card
-# (a `host` key under `repo` for remote rows) and the last few events.
+# (a `host` key under `repo` for remote rows, a `branch` key for
+# the git branch of the session's working dir when one resolves)
+# and the last few events.
 # Full interaction happens in rushi-tui (the open action). The channel
 # is a peek plus a message poke:
 # send_message (ctrl-t) opens $EDITOR, then pokes the session with one

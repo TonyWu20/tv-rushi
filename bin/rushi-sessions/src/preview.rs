@@ -1,10 +1,12 @@
 //! The `preview` command: render the TOML preview card for one session.
 //! The card scans keep only the active path: the kernel's rewind
 //! markers mask the abandoned branch, so the card shows what the
-//! model context sees.
+//! model context sees. The `[rushi-session]` table carries a
+//! `branch` key: the git branch of the session's recorded working
+//! dir, probed with git at render time.
 use serde_json::Value;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rushi_common::rewind::seq_in_ranges;
 
@@ -71,11 +73,16 @@ pub fn preview(
     // The remote binary renders this same card with the host key,
     // fed by the env var the local binary set over ssh.
     let host = std::env::var(HOST_ENV).ok().filter(|h| !h.is_empty());
+    // The git branch of the session's recorded working dir. The
+    // remote binary runs this same probe on the remote host, over
+    // the remote working dir.
+    let branch = session_workdir(Path::new(path)).and_then(|w| git_branch(&w));
     let card = render_card(
         status,
         name,
         repo,
         host.as_deref(),
+        branch.as_deref(),
         &pid,
         phase,
         &think,
@@ -147,14 +154,74 @@ pub(crate) fn card_scans(events: &[Value]) -> (String, String, String) {
     }
     (think, last_user, last_assistant)
 }
+
+/// The session's recorded working dir (the `cwd` file), or the
+/// project dir (dirname(dirname(session dir))) when the file is
+/// missing or stale. The open actions' rule without the
+/// sessions-ancestor walk: git finds the repo root from the
+/// recorded dir itself.
+fn session_workdir(path: &Path) -> Option<PathBuf> {
+    let recorded = fs::read_to_string(Path::new(path).join("cwd"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    if let Some(w) = &recorded {
+        if !w.is_empty() && Path::new(w).is_dir() {
+            return Some(PathBuf::from(w.as_str()));
+        }
+    }
+    Path::new(path)
+        .parent()
+        .and_then(|d| d.parent())
+        .map(PathBuf::from)
+}
+
+/// The git branch of a working dir: the checked-out branch name, or
+/// `detached@<short sha>` when the HEAD is detached. None when git
+/// is missing, the dir is not in a repo, or the repo has no HEAD
+/// (an unborn branch).
+fn git_branch(dir: &Path) -> Option<String> {
+    let arg = dir.to_string_lossy();
+    let out = std::process::Command::new("git")
+        .args(["-C", arg.as_ref(), "rev-parse", "--abbrev-ref", "HEAD"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if name == "HEAD" {
+        // Detached: the short commit identifies the position.
+        let o = std::process::Command::new("git")
+            .args(["-C", arg.as_ref(), "rev-parse", "--short", "HEAD"])
+            .output()
+            .ok()?;
+        if !o.status.success() {
+            return None;
+        }
+        let sha = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        if sha.is_empty() {
+            return None;
+        }
+        return Some(format!("detached@{sha}"));
+    }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
+}
+
 /// The TOML card text for one session. `host` (the ssh host of a
 /// remote session, set by the local binary through `HOST_ENV`)
-/// renders a `host` key right under `repo`.
+/// renders a `host` key right under `repo`. `branch` (the git
+/// branch of the session's recorded working dir, or None) renders
+/// a `branch` key under the host line.
 pub(crate) fn render_card(
     status: &str,
     name: &str,
     repo: &str,
     host: Option<&str>,
+    branch: Option<&str>,
     pid: &str,
     phase: &str,
     think: &str,
@@ -169,6 +236,9 @@ pub(crate) fn render_card(
     out.push(format!("repo    = {}", json_str(repo)));
     if let Some(h) = host {
         out.push(format!("host    = {}", json_str(h)));
+    }
+    if let Some(b) = branch {
+        out.push(format!("branch  = {}", json_str(b)));
     }
     out.push(format!("status  = {}", json_str(status)));
     out.push(format!("pid     = {}", json_str(pid)));
@@ -235,7 +305,17 @@ mod tests {
     #[test]
     fn card_hosts_line_sits_under_repo() {
         let card = render_card(
-            "ACTIVE", "foo", "repoR", Some("host"), "123", "tools", "", "10-02 14:11", "u", "a",
+            "ACTIVE",
+            "foo",
+            "repoR",
+            Some("host"),
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
             EMPTY_EVENTS,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -246,11 +326,20 @@ mod tests {
         assert_eq!(lines[i + 1], "host    = \"host\"");
     }
 
-
     #[test]
     fn card_without_host_has_no_host_line() {
         let card = render_card(
-            "IDLE", "foo", "repoR", None, "123", "tools", "", "10-02 14:11", "u", "a",
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
             EMPTY_EVENTS,
         );
         assert!(!card.lines().any(|l| l.starts_with("host    = ")));
@@ -267,12 +356,16 @@ mod tests {
     fn card_scans_ignore_abandoned_branch() {
         let d = std::env::temp_dir().join(format!("rushi-cardscan-{}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
-        std::fs::write(d.join("events.jsonl"), concat!(
-            "{\"type\":\"user_message\",\"content\":\"first user msg\"}\n",
-            "{\"type\":\"assistant_message\",\"content\":\"branch A answer\"}\n",
-            "{\"type\":\"rewind\",\"target_seq\":1,\"mode\":\"on\",\"reason\":\"tui_pick\"}\n",
-            "{\"type\":\"user_message\",\"content\":\"re-asked question\"}\n",
-        )).unwrap();
+        std::fs::write(
+            d.join("events.jsonl"),
+            concat!(
+                "{\"type\":\"user_message\",\"content\":\"first user msg\"}\n",
+                "{\"type\":\"assistant_message\",\"content\":\"branch A answer\"}\n",
+                "{\"type\":\"rewind\",\"target_seq\":1,\"mode\":\"on\",\"reason\":\"tui_pick\"}\n",
+                "{\"type\":\"user_message\",\"content\":\"re-asked question\"}\n",
+            ),
+        )
+        .unwrap();
         let rows = numbered_events(&d);
         let ranges = log_active_ranges(&rows);
         let active: Vec<Value> = rows
@@ -297,7 +390,17 @@ mod tests {
             "content": "hi"
         })];
         let card = render_card(
-            "IDLE", "foo", "repoR", None, "", "tools", "", "10-02 14:11", "u", "",
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            "",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "",
             &evts,
         );
         let ts = card
@@ -320,4 +423,154 @@ mod tests {
         assert!(!inner.contains('Z'), "{v}");
     }
 
+    #[test]
+    fn card_branch_line_sits_under_host() {
+        let card = render_card(
+            "ACTIVE",
+            "foo",
+            "repoR",
+            Some("host"),
+            Some("main"),
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            EMPTY_EVENTS,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("host    = "))
+            .expect("host line");
+        assert_eq!(lines[i + 1], "branch  = \"main\"");
+    }
+
+    #[test]
+    fn card_branch_line_sits_under_repo_when_no_host() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            Some("dev"),
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            EMPTY_EVENTS,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("repo    = "))
+            .expect("repo line");
+        assert_eq!(lines[i + 1], "branch  = \"dev\"");
+        // The branch line is followed straight by the status line.
+        let j = lines
+            .iter()
+            .position(|l| l.starts_with("branch  = "))
+            .expect("branch line");
+        assert!(lines[j + 1].starts_with("status  = "));
+    }
+
+    #[test]
+    fn card_without_branch_has_no_branch_line() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            EMPTY_EVENTS,
+        );
+        assert!(!card.lines().any(|l| l.starts_with("branch  = ")));
+    }
+
+    #[test]
+    fn git_branch_reads_the_checked_out_branch() {
+        // The probe forks git; skip when git is missing (the card
+        // omits the key there).
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: git is not on PATH");
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("rushi-gitbranch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        let run = |args: &[&str]| -> String {
+            String::from_utf8(
+                std::process::Command::new("git")
+                    .args(args)
+                    .current_dir(&d)
+                    .output()
+                    .expect("git ran")
+                    .stdout,
+            )
+            .expect("utf-8")
+        };
+        run(&["init", "-q", "-b", "main", "."]);
+        run(&["config", "user.email", "t@example.com"]);
+        run(&["config", "user.name", "t"]);
+        std::fs::write(d.join("f"), "x").unwrap();
+        run(&["add", "f"]);
+        run(&["commit", "-q", "-m", "one"]);
+        assert_eq!(git_branch(&d), Some("main".to_string()));
+        // Detached HEAD: the short commit, tagged.
+        run(&["checkout", "-q", "--detach", "HEAD"]);
+        let sha = run(&["rev-parse", "--short", "HEAD"]).trim().to_string();
+        assert_eq!(git_branch(&d), Some(format!("detached@{sha}")));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn git_branch_none_outside_a_repo() {
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: git is not on PATH");
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("rushi-nogit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(git_branch(&d), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn session_workdir_reads_the_cwd_file() {
+        let d = std::env::temp_dir().join(format!("rushi-wd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let proj = d.join("proj");
+        let sess = proj.join("sessions/foo");
+        std::fs::create_dir_all(&sess).unwrap();
+        // The recorded cwd wins over the dirname fallback.
+        let w2 = d.join("w2");
+        std::fs::create_dir_all(&w2).unwrap();
+        std::fs::write(sess.join("cwd"), w2.display().to_string()).unwrap();
+        assert_eq!(session_workdir(&sess), Some(w2.clone()));
+        // A stale cwd file falls back to the project dir.
+        std::fs::write(sess.join("cwd"), "/no/such/dir").unwrap();
+        assert_eq!(session_workdir(&sess), Some(proj.clone()));
+        // A missing cwd file falls back the same way.
+        std::fs::remove_file(sess.join("cwd")).unwrap();
+        assert_eq!(session_workdir(&sess), Some(proj.clone()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

@@ -1,3 +1,37 @@
+## 86. The preview card shows the working dir's git branch (2026-10-24)
+
+The `[rushi-session]` table of the preview card gains a `branch`
+key: the checked-out branch of the session's working dir. The key
+sits under the `host` line, under `repo` for local rows.
+
+Decision:
+
+- The binary probes the dir with git at render time. `git -C <dir>
+  rev-parse --abbrev-ref HEAD` gives the branch name. A detached
+  HEAD renders as `detached@<short sha>`, the short form of
+  `rev-parse --short HEAD`.
+- The dir is the session's recorded working dir. The `cwd` file in
+  the session dir wins. A missing or stale `cwd` file falls back
+  to the project dir, dirname(dirname(session dir)), the open
+  actions' rule. The probe passes the recorded dir to git, not the
+  repo root. Git finds the enclosing repo itself.
+- The key is omitted when git is missing, the dir is not in a
+  repo, the repo has no HEAD (an unborn branch), or no usable dir
+  resolves at all. No new channel plumbing. The card keys come
+  from the binary.
+- Remote rows probe on the remote host. The remote binary renders
+  the card there, over the remote working dir. The local binary
+  ships no branch value.
+
+Verification: `cargo test -p rushi-sessions` is green (124 tests).
+The card tests pin the key under `host` (remote) and under `repo`
+(local), and the omission on None. A fixture git repo pins the
+checked-out name and the detached rendering. A smoke render of a
+git workdir shows the key; a non-git workdir omits it.
+
+Out of scope: a branch column in the source list, and a branch
+cache like the phase probe's stat cache.
+
 ## 85. The consumer reads move to the shared P8 reader (2026-10-23)
 
 `rushi-common` 0.1.8 (rushi PR #56, issue #55 P8) publishes the
