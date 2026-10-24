@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::events::numbered_events;
-use crate::prompt::{is_blank, new_prompt_file, stty_save, which};
+use crate::prompt::{is_blank, new_prompt_file, nix_dev_dir, stty_save, which};
 
 /// The stage entry of the `rewind` command. Without DIR, the CWD is
 /// the session dir (the events channel runs in it).
@@ -129,26 +129,30 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     }
     // One `compact --branch` call, the TUI outcome. It runs in the
     // session's recorded working dir so the config tier finds the
-    // same project config the loop uses.
-    let compact = kernel_bin("compact");
+    // same project config the loop uses. The project dir carries a
+    // flake: the launch is `nix develop -c compact` in that dir
+    // (decision 88); the launch dir is the flake dir, not the
+    // recorded working dir.
     let w = local_workdir(&base);
-    let mut c = Command::new(&compact);
+    let projdir = base.parent().and_then(|p| p.parent());
+    let (argv, cwd) = kernel_launch("compact", projdir, Some(PathBuf::from(&w)));
+    let label = argv[0].clone();
+    let mut c = launch_command(&argv, &cwd);
     c.arg(&base).arg("--branch");
     if let Some(p) = &prompt_text {
         c.arg("--prompt").arg(p);
     }
-    c.current_dir(&w);
     match c.status() {
         Ok(s) if s.success() => {
             println!("summarized the branch left of seq {seq}");
             0
         }
         Ok(s) => {
-            eprintln!("rushi-sessions: {compact} exited with {s}");
+            eprintln!("rushi-sessions: {label} exited with {s}");
             1
         }
         Err(e) => {
-            eprintln!("rushi-sessions: cannot start {compact}: {e}");
+            eprintln!("rushi-sessions: cannot start {label}: {e}");
             1
         }
     }
@@ -213,6 +217,48 @@ fn kernel_bin(name: &str) -> String {
     name.to_string()
 }
 
+/// The kernel binary launch of a session (decision 88): the argv
+/// plus the working dir of the launch. The project dir carries a
+/// flake and `nix` is on PATH: `nix develop -c <name>` in that
+/// dir. The kernel binaries (`log`, `compact`) resolve from the
+/// devShell, shadowing the inherited PATH; a binary the devShell
+/// does not ship falls back to the inherited PATH entry. Without
+/// the gate, the PATH sibling of the resolved `rushi` with the
+/// caller's working dir.
+fn kernel_launch(
+    name: &str,
+    projdir: Option<&Path>,
+    cwd: Option<PathBuf>,
+) -> (Vec<String>, Option<PathBuf>) {
+    if let Some(p) = projdir {
+        if nix_dev_dir(&p.to_string_lossy()) {
+            return (
+                vec![
+                    "nix".to_string(),
+                    "develop".to_string(),
+                    "-c".to_string(),
+                    name.to_string(),
+                ],
+                Some(p.to_path_buf()),
+            );
+        }
+    }
+    (vec![kernel_bin(name)], cwd)
+}
+
+/// The launch's command builder: the argv as a `Command`, plus the
+/// working dir when one is set.
+fn launch_command(argv: &[String], cwd: &Option<PathBuf>) -> Command {
+    let mut c = Command::new(&argv[0]);
+    for a in &argv[1..] {
+        c.arg(a);
+    }
+    if let Some(d) = cwd {
+        c.current_dir(d);
+    }
+    c
+}
+
 /// The `rewind` marker of one pick: the kernel's typed event, one
 /// JSON line. `reason` is `tv_pick`, the channel's counterpart of the
 /// TUI's `tui_pick`.
@@ -235,15 +281,17 @@ fn rewind_marker(seq: u64, mode: &str) -> String {
 /// reads it, so the append is synchronous.
 fn append_rewind_marker(base: &Path, seq: u64, mode: &str) -> Result<(), String> {
     let marker = rewind_marker(seq, mode);
-    let log_bin = kernel_bin("log");
-    let mut c = Command::new(&log_bin);
+    let projdir = base.parent().and_then(|p| p.parent());
+    let (argv, cwd) = kernel_launch("log", projdir, None);
+    let label = argv[0].clone();
+    let mut c = launch_command(&argv, &cwd);
     c.arg("--session").arg(base);
     c.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     let mut child = c
         .spawn()
-        .map_err(|e| format!("cannot start {log_bin}: {e}"))?;
+        .map_err(|e| format!("cannot start {label}: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {
         let mut line = marker;
         line.push('\n');
@@ -253,11 +301,11 @@ fn append_rewind_marker(base: &Path, seq: u64, mode: &str) -> Result<(), String>
     }
     let s = child
         .wait()
-        .map_err(|e| format!("cannot wait on {log_bin}: {e}"))?;
+        .map_err(|e| format!("cannot wait on {label}: {e}"))?;
     if s.success() {
         Ok(())
     } else {
-        Err(format!("{log_bin} exited with {s}"))
+        Err(format!("{label} exited with {s}"))
     }
 }
 
@@ -311,5 +359,58 @@ fn local_workdir(base: &Path) -> String {
             .and_then(|d| d.parent())
             .map(|d| d.to_string_lossy().into_owned())
             .unwrap_or_else(|| ".".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Without the gate (no projdir, or a flake-less projdir) the
+    /// launch is the single PATH binary with the caller's working
+    /// dir, the pre-flake behavior.
+    #[test]
+    fn kernel_launch_without_gate_keeps_the_path_binary() {
+        let (argv, cwd) = kernel_launch("log", None, None);
+        assert_eq!(argv.len(), 1);
+        assert!(!argv[0].is_empty());
+        assert!(cwd.is_none());
+
+        let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        let (argv, cwd) = kernel_launch("log", Some(bare.as_path()), Some(bare.clone()));
+        assert_eq!(argv.len(), 1);
+        assert_eq!(cwd, Some(bare));
+    }
+
+    /// With the gate (a flake.nix in the projdir, nix on the host
+    /// PATH) the launch is `nix develop -c <bin>` in the flake dir;
+    /// the launch dir is the flake dir, not the caller's.
+    #[test]
+    fn kernel_launch_with_gate_is_the_devshell() {
+        let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
+        let flake = base.join("flake");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        if which("nix").is_none() {
+            return;
+        }
+        let w = base.join("work");
+        let (argv, cwd) = kernel_launch("compact", Some(flake.as_path()), Some(w.clone()));
+        assert_eq!(
+            argv,
+            vec![
+                "nix".to_string(),
+                "develop".to_string(),
+                "-c".to_string(),
+                "compact".to_string(),
+            ]
+        );
+        assert_eq!(cwd, Some(flake.clone()));
+        let (argv, cwd) = kernel_launch("log", Some(flake.as_path()), None);
+        assert_eq!(argv[0], "nix");
+        assert_eq!(cwd, Some(flake));
     }
 }

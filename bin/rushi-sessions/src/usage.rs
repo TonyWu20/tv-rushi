@@ -36,11 +36,13 @@ pub(crate) fn usage_line(used: u64, window: Option<u64>) -> String {
     }
 }
 /// The context window in tokens. Resolution order: the
-/// `RUSHI_CONTEXT_WINDOW` env var (a positive integer), then the active
-/// config of the `rushi` binary on PATH (`rushi config` stdout): the
-/// active model's `context_tokens`, then `limits.context_budget_tokens`.
-/// None when nothing resolves.
-pub(crate) fn context_window() -> Option<u64> {
+/// `RUSHI_CONTEXT_WINDOW` env var (a positive integer), then the
+/// `rushi config` of the session's project. The project dir carries
+/// a flake and `nix` is on PATH: the devShell launch (decision 88),
+/// so the project's own config tier is probed. Otherwise the `rushi`
+/// on PATH. The probe reads the active model's `context_tokens`,
+/// then `limits.context_budget_tokens`. None when nothing resolves.
+pub(crate) fn context_window(dir: Option<&std::path::Path>) -> Option<u64> {
     if let Ok(v) = std::env::var("RUSHI_CONTEXT_WINDOW") {
         if let Ok(n) = v.trim().parse::<u64>() {
             if n > 0 {
@@ -48,15 +50,42 @@ pub(crate) fn context_window() -> Option<u64> {
             }
         }
     }
-    let out = std::process::Command::new("rushi")
-        .arg("config")
-        .stderr(std::process::Stdio::null())
-        .output()
-        .ok()?;
+    let (argv, cwd) = context_window_cmd(dir);
+    let mut c = std::process::Command::new(&argv[0]);
+    for a in &argv[1..] {
+        c.arg(a);
+    }
+    if let Some(d) = &cwd {
+        c.current_dir(d);
+    }
+    let out = c.stderr(std::process::Stdio::null()).output().ok()?;
     if !out.status.success() {
         return None;
     }
     context_window_from_config(&String::from_utf8_lossy(&out.stdout))
+}
+
+/// The `rushi config` invocation (decision 88): the devShell launch
+/// when the session's project dir carries a flake and `nix` is on
+/// PATH (the devShell packages shadow the inherited PATH, and a
+/// binary the devShell does not ship falls back to the inherited
+/// entry), else the PATH `rushi`.
+fn context_window_cmd(dir: Option<&std::path::Path>) -> (Vec<String>, Option<String>) {
+    if let Some(d) = dir {
+        if crate::prompt::nix_dev_dir(&d.to_string_lossy()) {
+            return (
+                vec![
+                    "nix".to_string(),
+                    "develop".to_string(),
+                    "-c".to_string(),
+                    "rushi".to_string(),
+                    "config".to_string(),
+                ],
+                Some(d.to_string_lossy().into_owned()),
+            );
+        }
+    }
+    (vec!["rushi".to_string(), "config".to_string()], None)
 }
 /// The context window in tokens parsed from `rushi config` output:
 /// `[model."<active>"] context_tokens`, then the base `[model]`
@@ -140,6 +169,51 @@ context_tokens = 222
 context_budget_tokens = 333
 "#;
         assert_eq!(context_window_from_config(text), Some(222));
+    }
+
+    /// The `rushi config` invocation of the usage line (decision
+    /// 88): the devShell launch when the session's project dir
+    /// carries a flake and nix is on PATH, else the PATH probe.
+    #[test]
+    fn config_probe_cmd_selection() {
+        // No dir (no recorded working dir): the PATH probe.
+        let (argv, cwd) = context_window_cmd(None);
+        assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
+        assert!(cwd.is_none());
+
+        let base = std::env::temp_dir().join(format!("rsrs-cfgprobe-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+
+        // A flake-less dir: the PATH probe.
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        let (argv, cwd) = context_window_cmd(Some(bare.as_path()));
+        assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
+        assert!(cwd.is_none());
+
+        // The flake dir: the devShell launch when the host has nix
+        // (the gate's last check), the PATH probe otherwise.
+        let flake = base.join("flake");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        let f = flake.to_str().unwrap().to_string();
+        let (argv, cwd) = context_window_cmd(Some(flake.as_path()));
+        if crate::prompt::nix_dev_dir(&f) {
+            assert_eq!(
+                argv,
+                vec![
+                    "nix".to_string(),
+                    "develop".to_string(),
+                    "-c".to_string(),
+                    "rushi".to_string(),
+                    "config".to_string(),
+                ]
+            );
+            assert_eq!(cwd, Some(f));
+        } else {
+            assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
+            assert!(cwd.is_none());
+        }
     }
 
     #[test]

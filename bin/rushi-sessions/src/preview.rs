@@ -73,10 +73,13 @@ pub fn preview(
     // The remote binary renders this same card with the host key,
     // fed by the env var the local binary set over ssh.
     let host = std::env::var(HOST_ENV).ok().filter(|h| !h.is_empty());
-    // The git branch of the session's recorded working dir. The
-    // remote binary runs this same probe on the remote host, over
-    // the remote working dir.
-    let branch = session_workdir(Path::new(path)).and_then(|w| git_branch(&w));
+    // The session's recorded working dir. The git branch probe runs
+    // on it; the `rushi config` probe of the usage line runs in its
+    // project dir when the project flake's devShell carries the
+    // build (decision 88). The remote binary runs both probes on
+    // the remote host, over the remote working dir.
+    let workdir = session_workdir(Path::new(path));
+    let branch = workdir.as_ref().and_then(|w| git_branch(w));
     let card = render_card(
         status,
         name,
@@ -90,6 +93,7 @@ pub fn preview(
         &last_user,
         &last_assistant,
         &events,
+        workdir.as_deref(),
     );
 
     // Optional colorization through `bat` when it is available.
@@ -215,7 +219,9 @@ fn git_branch(dir: &Path) -> Option<String> {
 /// remote session, set by the local binary through `HOST_ENV`)
 /// renders a `host` key right under `repo`. `branch` (the git
 /// branch of the session's recorded working dir, or None) renders
-/// a `branch` key under the host line.
+/// a `branch` key under the host line. `workdir` (the recorded
+/// working dir, or None) is the project dir of the usage line's
+/// `rushi config` probe (decision 88).
 pub(crate) fn render_card(
     status: &str,
     name: &str,
@@ -229,6 +235,7 @@ pub(crate) fn render_card(
     last_user: &str,
     last_assistant: &str,
     events: &[Value],
+    workdir: Option<&Path>,
 ) -> String {
     let mut out: Vec<String> = Vec::new();
     out.push("[rushi-session]".into());
@@ -251,7 +258,7 @@ pub(crate) fn render_card(
         let used = in_tok.saturating_add(out_tok);
         out.push(format!(
             "usage   = {}",
-            json_str(&usage_line(used, context_window()))
+            json_str(&usage_line(used, context_window(workdir)))
         ));
     }
     out.push(String::new());
@@ -317,6 +324,7 @@ mod tests {
             "u",
             "a",
             EMPTY_EVENTS,
+            None,
         );
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
@@ -341,6 +349,7 @@ mod tests {
             "u",
             "a",
             EMPTY_EVENTS,
+            None,
         );
         assert!(!card.lines().any(|l| l.starts_with("host    = ")));
         // The repo line is followed straight by the status line.
@@ -402,6 +411,7 @@ mod tests {
             "u",
             "",
             &evts,
+            None,
         );
         let ts = card
             .lines()
@@ -438,6 +448,7 @@ mod tests {
             "u",
             "a",
             EMPTY_EVENTS,
+            None,
         );
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
@@ -462,6 +473,7 @@ mod tests {
             "u",
             "a",
             EMPTY_EVENTS,
+            None,
         );
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
@@ -492,6 +504,7 @@ mod tests {
             "u",
             "a",
             EMPTY_EVENTS,
+            None,
         );
         assert!(!card.lines().any(|l| l.starts_with("branch  = ")));
     }

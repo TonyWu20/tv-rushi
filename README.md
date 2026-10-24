@@ -51,11 +51,14 @@ action (enter) launches it from the session list.
 - `bat`, optional. The preview prints plain TOML without it.
 - `rushi` and `rushi-tui` on PATH, for the `send_message` and `open`
   actions. Nix builds and installs these with the `rushi` package.
-  When the session's project dir carries a flake whose devShell
-  ships the project's own build, the actions run it in that
-  devShell instead (`nix develop -c ...`, decision 87 in
-  `docs/decisions.md`); the devShell gates need `nix` on PATH, and
-  `RUSHI_SESSIONS_NIX_DEV=0` forces the PATH binaries.
+  When the session's project dir carries a `flake.nix` and `nix`
+  is on PATH, the actions run in that devShell instead
+  (`nix develop -c ...`, decisions 87/88 in `docs/decisions.md`);
+  the remote rows run the same check on the remote host, and the
+  `rewind`/`summarize` kernel bins and the preview card's
+  `rushi config` probe resolve the same way. The devShell shadows
+  the inherited PATH, so a binary the devShell does not ship falls
+  back to the inherited PATH entry.
 - `setsid` and `stty`, which `send_message` uses to detach the loop and
   to restore the terminal. Both ship in the standard Unix base.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`

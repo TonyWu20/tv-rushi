@@ -1203,14 +1203,15 @@ the rewritten gate.
 
 ## Decisions (user, 2026-10-24)
 
-65. The `open`/`open_v`/`send_message`/`new_session` actions
-resolve the project flake's devShell (decision 87,
-`docs/decisions.md`). When the session's project dir carries a
-flake whose devShell ships the project's own `rushi`/`rushi-tui`
-build, the actions run it in that devShell
-(`nix develop -c ...` from the project dir) instead of the global
-PATH binary. Four gates: the `RUSHI_SESSIONS_NIX_DEV=0` opt-out
-unset, `nix` on PATH, a `flake.nix` in the project dir, and the
-`nix develop --ignore-environment` probe of the binary. Every gate
-failure keeps the PATH behavior. Remote rows, `rewind`/`summarize`
-and the preview card's `rushi config` probe are out of scope.
+68. The devShell resolution of decision 87 (the `open`/`open_v`/
+`send_message`/`new_session` actions) is now the plain gate
+(decision 88, `docs/decisions.md`): the project dir carries a `flake.nix` and
+nix is on PATH. No env var, no `--ignore-environment` probe, no
+absolute nix path. The pane command and the detached step run a
+bare `nix develop -c <bin>` from the project dir; the devShell
+packages shadow the inherited PATH, and a binary the devShell does
+not ship falls back to the inherited PATH entry. The same gate
+extends to remote rows (one read-only `ssh -T` check on the
+remote host), the `rewind`/`summarize` kernel bins (`log`,
+`compact`), and the preview card's `rushi config` context-window
+probe.

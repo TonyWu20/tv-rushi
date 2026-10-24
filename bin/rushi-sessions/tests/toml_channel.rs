@@ -40,45 +40,62 @@ fn session_channel_toml_parses() {
     let cmdv = v["actions"]["open_v"]["command"].as_str().unwrap();
     assert!(cmdv.contains("split-window -v"), "open_v: {cmdv}");
 
-    // Decision 87: the devShell resolution. When the session's
-    // project dir carries a flake whose devShell ships the project's
-    // own `rushi-tui` build, the local branch runs the TUI in that
-    // devShell (`nix develop -c rushi-tui`). The gates: the
-    // RUSHI_SESSIONS_NIX_DEV=0 opt-out, `nix` on PATH, a flake.nix in
-    // the resolved project dir, and the `--ignore-environment` probe
-    // (an inherited PATH entry must not fake a hit). Every gate
-    // failure falls back to the PATH `rushi-tui` (the `tu` default).
+    // Decision 88: the plain devShell gate. When the session's
+    // project dir carries a flake.nix and nix is on PATH, the local
+    // branch runs the TUI as `nix develop -c rushi-tui`. The remote
+    // branch runs the same check over one read-only ssh -T call
+    // (the remote flake file plus `command -v nix`) and runs the
+    // remote TUI in the remote devShell. A failed gate keeps the
+    // PATH `rushi-tui` (the `tu`/`rt` defaults). No env-var
+    // opt-out, no probe, no absolute nix path: the plain
+    // `nix develop` inherits the environment, so a binary the
+    // devShell does not ship falls back to the inherited PATH
+    // entry.
     for a in ["open", "open_v"] {
         let c = v["actions"][a]["command"].as_str().unwrap();
+        // The local gate and launch.
         assert!(
-            c.contains("tu=rushi-tui"),
-            "{a} defaults to the PATH TUI: {c}"
+            c.contains(
+                "tu=rushi-tui; if [ -f \"$r/flake.nix\" ] && command -v nix >/dev/null 2>&1; then tu=\"nix develop -c rushi-tui\"; fi;"
+            ),
+            "{a} local gate: {c}"
         );
+        // The remote gate and launch (the decoded value carries the
+        // backslash quotes of the local shell line).
         assert!(
-            c.contains("[ \"$RUSHI_SESSIONS_NIX_DEV\" != \"0\" ]"),
-            "{a} honors the opt-out: {c}"
+            c.contains(
+                r#"rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui";"#
+            ),
+            "{a} remote gate: {c}"
         );
-        assert!(
-            c.contains("[ -f \"$r/flake.nix\" ]"),
-            "{a} gates on the project flake: {c}"
-        );
-        assert!(
-            c.contains("develop --ignore-environment"),
-            "{a} probes in an ignored environment: {c}"
-        );
-        // The fork fallback: plain quotes in the value.
+        // The fork fallback and the tmux pane command use the
+        // resolved local TUI command.
         assert!(
             c.contains("cd \"$r\" && $tu"),
             "{a} fork uses the resolved TUI command: {c}"
         );
-        // The tmux pane command: backslash-quote in the value.
         assert!(
             c.contains("cd \\\"$r\\\" && $tu"),
             "{a} pane uses the resolved TUI command: {c}"
         );
+        // The remote branch uses the resolved remote TUI command.
         assert!(
-            c.contains("tu=\"$nu develop -c rushi-tui\""),
-            "{a} runs the TUI in the devShell: {c}"
+            c.contains("cd $r && $rt"),
+            "{a} remote branch uses the resolved TUI command: {c}"
+        );
+        // The simplification is pinned: the pre-88 machinery is
+        // gone.
+        assert!(
+            !c.contains("RUSHI_SESSIONS_NIX_DEV"),
+            "{a}: the env-var opt-out is gone: {c}"
+        );
+        assert!(
+            !c.contains("--ignore-environment"),
+            "{a}: the probe is gone: {c}"
+        );
+        assert!(
+            !c.contains("nu="),
+            "{a}: the absolute nix path is gone: {c}"
         );
     }
 

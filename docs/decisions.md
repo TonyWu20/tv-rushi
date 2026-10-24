@@ -1,4 +1,59 @@
+## 88. The devShell gate is the plain `flake.nix` + nix-on-PATH check, and it extends to remote rows, the kernel bins, and `rushi config` (2026-10-24)
+
+The four-gate resolver of 87 was over-defensive. The opt-out env
+var is an ad-hoc escape hatch, the `--ignore-environment` probe
+adds a nix invocation to every action, and the absolute nix path
+baked into the pane command is a moving target (a store GC or a
+profile update invalidates it). All three are unnecessary: a plain
+`nix develop` inherits the environment, so the devShell packages
+shadow the inherited PATH, and a binary the devShell does not ship
+falls back to the inherited PATH entry. The fallback is the desired
+behavior, and it makes the probe and the opt-out pointless.
+
+Decision:
+
+- The gate is two cheap checks: `<project>/flake.nix` exists and
+  `nix` is on PATH. No env var, no probe, no absolute nix path.
+  The pane command and the detached step run a bare
+  `nix develop -c <bin>` from the project dir; nix resolves from
+  the same PATH the step already needs.
+- The `open`/`open_v` one-liner: `tu=rushi-tui; if [ -f
+  "$r/flake.nix" ] && command -v nix >/dev/null 2>&1; then
+  tu="nix develop -c rushi-tui"; fi`.
+- Remote rows get the same gate over one read-only `ssh -T`
+  call: `test -f "$r/flake.nix" && command -v nix` on the remote
+  host. The remote pane or fork ssh then runs
+  `cd $r && nix develop -c rushi-tui NAME` (the devShell of the
+  remote flake, when the remote project ships one). The binary
+  create/send step builds the same command for the remote detached
+  call.
+- `rewind`/`summarize`: the `log`/`compact` kernel bins of the
+  session's project dir launch as `nix develop -c <bin>` in that
+  dir when the gate holds (the launch dir is the flake dir);
+  otherwise the PATH sibling of the resolved `rushi`, the
+  pre-flake behavior.
+- The preview card's `rushi config` context-window probe: the
+  project dir of the session's recorded working dir carries a
+  flake and nix is on PATH: `nix develop -c rushi config` in that
+  dir, so the project's own config tier is probed. Otherwise the
+  PATH `rushi config`.
+
+Verification: the gate and the launch builders are unit-tested
+(the local gate, the remote gate command string, the remote run
+command with and without the devShell launch, the kernel launch
+argv, the `rushi config` probe command). The one-liners pass
+`sh -n` after extraction. The toml mirror of the open/open_v
+commands decodes to the nix content. A stub harness ran the
+deployed `open` one-liner against fake `nix`, `rushi-tui` and
+`ssh`: the local flake+nix row launched `nix develop -c rushi-tui`;
+the flake-less and the no-nix rows kept the plain PATH TUI; the
+remote flake+nix row opened the pane over `ssh -t` with
+`nix develop -c rushi-tui` on the remote host, and the remote
+flake-less row kept the plain remote TUI. `nix build` of the three
+channel derivations is clean.
+
 ## 87. The open/send/new_session actions resolve the project flake's devShell (2026-10-24)
+
 
 The `open`/`open_v` actions run `rushi-tui` from the session's
 project dir, and `send_message`/`new_session` run a detached
@@ -44,11 +99,10 @@ hit, the PATH fallback on every gate failure. On the real
 chemrust-hamiltonian project, `nix develop -c rushi --version`
 runs the devShell build.
 
-Out of scope: remote rows (the remote host's PATH semantics stay;
-the remote flake is not probed), the `rewind`/`summarize` kernel
-binaries (`log`, `compact`), and the preview card's `rushi config`
-context-window probe.
-
+Out of scope (as written): remote rows, the `rewind`/`summarize`
+kernel binaries (`log`, `compact`), and the preview card's `rushi
+config` context-window probe. Decision 88 extends the devShell to
+all three and replaces the four-gate resolver with the plain gate.
 ## 86. The preview card shows the working dir's git branch (2026-10-24)
 
 The `[rushi-session]` table of the preview card gains a `branch`

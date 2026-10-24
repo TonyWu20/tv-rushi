@@ -13,11 +13,13 @@
 //!   in-process in the fork's pane.
 //!
 //! The create/send step resolves its `rushi` binary on the PATH.
-//! When the session's project dir carries a flake whose devShell
-//! ships the project's own `rushi` build (the customized prompt and
-//! hooks), the step runs in that devShell instead:
+//! When the session's project dir carries a `flake.nix` and nix
+//! is on PATH, the step runs in that devShell instead:
 //! `nix develop -c rushi run ...` from the project dir (decision
-//! 87). `RUSHI_SESSIONS_NIX_DEV=0` forces the PATH binary.
+//! 87/88). The remote rows run the same check on the remote
+//! host. The devShell shadows the inherited PATH, so a binary the
+//! devShell does not ship falls back to the inherited PATH
+//! entry.
 //!
 //! Stage 2 receives its inputs from a JSON args file (the pane
 //! command is one path, so no value ever crosses a shell). The
@@ -229,7 +231,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         let w = cfg.w.clone().unwrap_or_default();
         let sent = if host.is_some() {
             let m64 = b64_encode(m.as_bytes());
-            let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None);
+            let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None, cfg.nix_dev);
             detached(&cfg.ssh, &cfg.detach, &["-T", host.unwrap(), &cmd])
         } else {
             // The `--` escape keeps a hyphen-leading message (a
@@ -272,7 +274,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
             } else {
                 None
             };
-            let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r));
+            let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r), cfg.nix_dev);
             let ok = detached(&cfg.ssh, &cfg.detach, &["-T", host, &cmd]);
             if !ok {
                 eprintln!("rushi-sessions: nothing created for {n} on {host} (the remote call did not start).");
@@ -321,9 +323,24 @@ pub(crate) fn remote_run_command(
     target: &str,
     msg64: Option<&str>,
     sessions_root: Option<&str>,
+    nix_dev: bool,
 ) -> String {
     let mut parts = vec![format!("cd {}", remote_quote(workdir))];
-    let mut run = vec!["rushi".to_string(), "run".to_string()];
+    // The devShell launch (decision 88) runs the `rushi` of the
+    // remote project flake: the plain `nix develop` inherits the
+    // remote environment, so a devShell without the binary keeps
+    // the remote PATH one.
+    let mut run: Vec<String> = if nix_dev {
+        vec![
+            "nix".into(),
+            "develop".into(),
+            "-c".into(),
+            "rushi".into(),
+            "run".into(),
+        ]
+    } else {
+        vec!["rushi".into(), "run".into()]
+    };
     run.push(remote_quote(target));
     if let Some(b) = msg64 {
         // The `--` escape keeps a hyphen-leading message (a bullet
@@ -350,6 +367,23 @@ pub(crate) fn remote_run_command(
 /// Quote one word for a remote shell (single quotes).
 pub(crate) fn remote_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The remote devShell gate (decision 88): the remote project dir
+/// carries a flake and `nix` is reachable by the non-interactive
+/// ssh of the remote host. A `nix` the remote PATH lacks (a Nix
+/// profile is not on the non-interactive PATH) keeps the plain
+/// remote PATH command.
+pub(crate) fn remote_nix_dev(host: &str, dir: &str) -> bool {
+    remote_stdout(host, &remote_nix_dev_command(dir)) == "yes"
+}
+
+/// The gate command string (one read-only ssh -T call).
+pub(crate) fn remote_nix_dev_command(dir: &str) -> String {
+    format!(
+        "if [ -f {} ] && command -v nix >/dev/null 2>&1; then echo yes; fi",
+        remote_quote(&format!("{}/flake.nix", dir))
+    )
 }
 
 /// Run `detach cmd args...` detached (new session when setsid is
@@ -422,67 +456,31 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// The nix devShell resolution of the create/send step (decision 87):
-/// true when the session's project dir carries a flake whose
-/// devShell ships the project's `rushi` build (the customized prompt
-/// and hooks), so the step runs inside that devShell and the project
-/// build wins over the PATH `rushi`. Every gate is cheap; the probe
-/// is the only nix call. A failed gate keeps the PATH binary, the
-/// pre-flake behavior.
+/// The nix devShell resolution (decision 87/88): true when the
+/// session's project dir carries a flake and `nix` is on PATH. The
+/// step then runs as `nix develop -c <binary>` from that dir. The
+/// plain `nix develop` inherits the environment, so the devShell
+/// packages shadow the inherited PATH, and a binary the devShell
+/// does not ship falls back to the inherited PATH entry naturally.
+/// A failed gate keeps the plain PATH binary, the pre-flake
+/// behavior.
 pub(crate) fn nix_dev_dir(dir: &str) -> bool {
-    if dir.is_empty() || nix_dev_opted_out() {
+    if dir.is_empty() {
         return false;
     }
     if !Path::new(dir).join("flake.nix").is_file() {
         return false;
     }
-    if which("nix").is_none() {
-        return false;
-    }
-    if !nix_dev_probe(dir, "rushi") {
-        eprintln!(
-            "rushi-sessions: the flake at {dir} does not ship `rushi` in its devShell; using the PATH `rushi`."
-        );
-        return false;
-    }
-    true
-}
-
-/// The opt-out: `RUSHI_SESSIONS_NIX_DEV=0` keeps the PATH `rushi`
-/// even when the project flake ships its own build.
-fn nix_dev_opted_out() -> bool {
-    matches!(std::env::var("RUSHI_SESSIONS_NIX_DEV").as_deref(), Ok("0"))
-}
-
-/// Probe: does the flake's devShell provide `bin`? The probe runs in
-/// an ignored environment, so a resolved binary is a devShell one,
-/// not an inherited PATH entry. A flake without a devShell (or one
-/// whose devShell lacks the binary) fails the probe. The probe
-/// output is swallowed; only the exit status matters.
-fn nix_dev_probe(dir: &str, bin: &str) -> bool {
-    let mut c = Command::new("nix");
-    c.arg("develop")
-        .arg("--ignore-environment")
-        .arg("-c")
-        .arg("sh")
-        .arg("-c")
-        .arg(format!("command -v {bin}"));
-    c.current_dir(dir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    match c.status() {
-        Ok(s) => s.success(),
-        Err(_) => false,
-    }
+    which("nix").is_some()
 }
 
 /// The step's argv after the detach tool: the PATH `rushi` binary,
 /// or the nix devShell launch when `nix_dev` is set. The launch
 /// resolves the flake from the step's working dir (the project dir,
-/// the flake dir). The args after the tail cross into the step
-/// verbatim; the message-mode `--` escape survives the nix arg
-/// pass.
+/// the flake dir). The devShell packages shadow the inherited
+/// PATH, so a devShell without the binary keeps the inherited one.
+/// The args after the tail cross into the step verbatim; the
+/// message-mode `--` escape survives the nix arg pass.
 pub(crate) fn rushi_run_tail(cfg: &PromptCfg) -> Vec<String> {
     if cfg.nix_dev {
         vec![
@@ -687,20 +685,21 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     } else {
         None
     };
-    // The nix devShell resolution (decision 87): the create/send
-    // step runs in the project flake's devShell when it ships its
-    // own `rushi` build. Local rows only; a remote row keeps the
-    // remote host's PATH `rushi` (the remote flake is out of scope).
-    // The dir is the recorded working dir (message) or the project
-    // root (new): the flake dir of the project.
-    let nix_dev = if host.is_some() {
-        false
-    } else {
-        match (kind, w.as_deref(), r_root.as_deref()) {
-            ("message", Some(d), _) if !d.is_empty() => nix_dev_dir(d),
-            ("new", _, Some(d)) if !d.is_empty() => nix_dev_dir(d),
-            _ => false,
-        }
+    // The nix devShell resolution (decision 87/88): the create/send
+    // step runs in the project flake's devShell. The dir is the
+    // recorded working dir (message) or the project root (new): the
+    // flake dir of the project. A remote row checks the gate on the
+    // remote host (the remote flake); a local row checks the local
+    // dir.
+    let nix_dir = match (kind, w.as_deref(), r_root.as_deref()) {
+        ("message", Some(d), _) if !d.is_empty() => Some(d),
+        ("new", _, Some(d)) if !d.is_empty() => Some(d),
+        _ => None,
+    };
+    let nix_dev = match (host.as_deref(), nix_dir.as_deref()) {
+        (Some(h), Some(d)) => remote_nix_dev(h, d),
+        (None, Some(d)) => nix_dev_dir(d),
+        _ => false,
     };
     let prompt_dir = match kind {
         "message" if host.is_none() => w.as_deref(),
@@ -955,10 +954,32 @@ mod tests {
 
     #[test]
     fn remote_command_shape() {
-        let c = remote_run_command("/w/with space", "my session", Some("QQ=="), Some("/r"));
+        let c = remote_run_command(
+            "/w/with space",
+            "my session",
+            Some("QQ=="),
+            Some("/r"),
+            false,
+        );
         assert_eq!(c, "cd '/w/with space' && rushi run 'my session' \"$(printf %s QQ== | base64 -d)\" --sessions-root '/r'");
-        let c2 = remote_run_command("/w", "s", None, None);
+        let c2 = remote_run_command("/w", "s", None, None, false);
         assert_eq!(c2, "cd '/w' && rushi run 's'");
+    }
+
+    /// The devShell launch of the remote row (decision 88): the
+    /// same command with the `nix develop -c` prefix.
+    #[test]
+    fn remote_command_nix_dev_shape() {
+        let c = remote_run_command(
+            "/w/with space",
+            "my session",
+            Some("QQ=="),
+            Some("/r"),
+            true,
+        );
+        assert_eq!(c, "cd '/w/with space' && nix develop -c rushi run 'my session' \"$(printf %s QQ== | base64 -d)\" --sessions-root '/r'");
+        let c2 = remote_run_command("/w", "s", None, None, true);
+        assert_eq!(c2, "cd '/w' && nix develop -c rushi run 's'");
     }
 
     /// Message mode (no --sessions-root) escapes the task with
@@ -966,11 +987,49 @@ mod tests {
     /// positional on kernels without allow_hyphen_values.
     #[test]
     fn remote_command_message_mode_escapes_the_task() {
-        let c = remote_run_command("/w", "s", Some("QQ=="), None);
+        let c = remote_run_command("/w", "s", Some("QQ=="), None, false);
         assert_eq!(
             c,
             "cd '/w' && rushi run 's' -- \"$(printf %s QQ== | base64 -d)\""
         );
+    }
+
+    /// The remote gate command (decision 88): one read-only ssh -T
+    /// call; `yes` only when the remote dir carries a flake and nix
+    /// is on the remote non-interactive PATH.
+    #[test]
+    fn remote_nix_dev_command_shape() {
+        let c = remote_nix_dev_command("/r/prj");
+        assert_eq!(
+            c,
+            "if [ -f '/r/prj/flake.nix' ] && command -v nix >/dev/null 2>&1; then echo yes; fi"
+        );
+    }
+
+    /// The local gate: an empty dir and a flake-less dir stay on
+    /// the PATH binary. The flake-present arm also needs nix on
+    /// PATH, so it is asserted against the host's own gate state.
+    #[test]
+    fn nix_dir_gates() {
+        let base = std::env::temp_dir().join(format!("rsrs-nixdev-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+
+        // No flake.nix: the gate stops at the file check.
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(!nix_dev_dir(bare.to_str().unwrap()));
+
+        // An empty dir (the resolution-failure shape) resolves to
+        // the PATH binary.
+        assert!(!nix_dev_dir(""));
+
+        // The flake-present arm: true only when nix is on the
+        // host's PATH (the gate's last check).
+        let flake = base.join("flake");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        let dir = flake.to_str().unwrap().to_string();
+        assert_eq!(nix_dev_dir(&dir), which("nix").is_some());
     }
 
     /// A cfg fixture for the args-file and tail tests.
@@ -1034,38 +1093,6 @@ mod tests {
             !back2.nix_dev,
             "the default args file carries nix_dev false"
         );
-    }
-
-    #[test]
-    fn nix_dir_gates() {
-        let base = std::env::temp_dir().join(format!("rsrs-nixdev-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&base);
-
-        // The opt-out short-circuits before any gate, with a
-        // flake.nix present in the dir.
-        let flake = base.join("flake");
-        std::fs::create_dir_all(&flake).unwrap();
-        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
-        let dir = flake.to_str().unwrap().to_string();
-        std::env::set_var("RUSHI_SESSIONS_NIX_DEV", "0");
-        assert!(!nix_dev_dir(&dir));
-        std::env::remove_var("RUSHI_SESSIONS_NIX_DEV");
-
-        // No flake.nix: the gate stops before the nix probe.
-        let bare = base.join("bare");
-        std::fs::create_dir_all(&bare).unwrap();
-        assert!(!nix_dev_dir(bare.to_str().unwrap()));
-
-        // An empty dir (the resolution-failure shape) resolves to
-        // the PATH binary.
-        assert!(!nix_dev_dir(""));
-    }
-
-    #[test]
-    fn nix_probe_gone_dir_fails() {
-        // A chdir to a gone dir fails the spawn, so the probe is a
-        // failure and the PATH binary wins.
-        assert!(!nix_dev_probe("/no/such/rushi-sessions-dir", "rushi"));
     }
 
     #[test]

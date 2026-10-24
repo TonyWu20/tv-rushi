@@ -142,20 +142,26 @@ enum Command {
     },
     /// Open the new-session prompt: the editor on a temp file, then
     /// the create step (a detached `rushi run`). When the project
-    /// flake ships its own `rushi` build in its devShell, the step
-    /// runs in that devShell (`nix develop -c rushi run`, decision
-    /// 87); else the PATH `rushi`. When tv runs inside tmux 3.8+,
-    /// the prompt opens in a floating pane over tv.
+    /// dir carries a `flake.nix` and nix is on PATH, the step runs
+    /// in that devShell (`nix develop -c rushi run`, decision
+    /// 87/88); remote rows run the same check on the remote host.
+    /// The devShell shadows the inherited PATH, so a binary the
+    /// devShell does not ship falls back to the PATH `rushi`. When
+    /// tv runs inside tmux 3.8+, the prompt opens in a floating
+    /// pane over tv.
     NewSession {
         /// The session row: the path, or host:path for a remote row.
         row: String,
     },
     /// Open the send-message prompt: the editor on a temp file, then
     /// the send step (a detached `rushi run`). When the project
-    /// flake ships its own `rushi` build in its devShell, the step
-    /// runs in that devShell (`nix develop -c rushi run`, decision
-    /// 87); else the PATH `rushi`. With `--events` the session dir
-    /// is the channel CWD; else it is the row.
+    /// dir carries a `flake.nix` and nix is on PATH, the step runs
+    /// in that devShell (`nix develop -c rushi run`, decision
+    /// 87/88); remote rows run the same check on the remote host.
+    /// The devShell shadows the inherited PATH, so a binary the
+    /// devShell does not ship falls back to the PATH `rushi`. With
+    /// `--events` the session dir is the channel CWD; else it is
+    /// the row.
     SendMessage {
         /// The session row: the path, or host:path for a remote row.
         row: Option<String>,
