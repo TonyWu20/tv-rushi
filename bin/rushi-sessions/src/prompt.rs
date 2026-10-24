@@ -12,6 +12,13 @@
 //!   the tmux server's PATH is irrelevant); in fallback mode it runs
 //!   in-process in the fork's pane.
 //!
+//! The create/send step resolves its `rushi` binary on the PATH.
+//! When the session's project dir carries a flake whose devShell
+//! ships the project's own `rushi` build (the customized prompt and
+//! hooks), the step runs in that devShell instead:
+//! `nix develop -c rushi run ...` from the project dir (decision
+//! 87). `RUSHI_SESSIONS_NIX_DEV=0` forces the PATH binary.
+//!
 //! Stage 2 receives its inputs from a JSON args file (the pane
 //! command is one path, so no value ever crosses a shell). The
 //! args file is deleted after the read.
@@ -46,6 +53,10 @@ pub(crate) struct PromptCfg {
     pub ssh: String,
     /// The detach tool: "setsid" or "nohup".
     pub detach: String,
+    /// True when the create/send step runs in the project flake's
+    /// devShell (`nix develop -c rushi run ...`), not the PATH
+    /// `rushi` (decision 87).
+    pub nix_dev: bool,
     /// True when stage 2 runs as the floating pane's command.
     pub pane: bool,
 }
@@ -70,6 +81,7 @@ impl PromptCfg {
             ("rushi".into(), j(&self.rushi)),
             ("ssh".into(), j(&self.ssh)),
             ("detach".into(), j(&self.detach)),
+            ("nix_dev".into(), j(&self.nix_dev.to_string())),
         ]));
         let text = serde_json::to_string(&v).map_err(|e| e.to_string())?;
         std::fs::write(&p, text).map_err(|e| e.to_string())?;
@@ -109,6 +121,7 @@ impl PromptCfg {
             rushi: g("rushi"),
             ssh: g("ssh"),
             detach: g("detach"),
+            nix_dev: g("nix_dev") == "true",
             pane: true,
         };
         let _ = std::fs::remove_file(p);
@@ -363,10 +376,14 @@ fn detached(tool: &str, detach: &str, args: &[&str]) -> bool {
 }
 
 /// The detached local `rushi run` from the working dir.
-/// Returns whether the spawn succeeded.
+/// Returns whether the spawn succeeded. The step's argv after the
+/// detach tool is the PATH `rushi` binary, or the nix devShell
+/// launch when the project flake ships its own build (decision 87).
 fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) -> bool {
     let mut c = Command::new(&cfg.detach);
-    c.arg(&cfg.rushi).arg("run");
+    for t in rushi_run_tail(cfg) {
+        c.arg(&t);
+    }
     for a in args {
         c.arg(a);
     }
@@ -377,7 +394,7 @@ fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) -> bool {
     match c.spawn() {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("rushi-sessions: cannot start {}: {e}", cfg.rushi);
+            eprintln!("rushi-sessions: cannot start {}: {e}", rushi_run_label(cfg));
             false
         }
     }
@@ -403,6 +420,91 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
         }
     }
     None
+}
+
+/// The nix devShell resolution of the create/send step (decision 87):
+/// true when the session's project dir carries a flake whose
+/// devShell ships the project's `rushi` build (the customized prompt
+/// and hooks), so the step runs inside that devShell and the project
+/// build wins over the PATH `rushi`. Every gate is cheap; the probe
+/// is the only nix call. A failed gate keeps the PATH binary, the
+/// pre-flake behavior.
+pub(crate) fn nix_dev_dir(dir: &str) -> bool {
+    if dir.is_empty() || nix_dev_opted_out() {
+        return false;
+    }
+    if !Path::new(dir).join("flake.nix").is_file() {
+        return false;
+    }
+    if which("nix").is_none() {
+        return false;
+    }
+    if !nix_dev_probe(dir, "rushi") {
+        eprintln!(
+            "rushi-sessions: the flake at {dir} does not ship `rushi` in its devShell; using the PATH `rushi`."
+        );
+        return false;
+    }
+    true
+}
+
+/// The opt-out: `RUSHI_SESSIONS_NIX_DEV=0` keeps the PATH `rushi`
+/// even when the project flake ships its own build.
+fn nix_dev_opted_out() -> bool {
+    matches!(std::env::var("RUSHI_SESSIONS_NIX_DEV").as_deref(), Ok("0"))
+}
+
+/// Probe: does the flake's devShell provide `bin`? The probe runs in
+/// an ignored environment, so a resolved binary is a devShell one,
+/// not an inherited PATH entry. A flake without a devShell (or one
+/// whose devShell lacks the binary) fails the probe. The probe
+/// output is swallowed; only the exit status matters.
+fn nix_dev_probe(dir: &str, bin: &str) -> bool {
+    let mut c = Command::new("nix");
+    c.arg("develop")
+        .arg("--ignore-environment")
+        .arg("-c")
+        .arg("sh")
+        .arg("-c")
+        .arg(format!("command -v {bin}"));
+    c.current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    match c.status() {
+        Ok(s) => s.success(),
+        Err(_) => false,
+    }
+}
+
+/// The step's argv after the detach tool: the PATH `rushi` binary,
+/// or the nix devShell launch when `nix_dev` is set. The launch
+/// resolves the flake from the step's working dir (the project dir,
+/// the flake dir). The args after the tail cross into the step
+/// verbatim; the message-mode `--` escape survives the nix arg
+/// pass.
+pub(crate) fn rushi_run_tail(cfg: &PromptCfg) -> Vec<String> {
+    if cfg.nix_dev {
+        vec![
+            "nix".to_string(),
+            "develop".to_string(),
+            "-c".to_string(),
+            "rushi".to_string(),
+            "run".to_string(),
+        ]
+    } else {
+        vec![cfg.rushi.clone(), "run".to_string()]
+    }
+}
+
+/// The step label of the spawn-failure report: the `rushi` path, or
+/// the nix launch when `nix_dev` is set.
+pub(crate) fn rushi_run_label(cfg: &PromptCfg) -> String {
+    if cfg.nix_dev {
+        "the nix devShell launch".to_string()
+    } else {
+        cfg.rushi.clone()
+    }
 }
 
 /// The prompt-file dir: $TMPDIR, else /tmp.
@@ -585,6 +687,21 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     } else {
         None
     };
+    // The nix devShell resolution (decision 87): the create/send
+    // step runs in the project flake's devShell when it ships its
+    // own `rushi` build. Local rows only; a remote row keeps the
+    // remote host's PATH `rushi` (the remote flake is out of scope).
+    // The dir is the recorded working dir (message) or the project
+    // root (new): the flake dir of the project.
+    let nix_dev = if host.is_some() {
+        false
+    } else {
+        match (kind, w.as_deref(), r_root.as_deref()) {
+            ("message", Some(d), _) if !d.is_empty() => nix_dev_dir(d),
+            ("new", _, Some(d)) if !d.is_empty() => nix_dev_dir(d),
+            _ => false,
+        }
+    };
     let prompt_dir = match kind {
         "message" if host.is_none() => w.as_deref(),
         "new" if host.is_none() => r_root.as_deref(),
@@ -632,6 +749,7 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         rushi,
         ssh,
         detach: detach.to_string(),
+        nix_dev,
         pane: false,
     };
     let floating = tmux_floating_ok();
@@ -855,6 +973,101 @@ mod tests {
         );
     }
 
+    /// A cfg fixture for the args-file and tail tests.
+    fn cfg_fixture(nix_dev: bool) -> PromptCfg {
+        PromptCfg {
+            kind: "message",
+            rp: "/w/sessions/s".to_string(),
+            host: None,
+            w: Some("/w".to_string()),
+            r_root: None,
+            file: "/w/f.md".to_string(),
+            editor: "nvim".to_string(),
+            hint: None,
+            rushi: "/store/bin/rushi".to_string(),
+            ssh: "ssh".to_string(),
+            detach: "setsid".to_string(),
+            nix_dev,
+            pane: false,
+        }
+    }
+
+    #[test]
+    fn rushi_run_tail_modes() {
+        let cfg = cfg_fixture(false);
+        assert_eq!(
+            rushi_run_tail(&cfg),
+            vec!["/store/bin/rushi".to_string(), "run".to_string()]
+        );
+        let mut cfg2 = cfg_fixture(true);
+        assert_eq!(
+            rushi_run_tail(&cfg2),
+            vec![
+                "nix".to_string(),
+                "develop".to_string(),
+                "-c".to_string(),
+                "rushi".to_string(),
+                "run".to_string()
+            ]
+        );
+        assert_eq!(rushi_run_label(&cfg2), "the nix devShell launch");
+        cfg2.nix_dev = false;
+        assert_eq!(rushi_run_label(&cfg2), "/store/bin/rushi");
+    }
+
+    #[test]
+    fn args_file_round_trip_nix_dev() {
+        let cfg = cfg_fixture(true);
+        let p = cfg.to_args_file().unwrap();
+        let back = PromptCfg::from_args_file(&p).unwrap();
+        assert!(back.nix_dev, "nix_dev survives the args file");
+        assert_eq!(back.rushi, "/store/bin/rushi");
+        assert!(
+            !std::path::Path::new(&p).is_file(),
+            "the args file is deleted on read"
+        );
+
+        let cfg2 = cfg_fixture(false);
+        let p2 = cfg2.to_args_file().unwrap();
+        let back2 = PromptCfg::from_args_file(&p2).unwrap();
+        assert!(
+            !back2.nix_dev,
+            "the default args file carries nix_dev false"
+        );
+    }
+
+    #[test]
+    fn nix_dir_gates() {
+        let base = std::env::temp_dir().join(format!("rsrs-nixdev-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+
+        // The opt-out short-circuits before any gate, with a
+        // flake.nix present in the dir.
+        let flake = base.join("flake");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        let dir = flake.to_str().unwrap().to_string();
+        std::env::set_var("RUSHI_SESSIONS_NIX_DEV", "0");
+        assert!(!nix_dev_dir(&dir));
+        std::env::remove_var("RUSHI_SESSIONS_NIX_DEV");
+
+        // No flake.nix: the gate stops before the nix probe.
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(!nix_dev_dir(bare.to_str().unwrap()));
+
+        // An empty dir (the resolution-failure shape) resolves to
+        // the PATH binary.
+        assert!(!nix_dev_dir(""));
+    }
+
+    #[test]
+    fn nix_probe_gone_dir_fails() {
+        // A chdir to a gone dir fails the spawn, so the probe is a
+        // failure and the PATH binary wins.
+        assert!(!nix_dev_probe("/no/such/rushi-sessions-dir", "rushi"));
+    }
+
     #[test]
     fn blank_check() {
         assert!(is_blank(" \t\n\r"));
@@ -880,6 +1093,7 @@ mod roundtrip_tests {
             rushi: "rushi".into(),
             ssh: "ssh".into(),
             detach: "setsid".into(),
+            nix_dev: false,
             pane: true,
         };
         let p = cfg.to_args_file().unwrap();

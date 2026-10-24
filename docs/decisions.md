@@ -1,3 +1,54 @@
+## 87. The open/send/new_session actions resolve the project flake's devShell (2026-10-24)
+
+The `open`/`open_v` actions run `rushi-tui` from the session's
+project dir, and `send_message`/`new_session` run a detached
+`rushi run` in the same dir. Both resolved the binary on the global
+PATH, so a project's own `rushi` build (the customized system
+prompt, the project hooks, the pinned kernel/TUI pair) was ignored:
+the session was always directed by the global binary. A project like
+chemrust-hamiltonian ships its configured build in its flake
+devShell (`rushi` + `rushi-tui` + `rushi-goal` in one package).
+
+Decision:
+
+- Local rows only. When the session's project dir carries a flake
+  whose devShell ships the binary, the action runs it in that
+  devShell: `open`/`open_v` run `nix develop -c rushi-tui NAME`
+  from the project dir; `send_message`/`new_session` run a detached
+  `setsid nix develop -c rushi run ...` there.
+- Four gates, all of which must hold; any failure keeps the
+  pre-change PATH behavior: (1) `RUSHI_SESSIONS_NIX_DEV` is not
+  `0`; (2) `nix` is on PATH; (3) `<project>/flake.nix` exists;
+  (4) the probe `nix develop --ignore-environment -c sh -c
+  "command -v <bin>"` in the project dir exits 0. The ignored
+  environment keeps an inherited PATH entry from faking a hit: a
+  flake without the binary in its devShell fails the probe.
+- The probe runs once, at action start: the shell one-liner runs
+  it in the fork before the split; the binary runs it in stage 1
+  before the editor opens. The later `nix develop` of the step is
+  fast after the probe warmed the store.
+- The absolute nix path (resolved in the fork) is baked into the
+  pane command, so a tmux server whose own PATH lacks nix still
+  launches the step; the TUI itself resolves from the devShell
+  PATH. `nix develop` passes its args verbatim, so the
+  message-mode `--` escape and `--sessions-root` survive.
+- The open/open_v logic lives in the channel one-liner (the
+  `tu`/`nu` variables); the send/create logic lives in the binary
+  (`nix_dev` on the prompt args, `rushi_run_tail`).
+
+Verification: 128 tests green (the new tail/gate/probe/args-file
+unit tests plus the `toml_channel` pins of the one-liner gates).
+A stub harness ran the committed `open` one-liner against a fake
+`nix` and `rushi-tui`: the devShell launch on the flake+devShell
+hit, the PATH fallback on every gate failure. On the real
+chemrust-hamiltonian project, `nix develop -c rushi --version`
+runs the devShell build.
+
+Out of scope: remote rows (the remote host's PATH semantics stay;
+the remote flake is not probed), the `rewind`/`summarize` kernel
+binaries (`log`, `compact`), and the preview card's `rushi config`
+context-window probe.
+
 ## 86. The preview card shows the working dir's git branch (2026-10-24)
 
 The `[rushi-session]` table of the preview card gains a `branch`

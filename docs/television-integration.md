@@ -1200,3 +1200,17 @@ the selected session `events.jsonl`. No hostname error and no token
 fragment in the pane output. The flake `rushi-sessions-channel` and
 `rushi-sessions-events-channel` derivations build clean. `sh -n` accepts
 the rewritten gate.
+
+## Decisions (user, 2026-10-24)
+
+65. The `open`/`open_v`/`send_message`/`new_session` actions
+resolve the project flake's devShell (decision 87,
+`docs/decisions.md`). When the session's project dir carries a
+flake whose devShell ships the project's own `rushi`/`rushi-tui`
+build, the actions run it in that devShell
+(`nix develop -c ...` from the project dir) instead of the global
+PATH binary. Four gates: the `RUSHI_SESSIONS_NIX_DEV=0` opt-out
+unset, `nix` on PATH, a `flake.nix` in the project dir, and the
+`nix develop --ignore-environment` probe of the binary. Every gate
+failure keeps the PATH behavior. Remote rows, `rewind`/`summarize`
+and the preview card's `rushi config` probe are out of scope.

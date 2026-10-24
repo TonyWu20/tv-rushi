@@ -141,15 +141,21 @@ enum Command {
         chat: bool,
     },
     /// Open the new-session prompt: the editor on a temp file, then
-    /// the create step (a detached `rushi run`). When tv runs inside
-    /// tmux 3.8+, the prompt opens in a floating pane over tv.
+    /// the create step (a detached `rushi run`). When the project
+    /// flake ships its own `rushi` build in its devShell, the step
+    /// runs in that devShell (`nix develop -c rushi run`, decision
+    /// 87); else the PATH `rushi`. When tv runs inside tmux 3.8+,
+    /// the prompt opens in a floating pane over tv.
     NewSession {
         /// The session row: the path, or host:path for a remote row.
         row: String,
     },
     /// Open the send-message prompt: the editor on a temp file, then
-    /// the send step (a detached `rushi run`). With `--events` the
-    /// session dir is the channel CWD; else it is the row.
+    /// the send step (a detached `rushi run`). When the project
+    /// flake ships its own `rushi` build in its devShell, the step
+    /// runs in that devShell (`nix develop -c rushi run`, decision
+    /// 87); else the PATH `rushi`. With `--events` the session dir
+    /// is the channel CWD; else it is the row.
     SendMessage {
         /// The session row: the path, or host:path for a remote row.
         row: Option<String>,

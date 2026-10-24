@@ -90,7 +90,11 @@ in
     # not listed as core requirements: `rushi` for send_message and
     # new_session (0.1.1+ for the --sessions-root flag), `rushi-tui`
     # for open/open_v, and `tmux` for open, open_v, open_dir_tmux_h
-    # and open_dir_tmux_v. The send_message and new_session prompts run
+    # and open_dir_tmux_v. When the session's project dir carries a
+    # flake whose devShell ships the project's own build, the open
+    # actions run `rushi-tui` in that devShell and the send/create
+    # actions run `rushi run` in it (decision 87); the devShell
+    # gates additionally need `nix` on PATH, optional. The send_message and new_session prompts run
     # in the rushi-sessions binary: `mktemp` for the prompt file,
     # $EDITOR (fallback `nvim`), `stty` on the fork-fallback path, and
     # `setsid` for the detached loop start (the `nohup` fallback when
@@ -206,15 +210,31 @@ in
     # fork runs the ssh command directly. The remote host needs
     # `rushi-tui` reachable by a non-interactive ssh.
     #
+    # The devShell resolution (decision 87): when the session's
+    # project dir carries a flake whose devShell ships the project's
+    # own `rushi-tui` build (the customized prompt and hooks), the
+    # local branch runs the TUI in that devShell instead of on the
+    # PATH. The local branch probes the resolved project dir: a
+    # `flake.nix` file plus one `nix develop --ignore-environment`
+    # probe (the ignored environment keeps an inherited PATH entry
+    # from faking a hit). The absolute nix path is baked into the
+    # pane command, so a tmux server whose own PATH lacks nix still
+    # runs the probe and the launch; the TUI itself resolves from
+    # the devShell PATH. Every gate failure (no flake, no nix, a
+    # devShell without the binary, or RUSHI_SESSIONS_NIX_DEV=0)
+    # falls back to the PATH `rushi-tui`, the pre-flake behavior.
+    # The probe runs in the fork before the split; the pane's own
+    # `nix develop` is fast after the probe warmed the store.
+    #
     # The shell body stays brace-free: television's string pipeline
     # treats a stray {group} as a template token and then leaves the
     # split placeholder unsubstituted. That is why the check reads
     # plain $TMUX instead of ${TMUX:-}.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
+    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the session's project dir carries a flake whose devShell ships the project's own `rushi-tui` build, the local rows run the TUI in that devShell (decision 87); every gate failure falls back to the PATH `rushi-tui`.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && rushi-tui \"$n\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; fi; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; tu=rushi-tui; nu=$(command -v nix 2>/dev/null); if [ "$RUSHI_SESSIONS_NIX_DEV" != "0" ] && [ -n "$nu" ] && [ -f "$r/flake.nix" ] && (cd "$r" && "$nu" develop --ignore-environment -c sh -c "command -v rushi-tui" >/dev/null 2>&1); then tu="$nu develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$n\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && $tu \"$n\""; fi; else cd "$r" && $tu "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -223,12 +243,14 @@ in
     # to its right. tmux's flags are easy to mix up: -v puts the new
     # pane below the target pane (a horizontal divider). The
     # remote-row behavior is the same ssh -t local pane, with the -v
-    # split.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane below the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t.";
+    # split. The devShell resolution (decision 87) is the same as
+    # open: the TUI runs in the project flake's devShell when that
+    # devShell ships the project's own `rushi-tui`.
+    description = "Open this session in rushi-tui. Inside tmux, a new pane below the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the session's project dir carries a flake whose devShell ships the project's own `rushi-tui` build, the local rows run the TUI in that devShell (decision 87); every gate failure falls back to the PATH `rushi-tui`.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && rushi-tui \"$n\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && rushi-tui \"$n\""; fi; else cd "$r" && rushi-tui "$n"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && rushi-tui \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && rushi-tui \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; tu=rushi-tui; nu=$(command -v nix 2>/dev/null); if [ "$RUSHI_SESSIONS_NIX_DEV" != "0" ] && [ -n "$nu" ] && [ -f "$r/flake.nix" ] && (cd "$r" && "$nu" develop --ignore-environment -c sh -c "command -v rushi-tui" >/dev/null 2>&1); then tu="$nu develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$n\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && $tu \"$n\""; fi; else cd "$r" && $tu "$n"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -322,7 +344,10 @@ in
 # the session with one detached `rushi run <session> <msg>` call, run in
 # the session's recorded working dir. The kernel branches on the session
 # lock itself: a live loop drains the appended message, an idle session
-# starts the loop.
+# starts the loop. When the project dir carries a flake whose devShell
+# ships the project's own `rushi` build, the detached call runs in that
+# devShell (decision 87): `nix develop -c rushi run ...` instead of the
+# PATH `rushi`.
 #
 # The action logic runs in the rushi-sessions binary. Stage 1 runs in
 # the television fork: it resolves the row, the host prefix, the
@@ -440,7 +465,7 @@ in
 # message passes as a base64 blob.
     # Single-line form: the repo TOML holds a single-line basic string,
     # whose value carries no trailing newline.
-    description = "Create a new session next to the selected entry. The action opens $EDITOR (fallback nvim) on a temp file: line 1 is the session name, the rest is the message. The file starts with a hint line; the hint text is stripped from line 1, so the name may sit before, after, or instead of the hint. The session lands in the entry's project dir: dirname(dirname(session dir)), sessions root <project>/sessions. It runs `rushi run NAME MSG --sessions-root <project>/sessions` from that project dir, detached (setsid or the nohup fallback, stdio to /dev/null). An empty message creates the session idle. An empty or unusable name (line 1 empty after the hint is stripped, or it holds /, . or ..) cancels. Remote rows (host: prefix) prompt locally and create the session over ssh. When tv runs inside tmux 3.8+, the editor and the create step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the entry's project dir, so typed relative paths complete against it. The action logic runs in the rushi-sessions binary: the pane's command is the binary itself, so no shell quoting crosses the tmux boundary.";
+    description = "Create a new session next to the selected entry. The action opens $EDITOR (fallback nvim) on a temp file: line 1 is the session name, the rest is the message. The file starts with a hint line; the hint text is stripped from line 1, so the name may sit before, after, or instead of the hint. The session lands in the entry's project dir: dirname(dirname(session dir)), sessions root <project>/sessions. It runs `rushi run NAME MSG --sessions-root <project>/sessions` from that project dir, detached (setsid or the nohup fallback, stdio to /dev/null). When the project dir carries a flake whose devShell ships the project's own `rushi` build, the detached call runs in that devShell (`nix develop -c rushi run ...`, decision 87); the PATH `rushi` is the fallback. An empty message creates the session idle. An empty or unusable name (line 1 empty after the hint is stripped, or it holds /, . or ..) cancels. Remote rows (host: prefix) prompt locally and create the session over ssh. When tv runs inside tmux 3.8+, the editor and the create step run in a floating pane (`tmux new-pane -f`) above tv: the pane closes when the step exits, and the panes below keep rendering. Copy-mode and window switching stay available while the pane is open. Outside tmux, or on tmux below 3.8, the editor opens in the fork's pane as before. The prompt file carries a .md extension, so $EDITOR applies the markdown filetype. The editor opens in the entry's project dir, so typed relative paths complete against it. The action logic runs in the rushi-sessions binary: the pane's command is the binary itself, so no shell quoting crosses the tmux boundary.";
     shell = "bash";
     mode = "fork";
         command = "rushi-sessions new-session '{split:	:6}'";

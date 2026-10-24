@@ -40,6 +40,48 @@ fn session_channel_toml_parses() {
     let cmdv = v["actions"]["open_v"]["command"].as_str().unwrap();
     assert!(cmdv.contains("split-window -v"), "open_v: {cmdv}");
 
+    // Decision 87: the devShell resolution. When the session's
+    // project dir carries a flake whose devShell ships the project's
+    // own `rushi-tui` build, the local branch runs the TUI in that
+    // devShell (`nix develop -c rushi-tui`). The gates: the
+    // RUSHI_SESSIONS_NIX_DEV=0 opt-out, `nix` on PATH, a flake.nix in
+    // the resolved project dir, and the `--ignore-environment` probe
+    // (an inherited PATH entry must not fake a hit). Every gate
+    // failure falls back to the PATH `rushi-tui` (the `tu` default).
+    for a in ["open", "open_v"] {
+        let c = v["actions"][a]["command"].as_str().unwrap();
+        assert!(
+            c.contains("tu=rushi-tui"),
+            "{a} defaults to the PATH TUI: {c}"
+        );
+        assert!(
+            c.contains("[ \"$RUSHI_SESSIONS_NIX_DEV\" != \"0\" ]"),
+            "{a} honors the opt-out: {c}"
+        );
+        assert!(
+            c.contains("[ -f \"$r/flake.nix\" ]"),
+            "{a} gates on the project flake: {c}"
+        );
+        assert!(
+            c.contains("develop --ignore-environment"),
+            "{a} probes in an ignored environment: {c}"
+        );
+        // The fork fallback: plain quotes in the value.
+        assert!(
+            c.contains("cd \"$r\" && $tu"),
+            "{a} fork uses the resolved TUI command: {c}"
+        );
+        // The tmux pane command: backslash-quote in the value.
+        assert!(
+            c.contains("cd \\\"$r\\\" && $tu"),
+            "{a} pane uses the resolved TUI command: {c}"
+        );
+        assert!(
+            c.contains("tu=\"$nu develop -c rushi-tui\""),
+            "{a} runs the TUI in the devShell: {c}"
+        );
+    }
+
     // Decision 52: the project dir comes from the session's recorded
     // `cwd` file (walked up to the nearest `sessions` ancestor), not
     // from the session path. The dirname fallback stays for a missing
