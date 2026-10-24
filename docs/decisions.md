@@ -1,3 +1,58 @@
+## 89. The preview devShell probe caches the binary's store path by generation (2026-10-24)
+
+The 88 extension made the preview card's `rushi config`
+context-window probe run `nix develop -c rushi config` in the
+session's project dir. `nix develop` is heavy: a cold start is
+about 18s, a warm run about 0.9s, and the devShell environment
+cache cools back to about 18s within ~20s of idle. television
+re-fetches the preview on redraw and select, so nearly every
+fetch re-paid a cooled `nix develop` and froze the panel for
+about 18-20s. That is the preview hang.
+
+The devShell's binaries are content-addressed store paths that
+change only when the project flake changes. Instead of re-running
+the probe on every call, the binary's store path is resolved once
+per devShell generation, cached with a generation fingerprint,
+and exec'd directly on later calls. The heavy materialize runs
+only when the generation is out of date.
+
+Decision (new `devshell` module, decision 88 gate unchanged):
+
+- `devshell::resolve(dir, bin)` returns the store path of `bin`
+  in `dir`'s devShell. A fresh cache entry is returned without
+  touching nix; otherwise the path is materialized once and
+  cached. There is no env var: the mechanism is the cache plus a
+  bounded materialize, nothing else to flip.
+- Materialize: `nix develop -c bash -c 'command -v <bin>'` in
+  the project dir, bounded by a 60s wall-clock cap so a heavy
+  flake build cannot block the caller. The printed path is the
+  devShell's content-addressed `bin/<bin>`.
+- Cache file: `$XDG_CACHE_HOME` (else `~/.cache`, else the temp
+  dir) under `rushi-sessions/devshell/<hash(project)>/<bin>`:
+  `{ path, gen, ts }`.
+- Generation fingerprint: the `flake.nix` and `flake.lock` mtimes
+  plus the host arch. A flake edit re-materializes immediately.
+- The entry is fresh when the generation matches, the stored path
+  still exists in the store, and it is younger than a 30m TTL.
+  The TTL bounds staleness of the context-window value, which
+  also tracks the project config and model that can change
+  without touching the flake files.
+- `usage::context_window`: the gated dir resolves the devShell
+  `rushi` and execs `<path> config` directly, then parses the
+  context window. A resolve that fails falls back to the PATH
+  `rushi config` (the pre-88 probe).
+
+Verification: the devShell module is unit-tested (the hash, the
+freshness check across generation and TTL, the materialize argv,
+the bounded timeout, a fresh cache entry served without nix).
+The probe routing gate is unit-tested. Against the repro session
+in a flake project, a cold fetch materialized in ~0.9s (warm
+nix; ~18s on a cold store, one-time) and filled the cache, and
+every later fetch exec'd the cached store path in ~33ms with no
+nix call. The card's usage line read the project's own 262144
+context window, confirming the devShell `rushi` is probed. 137
+tests green; `nix build` of the three channel derivations clean.
+
 ## 88. The devShell gate is the plain `flake.nix` + nix-on-PATH check, and it extends to remote rows, the kernel bins, and `rushi config` (2026-10-24)
 
 The four-gate resolver of 87 was over-defensive. The opt-out env

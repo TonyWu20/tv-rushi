@@ -78,6 +78,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod branch;
+mod devshell;
 mod doc;
 mod events;
 mod format;

@@ -58,7 +58,10 @@ action (enter) launches it from the session list.
   `rewind`/`summarize` kernel bins and the preview card's
   `rushi config` probe resolve the same way. The devShell shadows
   the inherited PATH, so a binary the devShell does not ship falls
-  back to the inherited PATH entry.
+  back to the inherited PATH entry. The preview's `rushi config`
+  probe resolves the devShell `rushi` store path once per flake
+  generation and execs it directly (decision 89), so a repeated
+  preview fetch does not re-run the heavy `nix develop`.
 - `setsid` and `stty`, which `send_message` uses to detach the loop and
   to restore the terminal. Both ship in the standard Unix base.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`

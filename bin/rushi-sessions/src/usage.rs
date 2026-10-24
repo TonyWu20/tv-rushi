@@ -38,10 +38,17 @@ pub(crate) fn usage_line(used: u64, window: Option<u64>) -> String {
 /// The context window in tokens. Resolution order: the
 /// `RUSHI_CONTEXT_WINDOW` env var (a positive integer), then the
 /// `rushi config` of the session's project. The project dir carries
-/// a flake and `nix` is on PATH: the devShell launch (decision 88),
-/// so the project's own config tier is probed. Otherwise the `rushi`
-/// on PATH. The probe reads the active model's `context_tokens`,
-/// then `limits.context_budget_tokens`. None when nothing resolves.
+/// a flake and `nix` is on PATH: the project's own devShell `rushi`
+/// is probed (decision 88); otherwise the `rushi` on PATH. The
+/// probe reads the active model's `context_tokens`, then
+/// `limits.context_budget_tokens`. None when nothing resolves.
+///
+/// The devShell binary is a content-addressed store path that
+/// changes only when the flake changes (decision 89). It is
+/// resolved once, cached with a generation fingerprint, and exec'd
+/// directly on later calls, so a repeated preview never re-runs the
+/// heavy `nix develop` probe. A probe that cannot resolve the
+/// devShell binary falls back to the PATH `rushi config`.
 pub(crate) fn context_window(dir: Option<&std::path::Path>) -> Option<u64> {
     if let Ok(v) = std::env::var("RUSHI_CONTEXT_WINDOW") {
         if let Ok(n) = v.trim().parse::<u64>() {
@@ -50,43 +57,51 @@ pub(crate) fn context_window(dir: Option<&std::path::Path>) -> Option<u64> {
             }
         }
     }
-    let (argv, cwd) = context_window_cmd(dir);
-    let mut c = std::process::Command::new(&argv[0]);
-    for a in &argv[1..] {
-        c.arg(a);
+    match dir {
+        Some(d) if crate::prompt::nix_dev_dir(&d.to_string_lossy()) => {
+            devshell_context_window(d).or_else(path_context_window)
+        }
+        _ => path_context_window(),
     }
-    if let Some(d) = &cwd {
-        c.current_dir(d);
-    }
-    let out = c.stderr(std::process::Stdio::null()).output().ok()?;
+}
+
+/// The fast `rushi config` probe on PATH (the pre-88 path).
+fn path_context_window() -> Option<u64> {
+    let out = std::process::Command::new("rushi")
+        .arg("config")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
     context_window_from_config(&String::from_utf8_lossy(&out.stdout))
 }
 
-/// The `rushi config` invocation (decision 88): the devShell launch
-/// when the session's project dir carries a flake and `nix` is on
-/// PATH (the devShell packages shadow the inherited PATH, and a
-/// binary the devShell does not ship falls back to the inherited
-/// entry), else the PATH `rushi`.
-fn context_window_cmd(dir: Option<&std::path::Path>) -> (Vec<String>, Option<String>) {
-    if let Some(d) = dir {
-        if crate::prompt::nix_dev_dir(&d.to_string_lossy()) {
-            return (
-                vec![
-                    "nix".to_string(),
-                    "develop".to_string(),
-                    "-c".to_string(),
-                    "rushi".to_string(),
-                    "config".to_string(),
-                ],
-                Some(d.to_string_lossy().into_owned()),
-            );
-        }
-    }
-    (vec!["rushi".to_string(), "config".to_string()], None)
+/// The devShell probe (decision 89): run the project's own `rushi`
+/// and read its config. The binary's store path is resolved once per
+/// devShell generation and cached by `devshell::resolve`, so a
+/// repeated preview execs the cached path directly instead of
+/// re-running the heavy `nix develop` probe. None when the devShell
+/// binary does not resolve; the caller falls back to the PATH probe.
+fn devshell_context_window(dir: &std::path::Path) -> Option<u64> {
+    let bin = crate::devshell::resolve(dir, "rushi")?;
+    run_config(&bin)
 }
+
+/// Run `<bin> config` and parse the context window.
+fn run_config(bin: &std::path::Path) -> Option<u64> {
+    let out = std::process::Command::new(bin)
+        .arg("config")
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    context_window_from_config(&String::from_utf8_lossy(&out.stdout))
+}
+
 /// The context window in tokens parsed from `rushi config` output:
 /// `[model."<active>"] context_tokens`, then the base `[model]`
 /// `context_tokens`, then `limits.context_budget_tokens`.
@@ -171,49 +186,26 @@ context_budget_tokens = 333
         assert_eq!(context_window_from_config(text), Some(222));
     }
 
-    /// The `rushi config` invocation of the usage line (decision
-    /// 88): the devShell launch when the session's project dir
-    /// carries a flake and nix is on PATH, else the PATH probe.
+    /// Probe routing (decision 89): a session project dir that
+    /// carries a flake routes to the devShell probe only when nix
+    /// is on PATH (the gate), so the project's own `rushi` is
+    /// probed. A flake-less dir routes to the PATH `rushi config`.
     #[test]
-    fn config_probe_cmd_selection() {
-        // No dir (no recorded working dir): the PATH probe.
-        let (argv, cwd) = context_window_cmd(None);
-        assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
-        assert!(cwd.is_none());
-
-        let base = std::env::temp_dir().join(format!("rsrs-cfgprobe-{}", std::process::id()));
+    fn probe_routing_gate() {
+        let base = std::env::temp_dir().join(format!("rsrs-probe-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&base);
 
-        // A flake-less dir: the PATH probe.
         let bare = base.join("bare");
         std::fs::create_dir_all(&bare).unwrap();
-        let (argv, cwd) = context_window_cmd(Some(bare.as_path()));
-        assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
-        assert!(cwd.is_none());
+        assert!(!crate::prompt::nix_dev_dir(&bare.to_string_lossy()));
 
-        // The flake dir: the devShell launch when the host has nix
-        // (the gate's last check), the PATH probe otherwise.
         let flake = base.join("flake");
         std::fs::create_dir_all(&flake).unwrap();
         std::fs::write(flake.join("flake.nix"), "{}").unwrap();
-        let f = flake.to_str().unwrap().to_string();
-        let (argv, cwd) = context_window_cmd(Some(flake.as_path()));
-        if crate::prompt::nix_dev_dir(&f) {
-            assert_eq!(
-                argv,
-                vec![
-                    "nix".to_string(),
-                    "develop".to_string(),
-                    "-c".to_string(),
-                    "rushi".to_string(),
-                    "config".to_string(),
-                ]
-            );
-            assert_eq!(cwd, Some(f));
-        } else {
-            assert_eq!(argv, vec!["rushi".to_string(), "config".to_string()]);
-            assert!(cwd.is_none());
-        }
+        // The flake dir routes to the devShell probe only when nix
+        // is available (the gate's last check).
+        let has_nix = crate::prompt::which("nix").is_some();
+        assert_eq!(crate::prompt::nix_dev_dir(&flake.to_string_lossy()), has_nix);
     }
 
     #[test]
