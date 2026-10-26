@@ -408,18 +408,22 @@ Decisions (user, 2026-10-04):
     entry and runs the plain `events` command. Television runs
     the first command on startup and cycles the rest on Ctrl+S.
   - The `branch_view` action (alt-b) of the events channel
-    re-opens the channel on the picked row's parent branch. The
-    fork builds a temp cable dir (a copy of the channel file
-    with the two source commands patched to `rushi-sessions
-    events --branch SEQ --chat` and `--branch SEQ`) and runs
-    the nested tv from it (`tv --cable-dir`), in a floating
-    pane over the tv window (the tmux 3.8+ tier; the
-    split-pane fallback on older tmux), or in the fork's pane
-    outside tmux. The patch keeps both focused source views, so
-    Ctrl+S still cycles them. The nested view keeps the
-    channel's display template, preview and actions; ctrl-r
-    re-sources it, and esc or ctrl-c closes it (the pane shell
-    deletes the temp cable dir) and restores this view.
+    re-opens the picked row's parent branch in a nested tv: the
+    `rushi-sessions-events-branch` sibling channel, focused on
+    the picked seq. The fork hands the seq over as the
+    `RUSHI_BRANCH_SEQ` env var (`env RUSHI_BRANCH_SEQ=SEQ tv
+    rushi-sessions-events-branch`, in a floating pane over the
+    tv window on tmux 3.8+, the split-pane fallback on older
+    tmux, or the fork's pane outside tmux). The branch channel's
+    two source views expand the env var at run time (`sh -c
+    'rushi-sessions events --branch "$RUSHI_BRANCH_SEQ"
+    [--chat]'`), so both focused views and the Ctrl+S cycle
+    stay in the nested view. The nested view keeps the channel's
+    display template, preview and actions; ctrl-r re-sources
+    it, and esc or ctrl-c closes it (the pane dies with it)
+    and restores this view. The action guards for the branch
+    channel's file in the cable dir and aborts with a message
+    when it is missing.
   - The events channel preview renders the selected entry as a
     document. `user_message`, `assistant_message` and
     `compaction_summary` render as markdown; `tool_call`,
@@ -1254,16 +1258,36 @@ probe.
     match the newest-first order. `rushi-sessions events` takes a
     new `--branch SEQ` flag: SEQ is the cutoff, the picked block
     the focus of a focused view; an out-of-range focus exits 1
-    with a message. The `branch_view` action forks the channel
-    again: it builds a temp cable dir with this channel's two
-    source commands patched to that flag (with and without
-    `--chat`), and runs the nested tv from it (`tv --cable-dir`).
-    Both focused source views keep the Ctrl+S cycle, and the
-    channel's preview, refresh and the
+    with a message. The `branch_view` action (revised the same
+    day) forks the dedicated `rushi-sessions-events-branch`
+    sibling channel instead of patching a temp cable dir: the
+    fork hands the picked seq over as the `RUSHI_BRANCH_SEQ`
+    env var, and the branch channel's two source views expand
+    the variable at run time (`sh -c 'rushi-sessions events
+    --branch "$RUSHI_BRANCH_SEQ" [--chat]'`). Both focused
+    source views keep the Ctrl+S cycle, and the channel's
+    preview, refresh and the
     rewind/summarize/send_message actions work in the nested
     view. Inside tmux the nested tv runs in a floating pane
     over the tv window (`tmux new-pane -f`, the tmux 3.8+
     tier; the split-pane fallback on older tmux), outside tmux
-    in the fork's pane. The pane shell deletes the temp cable
-    dir when the nested tv exits; closing the pane restores the
-    original view with no layout change.
+    in the fork's pane. The pane dies when the nested tv exits;
+    closing it restores the original view with no layout
+    change.
+70. The open* actions land in the recorded working dir, and the
+    TUI gets the absolute session dir (decision 93 in
+    `docs/decisions.md`; supersedes the item 52 walk-up wording).
+    The `open`, `open_v`, `open_dir`, `open_dir_tmux_h` and
+    `open_dir_tmux_v` actions no longer walk the recorded `cwd` up
+    to the nearest `sessions` ancestor. They use the `cwd` value
+    as-is, with the `dirname(dirname(session_dir))` path rule as
+    the fallback for a missing or stale `cwd` file. A git worktree
+    without a `sessions` symlink keeps the session dir in the main
+    worktree's tree while the session works in the worktree; the
+    actions now land in the worktree. `open` and `open_v` hand the
+    TUI the absolute session dir (`rushi-tui SESSION_DIR`), not a
+    bare name: the TUI uses an explicit session dir as-is, so the
+    pane or fork need not start in a dir that holds a relative
+    `sessions` tree. The remote tiers pass the remote session dir
+    the same way, and the remote working dir keeps the one
+    read-only `ssh -T` read of the remote `cwd` file.

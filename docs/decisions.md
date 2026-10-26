@@ -104,6 +104,27 @@ User+Assistant and All views. The patched temp cable dir
 above restores both focused views; the pane shell's cleanup
 of the temp dir came with it.
 
+Design revision (same day, same entry): the user judged the
+patched temp cable dir overcomplicating. The nested tv now
+runs a dedicated sibling channel:
+`rushi-sessions-events-branch`. The home-manager module
+registers it next to the events channel, and the flake
+builds its data file. Its two source views expand the
+picked seq at run time. The branch_view body hands the seq
+over as the `RUSHI_BRANCH_SEQ` env var. The channel's
+source commands run `sh -c 'rushi-sessions events
+--branch "$RUSHI_BRANCH_SEQ" [--chat]'`. The static channel
+keeps both focused views and the ctrl-s cycle without a
+temp dir, a sed patch or cleanup. The body guards for the
+channel's file in the cable dir and aborts with a message
+when it is missing. A manual launch without the env var
+fails at the binary level (an empty seq is out of range).
+
+Verified live in tmux 3.8: the floating pane opened the
+branch channel. The focused view showed the `(Folded N)`
+and branch annotations. The ctrl-s cycled both views, and
+closing the nested tv restored the original view.
+
 ## 92. The log-appender name tracks the kernel's 58 rename: `rushi-log`, legacy `log` (2026-10-26)
 
 The kernel's 58 (closes 57) renames the log-appender binary from
