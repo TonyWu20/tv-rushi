@@ -24,8 +24,11 @@
       #     = inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-channel;
       #   home.file.".config/television/cable/rushi-sessions-events.toml".source
       #     = inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-events-channel;
+      #   home.file.".config/television/cable/rushi-sessions-events-branch.toml".source
+      #     = inputs.tv-rushi.packages."x86_64-linux".rushi-sessions-events-branch-channel;
       toml = pkgLib.readFile ./rushi-sessions.toml;
       eventsToml = pkgLib.readFile ./rushi-sessions-events.toml;
+      eventsBranchToml = pkgLib.readFile ./rushi-sessions-events-branch.toml;
 
       perSystem = system:
         let
@@ -39,11 +42,13 @@
             "rustc"
           ];
 
-          # The two data files, the manual install path into the cable
-          # dir.
+          # The three data files, the manual install path into the
+          # cable dir.
           channelFile = pkgs.writeText "rushi-sessions-television-channel" toml;
           eventsChannelFile =
             pkgs.writeText "rushi-sessions-events-television-channel" eventsToml;
+          eventsBranchChannelFile =
+            pkgs.writeText "rushi-sessions-events-branch-television-channel" eventsBranchToml;
 
           # The `rushi-sessions` backend binary. The source honors
           # .gitignore (sessions/ and target/ stay out of the store).
@@ -72,6 +77,7 @@
         {
           rushi-sessions-channel = channelFile;
           rushi-sessions-events-channel = eventsChannelFile;
+          rushi-sessions-events-branch-channel = eventsBranchChannelFile;
           default = channelFile;
           # The backend binary. The home-manager module (below) adds it to
           # home.packages.

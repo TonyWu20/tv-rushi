@@ -310,40 +310,43 @@ fn events_channel_toml_parses() {
         "ctrl-y binds yank_entry"
     );
 
-    // The branch_view action (alt-b): re-open the channel on the
-    // picked row's parent branch. The fork patches a temp cable
-    // dir: it copies the channel file, rewrites the two source
-    // commands to the binary's `--branch` focus flag
-    // (`rushi-sessions events --branch $s`, with and without
-    // `--chat`), and runs `tv --cable-dir`. Both focused source
-    // views (the Ctrl+S User+Assistant and All cycle) stay, and
-    // so do the display template, preview and actions. The nested
-    // tv runs in a floating pane (`tmux new-pane -f`, the tmux
-    // 3.8+ tier); the split-pane form stays as the fallback tier
-    // for older tmux.
+    // The branch_view action (alt-b): re-open the picked row's
+    // parent branch in a nested tv: the branch sibling channel
+    // (rushi-sessions-events-branch) focused on the picked seq.
+    // The pane command hands the seq to the nested tv as the
+    // RUSHI_BRANCH_SEQ env var, which the branch channel's two
+    // source views expand, so both focused views (the Ctrl+S
+    // User+Assistant and All cycle) stay, and so do the display
+    // template, preview and actions. The nested tv runs in a
+    // floating pane (`tmux new-pane -f`, the tmux 3.8+ tier);
+    // the split-pane form stays as the fallback tier for older
+    // tmux. The action guards for the branch channel's file in
+    // the cable dir.
     let bv = v["actions"]["branch_view"].clone();
     let bc = bv["command"].as_str().unwrap();
     assert!(
-        bc.contains("--cable-dir"),
-        "the nested tv loads the temp cable dir: {bc}"
+        bc.contains("RUSHI_BRANCH_SEQ"),
+        "the picked seq is the RUSHI_BRANCH_SEQ env var: {bc}"
     );
     assert!(
-        bc.contains("rushi-sessions events --branch"),
-        "the binary focus flag: {bc}"
+        bc.contains("tv rushi-sessions-events-branch"),
+        "the nested tv loads the branch channel: {bc}"
     );
     assert!(
-        bc.contains("--branch $s --chat"),
-        "the focused chat view keeps the flag: {bc}"
+        bc.contains("rushi-sessions-events-branch.toml"),
+        "the guard checks the branch channel file in the cable dir: {bc}"
     );
     assert!(
-        bc.contains("rushi-sessions-events.toml"),
-        "the channel file lands in the temp cable dir: {bc}"
-    );
-    assert!(
-        bc.contains("mktemp -d"),
-        "the temp cable dir: {bc}"
+        bc.contains("env \"RUSHI_BRANCH_SEQ=$s\" tv"),
+        "the pane command sets the env var for tv: {bc}"
     );
     assert!(bc.contains("'{split:\t:0}'"), "seq token: {bc}");
+    // No temp cable dir: the branch channel is a static sibling,
+    // so the body carries no mktemp, no sed, no --cable-dir and
+    // no rm -rf.
+    assert!(!bc.contains("mktemp"), "no temp cable dir: {bc}");
+    assert!(!bc.contains("--cable-dir"), "no temp cable dir: {bc}");
+    assert!(!bc.contains("rm -rf"), "no temp dir cleanup: {bc}");
     // The pane lookup keeps the browse_events control-char -F
     // format (the pane id and floating flag assembled without
     // braces, so television's template pipeline sees no stray
@@ -354,8 +357,7 @@ fn events_channel_toml_parses() {
     );
     // The floating-pane tier (tmux 3.8+): the nested tv runs in
     // a `new-pane -f` pane over the tv window, sized and
-    // labeled; the split-pane fallback stays behind it. The pane
-    // shell deletes the temp cable dir after the nested tv exits.
+    // labeled; the split-pane fallback stays behind it.
     assert!(
         bc.contains("new-pane -f"),
         "the floating pane (tmux 3.8+ tier): {bc}"
@@ -363,10 +365,6 @@ fn events_channel_toml_parses() {
     assert!(
         bc.contains("tmux split-window"),
         "the split-pane fallback tier: {bc}"
-    );
-    assert!(
-        bc.contains("rm -rf"),
-        "the pane shell deletes the temp cable dir: {bc}"
     );
     assert_eq!(
         bc.matches('{').count(),
@@ -386,5 +384,85 @@ fn events_channel_toml_parses() {
         v["keybindings"]["alt-b"].as_str().unwrap(),
         "actions:branch_view",
         "alt-b binds branch_view"
+    );
+}
+
+#[test]
+fn events_branch_channel_toml_parses() {
+    let text = fs::read_to_string(repo().join("rushi-sessions-events-branch.toml")).unwrap();
+    let v: toml::Value = toml::from_str(&text).expect("rushi-sessions-events-branch.toml must parse");
+    assert_eq!(
+        v["metadata"]["name"].as_str().unwrap(),
+        "rushi-sessions-events-branch",
+        "the branch channel name"
+    );
+    // The branch channel is the events channel with its two
+    // source views focused: both run the binary with the
+    // `--branch` flag, and the picked seq arrives as the
+    // RUSHI_BRANCH_SEQ env var (set by the launching branch_view
+    // action), expanded by the sh -c wrapper at run time.
+    let cmds = v["source"]["command"].as_array().unwrap();
+    assert_eq!(cmds.len(), 2, "the two source views");
+    assert_eq!(
+        cmds[0]["name"].as_str().unwrap(),
+        "User+Assistant",
+        "the default view"
+    );
+    assert_eq!(cmds[1]["name"].as_str().unwrap(), "All", "the all view");
+    let run0 = cmds[0]["run"].as_str().unwrap();
+    let run1 = cmds[1]["run"].as_str().unwrap();
+    for (name, run) in [("User+Assistant", run0), ("All", run1)] {
+        assert!(
+            run.contains("\"$RUSHI_BRANCH_SEQ\""),
+            "the env var focus flag ({name}): {run}"
+        );
+        assert!(
+            run.starts_with("sh -c "),
+            "the sh -c wrapper expands the env var ({name}): {run}"
+        );
+    }
+    assert!(
+        run0.contains("--chat"),
+        "the focused chat view keeps the flag: {run0}"
+    );
+    assert!(
+        !run1.contains("--chat"),
+        "the All view lists every entry: {run1}"
+    );
+    // Everything else mirrors the events channel: the display
+    // template, the seven actions, the alt-b branch_view
+    // binding.
+    assert!(
+        v["source"]["display"].as_str().unwrap().contains("split:\t:4"),
+        "the display template stays"
+    );
+    assert_eq!(
+        v["actions"].as_table().unwrap().len(),
+        7,
+        "the same seven actions"
+    );
+    assert_eq!(
+        v["keybindings"]["alt-b"].as_str().unwrap(),
+        "actions:branch_view",
+        "alt-b binds branch_view"
+    );
+    // The branch_view body is byte-equal to the events
+    // channel's: the nested view re-opens the same channel on a
+    // deeper parent branch.
+    let events_text = fs::read_to_string(repo().join("rushi-sessions-events.toml")).unwrap();
+    let ev: toml::Value = toml::from_str(&events_text).unwrap();
+    let bc = v["actions"]["branch_view"]["command"].as_str().unwrap();
+    assert!(
+        bc.contains("RUSHI_BRANCH_SEQ") && bc.contains("tv rushi-sessions-events-branch"),
+        "the nested launch sets the env var: {bc}"
+    );
+    assert!(
+        !bc.contains("mktemp") && !bc.contains("--cable-dir") && !bc.contains("rm -rf"),
+        "no temp cable dir: {bc}"
+    );
+    assert_eq!(
+        ev["actions"]["branch_view"]["command"].as_str().unwrap(),
+        bc,
+        "the branch_view body matches the events channel"
     );
 }

@@ -17,8 +17,12 @@
 #   - declares `programs."rushi-sessions".sourceRoots` (a list of paths,
 #     default empty). Local and remote roots mix in the same list.
 #   - registers the rushi-sessions-events channel (the fuzzy search
-#     over one session's events.jsonl) and the `eventPreviewer` /
-#     `eventTomlPreviewer` options that pick its preview renderers.
+#     over one session's events.jsonl) and its branch sibling
+#     rushi-sessions-events-branch (the same channel focused on the
+#     picked seq, the RUSHI_BRANCH_SEQ env var), plus the
+#     `eventPreviewer` /
+#     `eventTomlPreviewer` options that pick their preview
+#     renderers.
 #     The `eventViewer` / `eventTomlViewer` options pick the
 #     viewers of its `view_message` action (bound to enter):
 #     markdown entries go to `eventViewer`, toml entries go to
@@ -105,6 +109,18 @@ in
     # action.
     programs.television.channels."rushi-sessions-events" =
       (import ./rushi-sessions-events-channel.nix) {
+        eventPreviewer = cfg.eventPreviewer;
+        eventTomlPreviewer = cfg.eventTomlPreviewer;
+        eventViewer = cfg.eventViewer;
+        eventTomlViewer = cfg.eventTomlViewer;
+      };
+    # The branch sibling of the events channel: the same channel
+    # focused on the picked seq, which the events channel's
+    # branch_view action (alt-b) launches with the seq as the
+    # RUSHI_BRANCH_SEQ env var. The renderer and viewer options
+    # feed it the same way.
+    programs.television.channels."rushi-sessions-events-branch" =
+      (import ./rushi-sessions-events-branch-channel.nix) {
         eventPreviewer = cfg.eventPreviewer;
         eventTomlPreviewer = cfg.eventTomlPreviewer;
         eventViewer = cfg.eventViewer;

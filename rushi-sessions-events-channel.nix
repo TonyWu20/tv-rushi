@@ -97,29 +97,28 @@
 # command, toml to the `eventTomlViewer` command. The body takes
 # the seq through one split placeholder (`{split:\t:0}`).
 #
-# `branch_view` (bound to alt-b) re-opens the channel on the parent
-# branch of the picked row. The fork runs `tv rushi-sessions-events`
-# with a temp cable dir: a copy of this channel file whose source
-# commands are patched to `rushi-sessions events --branch SEQ` (and
-# the same with `--chat`), the binary's `--branch` flag taking the
-# pick as the focus. The patch keeps both source views, so Ctrl+S
-# cycles the focused User+Assistant view and the focused All view.
-# The listing folds every span outside the focus into the
-# annotations of the row that owns it. The nested tv keeps this
-# channel's display template, preview, keybindings and actions, and
-# Ctrl-R re-sources the view. Closing it (esc or ctrl-c) restores
-# this view. The pane shell deletes the temp cable dir when the
-# nested tv exits. When tv runs inside tmux, the nested tv runs in
-# a floating pane over the tv window (`tmux new-pane -f`, the
+# `branch_view` (bound to alt-b) re-opens the parent branch of the
+# picked row in a nested tv: the rushi-sessions-events-branch
+# channel, focused on the picked seq. The pane command hands the
+# seq to the nested tv as the RUSHI_BRANCH_SEQ env var, which the
+# branch channel's two source views expand: both views and the
+# Ctrl+S cycle stay in the nested view. The listing keeps the
+# picked block and the trunk up to its branch point, and folds
+# every span outside the focus into the annotations of the row
+# that owns it. The nested tv keeps this channel's display
+# template, preview, keybindings and actions, and Ctrl-R
+# re-sources the view. Closing it (esc or ctrl-c) restores this
+# view. When tv runs inside tmux, the nested tv runs in a
+# floating pane over the tv window (`tmux new-pane -f`, the
 # tmux 3.8+ tier; the pane lookup keeps the control-char `-F`
 # format of the main channel's browse_events): centered, 62%
 # width and 90% height, labeled `rushi branch view`. The pane
 # dies when the nested tv exits, restoring this view without a
 # layout change. When the floating pane is unavailable (older
 # tmux), the split below the newest pane is used; outside tmux,
-# the nested tv runs in the fork's pane. When the channel's CWD
-# is gone, or the channel file is missing, the action aborts with
-# a message instead of opening a tv on a dead dir.
+# the nested tv runs in the fork's pane. The action guards for
+# the channel's CWD and for the branch channel's file in the
+# cable dir; a missing channel file aborts with a message.
 #
 # `yank_entry` (bound to ctrl-y) copies the full document of the
 # selected entry to the clipboard. It keeps the newlines, which
@@ -311,52 +310,45 @@ in
   };
 
   actions.branch_view = {
-    # Open the picked entry's parent branch in a nested tv. The
-    # nested tv's source command is the `branch` view of the
-    # picked seq, via television's --source-command override: the
-    # channel's display template, preview and actions stay, so
-    # ctrl-r refresh and the rewind, summarize and send_message
-    # actions work in the nested view. When tv runs inside tmux,
-    # the nested tv runs in a floating pane over the tv window
-    # (tmux new-pane -f, the tmux 3.8+ tier; the pane lookup
-    # keeps the control-char -F format of the main channel's
-    # browse_events): centered, 62% width and 90% height,
-    # labeled `rushi branch view`. The pane dies when the nested
-    # tv exits, restoring this view without a layout change.
-    # When the floating pane is unavailable (older tmux), the
-    # split below the newest pane of browse_events is used;
-    # outside tmux it runs in the fork's pane. The source rows
-    # carry the seq token, so the command takes one split
-    # placeholder. The action needs `tv` on PATH, resolved like
-    # the main channel's browse_events.
+    # Open the picked entry's parent branch in a nested tv: the
+    # branch channel (rushi-sessions-events-branch) focused on the
+    # picked seq. The pane command hands the seq to the nested tv
+    # as the RUSHI_BRANCH_SEQ env var, which the branch channel's
+    # two source views expand: both views and the ctrl-s cycle stay
+    # in the nested view. When tv runs inside tmux, the nested tv
+    # runs in a floating pane over the tv window (tmux new-pane -f,
+    # the tmux 3.8+ tier; the pane lookup keeps the control-char -F
+    # format of the main channel's browse_events): centered, 62%
+    # width and 90% height, labeled `rushi branch view`. The pane
+    # dies when the nested tv exits, restoring this view without a
+    # layout change. When the floating pane is unavailable (older
+    # tmux), the split below the newest pane is used; outside tmux
+    # it runs in the fork's pane. The action guards for the branch
+    # channel file in the cable dir.
     #
-    # Single-line form, like yank_entry: the repo TOML holds a
-    # single-line basic string, whose value carries no trailing
-    # newline.
-    description = "Open the channel again on the parent branch of the picked row: the fork sources this channel with `rushi-sessions events --branch SEQ` as its source command (the binary's focus flag). When tv runs inside tmux, a floating pane over the tv window runs it (the tmux 3.8+ tier; the split-pane fallback on older tmux); otherwise it runs in the fork's pane. The listing keeps the picked block and the trunk up to its branch point, and folds every span outside the focus into the annotations of the row that owns it, so the active branch stays complete. The nested tv keeps this channel's preview, keybindings and actions; close it with esc or ctrl-c to restore this view.";
+    # The body is one sh -c script; the split token is the positional
+    # argument $1. The repo TOML holds the body as a multi-line basic
+    # string, whose value carries the trailing newline.
+    description = "Open the selected entry's parent-branch view in a nested tv: the rushi-sessions-events-branch channel focused on the picked seq, the collapsed view of the parent branch with the picked entry as the cutoff. When tv runs inside tmux, a floating pane over the tv window runs it from the session dir (the tmux 3.8+ tier; the split-pane fallback on older tmux). Otherwise it runs in this fork. The rewind, summarize and send_message actions work in the nested view. Close the nested tv (esc or ctrl-c) to return to this view.";
     shell = "bash";
     mode = "fork";
     command = untab ''
       sh -c 's=$1; rp=$(pwd 2>/dev/null);
       if [ -z "$rp" ]; then echo "rushi-sessions-events: the channel CWD is gone; re-open the channel" >&2; exit 1; fi;
-      cf="$HOME/.config/television/cable/rushi-sessions-events.toml";
-      if [ ! -f "$cf" ]; then echo "rushi-sessions-events: the channel file is missing; re-open the channel" >&2; exit 1; fi;
-      tmp=$(mktemp -d)
-      if [ -z "$tmp" ]; then echo "rushi-sessions-events: cannot create a temp dir" >&2; exit 1; fi;
-      sed -e "s|run = \"rushi-sessions events --chat\"|run = \"rushi-sessions events --branch $s --chat\"|" -e "s|run = \"rushi-sessions events\"|run = \"rushi-sessions events --branch $s\"|" "$cf" > "$tmp/rushi-sessions-events.toml"
-      if [ $? -ne 0 ]; then rm -rf "$tmp"; echo "rushi-sessions-events: cannot build the focused channel file" >&2; exit 1; fi;
+      bf="$HOME/.config/television/cable/rushi-sessions-events-branch.toml";
+      if [ ! -f "$bf" ]; then echo "rushi-sessions-events: the branch channel is not installed; rebuild the television channels" >&2; exit 1; fi;
       t=$TMUX;
       if [ -n "$t" ] && command -v tmux >/dev/null; then
         ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1);
-        if [ -n "$pn" ] && tmux new-pane -f -c "$rp" -x "62%" -y "90%" -X "19%" -Y "5%" -T "rushi branch view" -t "%$pn" sh -c "tv --cable-dir \"\$1\" rushi-sessions-events; rm -rf \"\$1\"" sh "$tmp"; then
+        if [ -n "$pn" ] && tmux new-pane -f -c "$rp" -x "62%" -y "90%" -X "19%" -Y "5%" -T "rushi branch view" -t "%$pn" env "RUSHI_BRANCH_SEQ=$s" tv rushi-sessions-events-branch; then
           :;
         elif [ -n "$pn" ]; then
-          tmux split-window -h -l "62%" -c "$rp" -t "%$pn" sh -c "tv --cable-dir \"\$1\" rushi-sessions-events; rm -rf \"\$1\"" sh "$tmp";
+          tmux split-window -h -l "62%" -c "$rp" -t "%$pn" env "RUSHI_BRANCH_SEQ=$s" tv rushi-sessions-events-branch;
         else
-          tmux split-window -h -l "62%" -c "$rp" sh -c "tv --cable-dir \"\$1\" rushi-sessions-events; rm -rf \"\$1\"" sh "$tmp";
+          tmux split-window -h -l "62%" -c "$rp" env "RUSHI_BRANCH_SEQ=$s" tv rushi-sessions-events-branch;
         fi;
       else
-        sh -c "tv --cable-dir \"\$1\" rushi-sessions-events; rm -rf \"\$1\"" sh "$tmp";
+        RUSHI_BRANCH_SEQ="$s" tv rushi-sessions-events-branch;
       fi' sh '{split:@TAB@:0}'
     '';
   };
