@@ -38,8 +38,11 @@
 # lists the user and assistant messages and the rewind markers, and
 # `All` lists every shown entry. Television runs the first command on
 # startup and cycles the rest on Ctrl+S. The `branch_view` action
-# (alt-b) opens a nested tv of the picked entry's parent branch with
-# `rushi-sessions events --branch SEQ` as the source command.
+# (alt-b) opens a nested tv of the picked entry's parent branch. It
+# runs the channel from a temp cable dir whose source commands are
+# the `branch` view of the picked seq (`rushi-sessions events
+# --branch SEQ`, with and without `--chat`), so the two focused
+# views keep the Ctrl+S cycle.
 #
 # The list shows [tag] ts summary, indented by the tree depth of
 # the branch structure (the down-pointing box connector).
@@ -279,6 +282,26 @@ description = "Open the selected entry's parent-branch view in a nested tv. The 
 shell = "bash"
 mode = "fork"
 command = """
-sh -c 's=$1; rp=$(pwd 2>/dev/null); if [ -z \"$rp\" ]; then echo \"rushi-sessions-events: the channel CWD is gone; re-open the channel\" >&2; exit 1; fi; t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then ob=$(printf \"\\173\"); cb=$(printf \"\\175\"); F=\"#\"$ob\"pane_id\"$cb\" \"\"#\"$ob\"pane_floating_flag\"$cb; pn=$(tmux list-panes -F \"$F\" | sed \"/ 0\\$/!d; s/ .*//; s/^%//\" | sort -n | tail -1); if [ -n \"$pn\" ] && tmux new-pane -f -c \"$rp\" -x \"62%\" -y \"90%\" -X \"19%\" -Y \"5%\" -T \"rushi branch view\" -t \"%$pn\" tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\"; then :; elif [ -n \"$pn\" ]; then tmux split-window -h -l \"62%\" -c \"$rp\" -t \"%$pn\" \"cd \\\"$rp\\\" && tv rushi-sessions-events --source-command \\\"rushi-sessions events --branch $s\\\"\"; else tmux split-window -h -l \"62%\" -c \"$rp\" \"cd \\\"$rp\\\" && tv rushi-sessions-events --source-command \\\"rushi-sessions events --branch $s\\\"\"; fi; else tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\"; fi' sh '{split:	:0}'
+sh -c 's=$1; rp=$(pwd 2>/dev/null);
+if [ -z \"$rp\" ]; then echo \"rushi-sessions-events: the channel CWD is gone; re-open the channel\" >&2; exit 1; fi;
+cf=\"$HOME/.config/television/cable/rushi-sessions-events.toml\";
+if [ ! -f \"$cf\" ]; then echo \"rushi-sessions-events: the channel file is missing; re-open the channel\" >&2; exit 1; fi;
+tmp=$(mktemp -d)
+if [ -z \"$tmp\" ]; then echo \"rushi-sessions-events: cannot create a temp dir\" >&2; exit 1; fi;
+sed -e \"s|run = \\\"rushi-sessions events --chat\\\"|run = \\\"rushi-sessions events --branch $s --chat\\\"|\" -e \"s|run = \\\"rushi-sessions events\\\"|run = \\\"rushi-sessions events --branch $s\\\"|\" \"$cf\" > \"$tmp/rushi-sessions-events.toml\"
+if [ $? -ne 0 ]; then rm -rf \"$tmp\"; echo \"rushi-sessions-events: cannot build the focused channel file\" >&2; exit 1; fi;
+t=$TMUX;
+if [ -n \"$t\" ] && command -v tmux >/dev/null; then
+  ob=$(printf \"\\173\"); cb=$(printf \"\\175\"); F=\"#\"$ob\"pane_id\"$cb\" \"\"#\"$ob\"pane_floating_flag\"$cb; pn=$(tmux list-panes -F \"$F\" | sed \"/ 0\\$/!d; s/ .*//; s/^%//\" | sort -n | tail -1);
+  if [ -n \"$pn\" ] && tmux new-pane -f -c \"$rp\" -x \"62%\" -y \"90%\" -X \"19%\" -Y \"5%\" -T \"rushi branch view\" -t \"%$pn\" sh -c \"tv --cable-dir \\\"\\$1\\\" rushi-sessions-events; rm -rf \\\"\\$1\\\"\" sh \"$tmp\"; then
+    :;
+  elif [ -n \"$pn\" ]; then
+    tmux split-window -h -l \"62%\" -c \"$rp\" -t \"%$pn\" sh -c \"tv --cable-dir \\\"\\$1\\\" rushi-sessions-events; rm -rf \\\"\\$1\\\"\" sh \"$tmp\";
+  else
+    tmux split-window -h -l \"62%\" -c \"$rp\" sh -c \"tv --cable-dir \\\"\\$1\\\" rushi-sessions-events; rm -rf \\\"\\$1\\\"\" sh \"$tmp\";
+  fi;
+else
+  sh -c \"tv --cable-dir \\\"\\$1\\\" rushi-sessions-events; rm -rf \\\"\\$1\\\"\" sh \"$tmp\";
+fi' sh '{split:	:0}'
 """
 

@@ -46,26 +46,33 @@ Decisions (all in the `rushi-sessions` binary, no new channel):
   unchanged.
 - The `branch_view` action (bound to alt-b) is the fork-mode
   shell body. It guards the channel CWD (`pwd` empty aborts
-  with a message), then mirrors the main channel's
-  browse_events pane plumbing: the control-char `-F` pane
-  lookup (the pane id and floating flag assembled without
-  braces, so television's template pipeline sees one split
-  token and no stray group). When tv runs inside tmux, the
-  nested tv opens in a floating pane over the tv window:
-  `tmux new-pane -f` in the multi-arg command form (the same
-  idiom as the prompt actions' floating pane, the tmux 3.8+
-  tier), centered, 62% width and 90% height, labeled
-  `rushi branch view`, running
-  `tv rushi-sessions-events --source-command "rushi-sessions
-  events --branch <seq>"` from the session dir. The pane dies
-  when the nested tv exits, restoring the original view with
-  no layout change. When the floating pane is unavailable
-  (older tmux) the browse_events split below the newest pane
-  is the fallback tier; outside tmux the nested tv runs in the
-  fork's pane. The nested tv keeps the channel's display
-  template, preview and actions through the source-command
-  override, so ctrl-r re-sources the view and the
-  rewind/summarize/send_message actions work there.
+  with a message) and the channel file
+  (`~/.config/television/cable/rushi-sessions-events.toml`
+  missing aborts). It builds a temp cable dir (`mktemp -d`):
+  a copy of the channel file with the two source commands
+  patched to the focused forms (`rushi-sessions events
+  --branch <seq> --chat` and `--branch <seq>`), then mirrors
+  the main channel's browse_events pane plumbing: the
+  control-char `-F` pane lookup (the pane id and floating flag
+  assembled without braces, so television's template pipeline
+  sees one split token and no stray group). The nested tv runs
+  `tv --cable-dir <tmp> rushi-sessions-events` from the
+  session dir. The patched cable dir keeps both source views,
+  so ctrl-s cycles the focused User+Assistant view and the
+  focused All view. The channel's display template, preview
+  and actions stay, so ctrl-r re-sources the view and the
+  rewind/summarize/send_message actions work there. When tv
+  runs inside tmux, the nested tv opens in a floating pane
+  over the tv window: `tmux new-pane -f` in the multi-arg
+  command form (the same idiom as the prompt actions'
+  floating pane, the tmux 3.8+ tier), centered, 62% width and
+  90% height, labeled `rushi branch view`. The pane shell
+  deletes the temp cable dir when the nested tv exits; the
+  pane dies with it, restoring the original view with no
+  layout change. When the floating pane is unavailable (older
+  tmux) the browse_events split below the newest pane is the
+  fallback tier; outside tmux the nested tv runs in the
+  fork's pane.
 
 Updated `rushi-sessions-events.toml` (the header, the alt-b
 binding and the action), its Nix mirror
@@ -75,18 +82,27 @@ nine-entry example (the items 0-8 log with two rewinds) as a
 fixture: the main view, the focused views and the out-of-range
 error are asserted line by line.
 
-Verification: 138 tests green. `nix eval` of the channel
+Verification: 139 tests green. `nix eval` of the channel
 attrset reproduces the repo TOML command byte for byte
 (`untab` restores the real tab of the split token; the
 multi-line `''` string keeps the trailing newline of the TOML
 multi-line value). The action body parses (`sh -n` on the
 decoded inner script) and ran end to end in a live tmux 3.8
-server: the floating pane landed over the tv window and the
-pane program ran the nested tv with the expected args. The
-live session e2e (alt-b on a marker row, rewind and summarize
-in the nested view, ctrl-r refresh, esc to close the floating
-pane and restore the original) passes with the deployed
-binary.
+server: the floating pane landed over the tv window, the
+nested tv kept both focused source views under the ctrl-s
+cycle, and closing it deleted the temp cable dir and restored
+the original view. The live session e2e (alt-b on a marker
+row, rewind and summarize in the nested view, ctrl-r
+refresh, esc to close the floating pane and restore the
+original) passes with the deployed binary.
+
+Fix (same day, same entry): the first commit ran the nested
+tv through television's `--source-command` override. The
+override replaces the channel's source commands with one, so
+the nested view lost the ctrl-s switch between the
+User+Assistant and All views. The patched temp cable dir
+above restores both focused views; the pane shell's cleanup
+of the temp dir came with it.
 
 ## 92. The log-appender name tracks the kernel's 58 rename: `rushi-log`, legacy `log` (2026-10-26)
 

@@ -311,23 +311,37 @@ fn events_channel_toml_parses() {
     );
 
     // The branch_view action (alt-b): re-open the channel on the
-    // picked row's parent branch. The nested tv re-sources the
-    // channel with the binary's `--branch` focus flag through
-    // television's `--source-command` override, so the display
-    // template, preview and actions stay and the fork-mode shell
-    // body runs the pane plumbing of the main channel's
-    // browse_events. The nested tv runs in a floating pane
-    // (`tmux new-pane -f`, the tmux 3.8+ tier); the split-pane
-    // form stays as the fallback tier for older tmux.
+    // picked row's parent branch. The fork patches a temp cable
+    // dir: it copies the channel file, rewrites the two source
+    // commands to the binary's `--branch` focus flag
+    // (`rushi-sessions events --branch $s`, with and without
+    // `--chat`), and runs `tv --cable-dir`. Both focused source
+    // views (the Ctrl+S User+Assistant and All cycle) stay, and
+    // so do the display template, preview and actions. The nested
+    // tv runs in a floating pane (`tmux new-pane -f`, the tmux
+    // 3.8+ tier); the split-pane form stays as the fallback tier
+    // for older tmux.
     let bv = v["actions"]["branch_view"].clone();
     let bc = bv["command"].as_str().unwrap();
     assert!(
-        bc.contains("rushi-sessions events --branch $s"),
-        "binary focus call: {bc}"
+        bc.contains("--cable-dir"),
+        "the nested tv loads the temp cable dir: {bc}"
     );
     assert!(
-        bc.contains("tv rushi-sessions-events --source-command"),
-        "the nested tv re-sources this channel: {bc}"
+        bc.contains("rushi-sessions events --branch"),
+        "the binary focus flag: {bc}"
+    );
+    assert!(
+        bc.contains("--branch $s --chat"),
+        "the focused chat view keeps the flag: {bc}"
+    );
+    assert!(
+        bc.contains("rushi-sessions-events.toml"),
+        "the channel file lands in the temp cable dir: {bc}"
+    );
+    assert!(
+        bc.contains("mktemp -d"),
+        "the temp cable dir: {bc}"
     );
     assert!(bc.contains("'{split:\t:0}'"), "seq token: {bc}");
     // The pane lookup keeps the browse_events control-char -F
@@ -340,7 +354,8 @@ fn events_channel_toml_parses() {
     );
     // The floating-pane tier (tmux 3.8+): the nested tv runs in
     // a `new-pane -f` pane over the tv window, sized and
-    // labeled; the split-pane fallback stays behind it.
+    // labeled; the split-pane fallback stays behind it. The pane
+    // shell deletes the temp cable dir after the nested tv exits.
     assert!(
         bc.contains("new-pane -f"),
         "the floating pane (tmux 3.8+ tier): {bc}"
@@ -348,6 +363,10 @@ fn events_channel_toml_parses() {
     assert!(
         bc.contains("tmux split-window"),
         "the split-pane fallback tier: {bc}"
+    );
+    assert!(
+        bc.contains("rm -rf"),
+        "the pane shell deletes the temp cable dir: {bc}"
     );
     assert_eq!(
         bc.matches('{').count(),

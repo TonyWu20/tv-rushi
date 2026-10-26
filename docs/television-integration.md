@@ -409,13 +409,17 @@ Decisions (user, 2026-10-04):
     the first command on startup and cycles the rest on Ctrl+S.
   - The `branch_view` action (alt-b) of the events channel
     re-opens the channel on the picked row's parent branch. The
-    fork runs the nested tv with
-    `rushi-sessions events --branch SEQ` as the source command
-    (television's `--source-command` override), in a split below
-    the newest pane inside tmux, or in the fork's pane outside
-    tmux. The nested view keeps the channel's display template,
-    preview and actions; ctrl-r re-sources it, and esc or
-    ctrl-c closes it and restores this view.
+    fork builds a temp cable dir (a copy of the channel file
+    with the two source commands patched to `rushi-sessions
+    events --branch SEQ --chat` and `--branch SEQ`) and runs
+    the nested tv from it (`tv --cable-dir`), in a floating
+    pane over the tv window (the tmux 3.8+ tier; the
+    split-pane fallback on older tmux), or in the fork's pane
+    outside tmux. The patch keeps both focused source views, so
+    Ctrl+S still cycles them. The nested view keeps the
+    channel's display template, preview and actions; ctrl-r
+    re-sources it, and esc or ctrl-c closes it (the pane shell
+    deletes the temp cable dir) and restores this view.
   - The events channel preview renders the selected entry as a
     document. `user_message`, `assistant_message` and
     `compaction_summary` render as markdown; `tool_call`,
@@ -1251,10 +1255,15 @@ probe.
     new `--branch SEQ` flag: SEQ is the cutoff, the picked block
     the focus of a focused view; an out-of-range focus exits 1
     with a message. The `branch_view` action forks the channel
-    again with that flag as the source command, so the channel's
-    preview, refresh and the rewind/summarize/send_message
-    actions work in the nested view. Inside tmux the nested tv
-    runs in a floating pane over the tv window (`tmux new-pane
-    -f`, the tmux 3.8+ tier; the split-pane fallback on older
-    tmux), outside tmux in the fork's pane; closing the pane
-    restores the original view with no layout change.
+    again: it builds a temp cable dir with this channel's two
+    source commands patched to that flag (with and without
+    `--chat`), and runs the nested tv from it (`tv --cable-dir`).
+    Both focused source views keep the Ctrl+S cycle, and the
+    channel's preview, refresh and the
+    rewind/summarize/send_message actions work in the nested
+    view. Inside tmux the nested tv runs in a floating pane
+    over the tv window (`tmux new-pane -f`, the tmux 3.8+
+    tier; the split-pane fallback on older tmux), outside tmux
+    in the fork's pane. The pane shell deletes the temp cable
+    dir when the nested tv exits; closing the pane restores the
+    original view with no layout change.
