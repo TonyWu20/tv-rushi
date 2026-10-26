@@ -24,6 +24,12 @@
 //!
 //! Malformed markers are projected out by the kernel's shared parser,
 //! the same way the TUI projects them.
+//!
+//! The television list prints newest first, so the tree grows
+//! downward on screen: the branch glyph points down (`┌─`, the
+//! flip of the TUI's oldest-first `└─`). A row that folds a hidden
+//! span carries the `+` fold marker in place of the `─` run (`┌+`,
+//! or a bare `+` on the trunk).
 
 use std::collections::{HashMap, HashSet};
 
@@ -33,21 +39,38 @@ use rushi_common::rewind::{parse_rewind_event, RewindRef};
 
 /// One parsed `rewind` marker, with the display-depth facts derived
 /// from it (the TUI tree model's `Marker`).
-struct Marker {
+#[derive(Clone, Copy)]
+pub(crate) struct Marker {
     /// The marker's own 1-based log seq: the first seq of its span.
-    seq: usize,
+    pub seq: usize,
     /// The rewound event the branch is rooted at.
-    target: usize,
+    pub target: usize,
+    /// Mode `before`: the target is excluded from the context.
+    pub before: bool,
     /// A fork when the abandoned tail holds no marker row.
-    fork: bool,
+    pub fork: bool,
     /// The last in-log seq this marker's span covers: the seq before
     /// the first later marker that rewinds back to this marker's
     /// target or earlier, or the log's last seq when none does.
-    close: usize,
+    pub close: usize,
 }
 
+impl Marker {
+    /// The branch point: the last seq that stays in the context when
+    /// this marker applies. `target` in `on` mode, `target - 1` in
+    /// `before` mode (zero when `before` mode targets seq 1).
+    pub fn eff(&self) -> usize {
+        if self.before {
+            self.target.saturating_sub(1)
+        } else {
+            self.target
+        }
+    }
+}
+
+
 /// The parsed markers of one numbered log, in log order.
-fn markers(rows: &[(u64, Value)]) -> Vec<Marker> {
+pub(crate) fn markers(rows: &[(u64, Value)]) -> Vec<Marker> {
     let refs: Vec<RewindRef> = rows
         .iter()
         .filter_map(|(s, v)| parse_rewind_event(v, *s as usize))
@@ -67,6 +90,7 @@ fn markers(rows: &[(u64, Value)]) -> Vec<Marker> {
             Marker {
                 seq,
                 target,
+                before: r.before,
                 fork,
                 close,
             }
@@ -107,16 +131,24 @@ pub(crate) fn tree_depths(rows: &[(u64, Value)]) -> Vec<usize> {
 }
 
 /// The box-drawing indent of a depth-`d` row: three spaces per level
-/// shallower than the parent, the `└─` branch marker at the parent
-/// level, one trailing space. Depth 0 carries no marker (the top of
-/// the active branch stays left aligned). This is the TUI spec glyph
-/// set: 3-space indent, the `└─` branch, no vertical continuation
-/// lines.
-pub(crate) fn indent_for(d: usize) -> String {
+/// shallower than the parent, the branch marker at the parent level,
+/// one trailing space. Depth 0 carries no marker (the top of the
+/// active branch stays left aligned). The glyph points down: the
+/// television list is newest first, so a branch block sits above its
+/// target and the connector runs down to it. The TUI spec glyph set
+/// otherwise: 3-space indent, one branch marker, no vertical
+/// continuation lines. When the row folds a hidden span, the `+`
+/// fold marker replaces the `─` run.
+pub(crate) fn indent_for(d: usize, fold: bool) -> String {
+    let marker = if fold { "+" } else { "─" };
     if d == 0 {
-        String::new()
+        if fold {
+            "+ ".to_string()
+        } else {
+            String::new()
+        }
     } else {
-        format!("{}└─ ", "   ".repeat(d - 1))
+        format!("{}┌{marker} ", "   ".repeat(d - 1))
     }
 }
 
@@ -246,10 +278,23 @@ mod tests {
     }
 
     #[test]
-    fn indent_glyphs_match_the_tui_spec() {
-        assert_eq!(indent_for(0), "");
-        assert_eq!(indent_for(1), "└─ ");
-        assert_eq!(indent_for(2), "   └─ ");
-        assert_eq!(indent_for(3), "      └─ ");
+    fn indent_glyphs_point_down_and_carry_the_fold_marker() {
+        assert_eq!(indent_for(0, false), "");
+        assert_eq!(indent_for(0, true), "+ ");
+        assert_eq!(indent_for(1, false), "┌─ ");
+        assert_eq!(indent_for(1, true), "┌+ ");
+        assert_eq!(indent_for(2, false), "   ┌─ ");
+        assert_eq!(indent_for(3, true), "      ┌+ ");
+    }
+
+    #[test]
+    fn marker_eff_is_the_branch_point() {
+        let on = serde_json::json!({"type": "rewind", "target_seq": 4, "mode": "on"});
+        let before = serde_json::json!({"type": "rewind", "target_seq": 4, "mode": "before"});
+        let m: Vec<Marker> = markers(&[(5, on), (6, before)]);
+        assert_eq!(m[0].eff(), 4, "on mode keeps the target");
+        assert_eq!(m[1].eff(), 3, "before mode drops the target");
+        assert_eq!(m[0].before, false);
+        assert_eq!(m[1].before, true);
     }
 }

@@ -11,10 +11,21 @@
 # gives the session dir as the CWD) or directly as
 # `tv rushi-sessions-events DIR`. The source commands run the
 # `rushi-sessions` binary's `events` subcommand against the CWD,
-# newest first. Two views: `User+Assistant` (the default, the first
-# source command) lists only the user and assistant messages, and
-# `All` lists every entry. Television runs the first command on
-# startup and cycles the rest on Ctrl+S.
+# newest first, in a collapsed branch view. The binary computes the
+# active ranges from the rewind markers: the listing keeps the active
+# branch plus the history before each diverging node, and it folds
+# every abandoned span into the annotations of the row that owns it.
+# Each annotation column reads: a `(Folded N)` count after the
+# row's summary, a `branched from #X` mark on the row where a hidden
+# branch left the trunk, a `branched out to #Y` mark on the row
+# where a hidden branch leaves the shown span, and a trailing
+# `N hidden` for the gap behind the newest row. The `#N` numbers
+# are item numbers, the log seq minus 1. A `+` after the indent
+# marks the fold on a branch marker row. Two views: `User+Assistant`
+# (the default, the first source command) lists the user and
+# assistant messages plus the rewind markers that carry the branch
+# annotations, and `All` lists every entry. Television runs the
+# first command on startup and cycles the rest on Ctrl+S.
 #
 # The channel takes four arguments: `eventPreviewer`,
 # `eventTomlPreviewer`, `eventViewer` and `eventTomlViewer`, a
@@ -42,7 +53,7 @@
 # The repo copy rushi-sessions-events.toml carries the default (bat)
 # and is the manual-install baseline.
 #
-# The channel carries six actions. `send_message` (bound to ctrl-t) is
+# The channel carries seven actions. `send_message` (bound to ctrl-t) is
 # the same design as the main channel's, local only. The session dir
 # is the CWD of the channel, so the body reads it with `$(pwd)` and
 # takes no split placeholder. It cds to the session's recorded
@@ -85,6 +96,27 @@
 # (`--print-lang`), then branches: markdown to the `eventViewer`
 # command, toml to the `eventTomlViewer` command. The body takes
 # the seq through one split placeholder (`{split:\t:0}`).
+#
+# `branch_view` (bound to alt-b) re-opens the channel on the parent
+# branch of the picked row. The fork runs `tv rushi-sessions-events
+# --source-command "rushi-sessions events --branch SEQ"`: the
+# binary's `--branch` flag takes the pick as the focus, the nested
+# tv sources the channel's events listing with that focus, and the
+# listing folds every span outside the focus into the annotations
+# of the row that owns it. The nested tv keeps this channel's
+# preview, keybindings and actions, and Ctrl-R re-sources the view.
+# Closing it (esc or ctrl-c) restores this view. When tv runs
+# inside tmux, the nested tv runs in a floating pane over the tv
+# window (`tmux new-pane -f`, the
+# tmux 3.8+ tier; the pane lookup keeps the control-char `-F`
+# format of the main channel's browse_events): centered, 62%
+# width and 90% height, labeled `rushi branch view`. The pane
+# dies when the nested tv exits, restoring this view without a
+# layout change. When the floating pane is unavailable (older
+# tmux), the split below the newest pane is used; outside tmux,
+# the nested tv runs in the fork's pane. When the channel's CWD
+# is gone, the action aborts with a message instead of opening a
+# tv on a dead dir.
 #
 # `yank_entry` (bound to ctrl-y) copies the full document of the
 # selected entry to the clipboard. It keeps the newlines, which
@@ -199,6 +231,8 @@ in
     # Replaces the native ctrl-y, which copies the raw source row
     # (one line, tab-separated).
     "ctrl-y" = "actions:yank_entry";
+    # Re-open the channel on the parent branch of the picked row.
+    "alt-b" = "actions:branch_view";
   };
 
   actions.send_message = {
@@ -248,7 +282,7 @@ in
 
   actions.rewind = {
     description = ''
-      Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log binary. A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+      Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
     '';
     shell = "bash";
     mode = "fork";
@@ -271,5 +305,36 @@ in
     shell = "bash";
     mode = "fork";
     command = untab "rushi-sessions summarize '{split:@TAB@:0}' --prompt";
+  };
+
+  actions.branch_view = {
+    # Open the picked entry's parent branch in a nested tv. The
+    # nested tv's source command is the `branch` view of the
+    # picked seq, via television's --source-command override: the
+    # channel's display template, preview and actions stay, so
+    # ctrl-r refresh and the rewind, summarize and send_message
+    # actions work in the nested view. When tv runs inside tmux,
+    # the nested tv runs in a floating pane over the tv window
+    # (tmux new-pane -f, the tmux 3.8+ tier; the pane lookup
+    # keeps the control-char -F format of the main channel's
+    # browse_events): centered, 62% width and 90% height,
+    # labeled `rushi branch view`. The pane dies when the nested
+    # tv exits, restoring this view without a layout change.
+    # When the floating pane is unavailable (older tmux), the
+    # split below the newest pane of browse_events is used;
+    # outside tmux it runs in the fork's pane. The source rows
+    # carry the seq token, so the command takes one split
+    # placeholder. The action needs `tv` on PATH, resolved like
+    # the main channel's browse_events.
+    #
+    # Single-line form, like yank_entry: the repo TOML holds a
+    # single-line basic string, whose value carries no trailing
+    # newline.
+    description = "Open the channel again on the parent branch of the picked row: the fork sources this channel with `rushi-sessions events --branch SEQ` as its source command (the binary's focus flag). When tv runs inside tmux, a floating pane over the tv window runs it (the tmux 3.8+ tier; the split-pane fallback on older tmux); otherwise it runs in the fork's pane. The listing keeps the picked block and the trunk up to its branch point, and folds every span outside the focus into the annotations of the row that owns it, so the active branch stays complete. The nested tv keeps this channel's preview, keybindings and actions; close it with esc or ctrl-c to restore this view.";
+    shell = "bash";
+    mode = "fork";
+    command = untab ''
+      sh -c 's=$1; rp=$(pwd 2>/dev/null); if [ -z "$rp" ]; then echo "rushi-sessions-events: the channel CWD is gone; re-open the channel" >&2; exit 1; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ] && tmux new-pane -f -c "$rp" -x "62%" -y "90%" -X "19%" -Y "5%" -T "rushi branch view" -t "%$pn" tv rushi-sessions-events --source-command "rushi-sessions events --branch $s"; then :; elif [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\""; else tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\""; fi; else tv rushi-sessions-events --source-command "rushi-sessions events --branch $s"; fi' sh '{split:@TAB@:0}'
+    '';
   };
 }

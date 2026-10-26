@@ -13,24 +13,36 @@
 #   tv rushi-sessions-events        # CWD is the session dir
 #
 # The source commands run the `rushi-sessions` binary. `rushi-sessions
-# events` prints one TSV row per entry of the CWD's events.jsonl,
-# newest first:
+# events` prints the collapsed branch view of the CWD's events.jsonl,
+# newest first: the active branch plus the history before the
+# diverging node. The inactive branches do not print: their spans
+# fold onto the row that hides them. One TSV row per shown entry:
 #   0 seq     1-based line number of the entry in events.jsonl
 #   1 tag     the short marker of the entry type (at most two
 #             capitalized letters, `[U]`, `[A]`, ... in the display)
 #   2 ts      the local wall-clock time of the entry
-#   3 summary the full one-line summary (the list side truncates)
-#   4 indent  the tree-depth box connector (the rushi-tui tree view's
-#             indent: three spaces per level, the `└─` branch marker,
-#             empty on the trunk)
+#   3 summary the one-line summary with the branch annotations:
+#             the `(Folded N)` count of the span that folds onto
+#             the row, the `branched from #T` / `branched out to
+#             #M` labels of the branch structure, and the `K
+#             hidden` count of the span the rewind marker
+#             abandoned (the `#N` numbers are 0-based item numbers;
+#             the first entry of the log is #0)
+#   4 indent  the tree-depth box connector: three spaces per level,
+#             the down-pointing branch marker `┌─` (the list is
+#             newest first, so a branch block sits above its target
+#             and the connector runs down to it), the `+` fold
+#             marker on a row that hides a span, empty on the trunk
 #
 # Two views: `User+Assistant` (the default, the first source command)
-# lists only the user and assistant messages, and `All` lists every
-# entry. Television runs the first command on startup and cycles the
-# rest on Ctrl+S.
+# lists the user and assistant messages and the rewind markers, and
+# `All` lists every shown entry. Television runs the first command on
+# startup and cycles the rest on Ctrl+S. The `branch_view` action
+# (alt-b) opens a nested tv of the picked entry's parent branch with
+# `rushi-sessions events --branch SEQ` as the source command.
 #
 # The list shows [tag] ts summary, indented by the tree depth of
-# the branch structure (the rushi-tui tree view's box connector).
+# the branch structure (the down-pointing box connector).
 # The preview panel renders the
 # selected entry as a document: markdown for user_message,
 # assistant_message and compaction_summary, toml for tool_call,
@@ -61,7 +73,8 @@
 # when it is on PATH and falls back to `nohup` otherwise (the macOS
 # base has no setsid).
 # The `view_message` action needs its viewers on PATH (`mdfried`
-# and `bat` in this baseline copy).
+# and `bat` in this baseline copy). The `branch_view` action needs
+# `tv` on PATH, resolved like the main channel's `browse_events`.
 #
 # The `yank_entry` action (bound to ctrl-y, in place of
 # television's native raw-row yank) copies the selected entry's
@@ -74,8 +87,9 @@
 #
 # The `rewind`, `summarize` and `summarize-prompt` actions (the
 # tree view's options) need `rushi` on PATH: the action logic runs
-# in the `rushi-sessions` binary, which calls the kernel's `log` and
-# `compact` binaries (the siblings of the resolved `rushi`). Both
+# in the `rushi-sessions` binary, which calls the kernel's log
+# appender (`rushi-log`, the legacy `log` of older kernels) and the
+# `compact` binary (the siblings of the resolved `rushi`). Both
 # need the loop to be idle: the binary probes the kernel's
 # `.loop.lock` flock and refuses a live loop.
 #
@@ -133,6 +147,7 @@ word_wrap = true
 
 [keybindings]
 ctrl-t = "actions:send_message"
+alt-b = "actions:branch_view"
 alt-r = "actions:rewind"
 alt-s = "actions:summarize"
 alt-p = "actions:summarize-prompt"
@@ -206,10 +221,11 @@ command = "rushi-sessions copy-entry . '{split:\t:0}'"
 # view's `Rewind without summary` option. The fork runs the binary
 # with the selected seq: it validates the seq, probes the kernel's
 # `.loop.lock` flock, and appends the `rewind` marker through the
-# kernel's `log` binary. The loop applies it on its next step.
+# kernel's log appender (`rushi-log`, legacy `log`). The loop
+# applies it on its next step.
 # A user_message pick rewinds before it, every other type on it.
 description = """
-Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log binary. A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
 """
 shell = "bash"
 mode = "fork"
@@ -242,3 +258,27 @@ One-shot with a custom prompt (the tree view's `Summarize with custom prompt` op
 shell = "bash"
 mode = "fork"
 command = "rushi-sessions summarize '{split:\t:0}' --prompt"
+[actions.branch_view]
+# Open the picked entry's parent branch in a nested tv. The nested
+# tv's source command is the `branch` view of the picked seq, via
+# television's --source-command override: the channel's display
+# template, preview and actions stay, so ctrl-r refresh and the
+# rewind, summarize and send_message actions work in the nested
+# view. When tv runs inside tmux, the nested tv runs in a
+# floating pane over the tv window (tmux new-pane -f, the
+# tmux 3.8+ tier; the pane lookup keeps the control-char -F
+# format of the main channel's browse_events): centered, 62%
+# width and 90% height, labeled `rushi branch view`. The pane
+# dies when the nested tv exits, restoring this view without a
+# layout change. When the floating pane is unavailable (older
+# tmux), the split below the newest pane of browse_events is
+# used; outside tmux it runs in the fork's pane. The source
+# rows carry the seq token, so the command takes one split
+# placeholder.
+description = "Open the selected entry's parent-branch view in a nested tv. The nested tv's source command is `rushi-sessions events --branch SEQ`: the collapsed view of the parent branch with the picked entry as the cutoff. When tv runs inside tmux, a floating pane over the tv window runs it from the session dir (the tmux 3.8+ tier; the split-pane fallback on older tmux). Otherwise it runs in this fork. The channel's rewind, summarize and send_message actions work in the nested view. Close the nested tv (esc or ctrl-c) to return to this view."
+shell = "bash"
+mode = "fork"
+command = """
+sh -c 's=$1; rp=$(pwd 2>/dev/null); if [ -z \"$rp\" ]; then echo \"rushi-sessions-events: the channel CWD is gone; re-open the channel\" >&2; exit 1; fi; t=$TMUX; if [ -n \"$t\" ] && command -v tmux >/dev/null; then ob=$(printf \"\\173\"); cb=$(printf \"\\175\"); F=\"#\"$ob\"pane_id\"$cb\" \"\"#\"$ob\"pane_floating_flag\"$cb; pn=$(tmux list-panes -F \"$F\" | sed \"/ 0\\$/!d; s/ .*//; s/^%//\" | sort -n | tail -1); if [ -n \"$pn\" ] && tmux new-pane -f -c \"$rp\" -x \"62%\" -y \"90%\" -X \"19%\" -Y \"5%\" -T \"rushi branch view\" -t \"%$pn\" tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\"; then :; elif [ -n \"$pn\" ]; then tmux split-window -h -l \"62%\" -c \"$rp\" -t \"%$pn\" \"cd \\\"$rp\\\" && tv rushi-sessions-events --source-command \\\"rushi-sessions events --branch $s\\\"\"; else tmux split-window -h -l \"62%\" -c \"$rp\" \"cd \\\"$rp\\\" && tv rushi-sessions-events --source-command \\\"rushi-sessions events --branch $s\\\"\"; fi; else tv rushi-sessions-events --source-command \"rushi-sessions events --branch $s\"; fi' sh '{split:	:0}'
+"""
+

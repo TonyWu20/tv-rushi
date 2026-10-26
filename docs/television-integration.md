@@ -384,17 +384,38 @@ Decisions (user, 2026-10-04):
     dir and runs the nested tv; the outer tv pauses and resumes on
     exit. Remote rows run it over `ssh -t` on the remote host.
   - The events channel source is `rushi-sessions events`. It prints
-    one TSV row per entry: seq (the 1-based line number of the entry
-    in `events.jsonl`), type, ts (local wall-clock time), and a
-    one-line summary that keeps the whole payload but flattens tabs
-    and newlines. The list side truncates; nothing is clipped in the
-    source. The rows come newest first.
+    one TSV row per shown entry: seq (the 1-based line number of
+    the entry in `events.jsonl`), type, ts (local wall-clock
+    time), and a one-line summary that keeps the whole payload but
+    flattens tabs and newlines. The list side truncates; nothing
+    is clipped in the source. The rows come newest first, in a
+    collapsed branch view: the active branch plus the history
+    before each diverging node. The abandoned spans do not print;
+    they fold onto the row that hides them, and the summary
+    carries the annotations: a `(Folded N)` count, a
+    `branched from #T` / `branched out to #M` label for the
+    branch structure, and a trailing `K hidden` for the gap
+    behind the newest row (the `#N` numbers are 0-based item
+    numbers, the log seq minus 1). The indent column carries the
+    down-pointing box connector: three spaces per level, `┌─` for
+    a branch block, `┌+` when the row hides a folded span, empty
+    on the trunk.
   - The events channel carries two source views. `User+Assistant`
-    lists only the user and assistant messages; it is the default
-    view, the first source command, and runs
-    `rushi-sessions events --chat`. `All` lists every entry and
-    runs the plain `events` command. Television runs the first
-    command on startup and cycles the rest on Ctrl+S.
+    lists the user and assistant messages and the rewind markers
+    (the rows that carry the branch annotations); it is the
+    default view, the first source command, and runs
+    `rushi-sessions events --chat`. `All` lists every shown
+    entry and runs the plain `events` command. Television runs
+    the first command on startup and cycles the rest on Ctrl+S.
+  - The `branch_view` action (alt-b) of the events channel
+    re-opens the channel on the picked row's parent branch. The
+    fork runs the nested tv with
+    `rushi-sessions events --branch SEQ` as the source command
+    (television's `--source-command` override), in a split below
+    the newest pane inside tmux, or in the fork's pane outside
+    tmux. The nested view keeps the channel's display template,
+    preview and actions; ctrl-r re-sources it, and esc or
+    ctrl-c closes it and restores this view.
   - The events channel preview renders the selected entry as a
     document. `user_message`, `assistant_message` and
     `compaction_summary` render as markdown; `tool_call`,
@@ -1215,3 +1236,25 @@ extends to remote rows (one read-only `ssh -T` check on the
 remote host), the `rewind`/`summarize` kernel bins (`log`,
 `compact`), and the preview card's `rushi config` context-window
 probe.
+
+## Decisions (user, 2026-10-26)
+
+69. The events channel shows the collapsed branch view, and
+    `branch_view` (alt-b) re-opens the picked parent branch in a
+    nested tv (decision 91 in `docs/decisions.md`). The listing
+    keeps the active branch plus the history before each
+    diverging node; the abandoned spans fold onto the row that
+    hides them, with the `(Folded N)` / `branched from #T` /
+    `branched out to #M` / `K hidden` annotations in the summary
+    column. The branch connectors point down (`┌─` / `┌+`) to
+    match the newest-first order. `rushi-sessions events` takes a
+    new `--branch SEQ` flag: SEQ is the cutoff, the picked block
+    the focus of a focused view; an out-of-range focus exits 1
+    with a message. The `branch_view` action forks the channel
+    again with that flag as the source command, so the channel's
+    preview, refresh and the rewind/summarize/send_message
+    actions work in the nested view. Inside tmux the nested tv
+    runs in a floating pane over the tv window (`tmux new-pane
+    -f`, the tmux 3.8+ tier; the split-pane fallback on older
+    tmux), outside tmux in the fork's pane; closing the pane
+    restores the original view with no layout change.

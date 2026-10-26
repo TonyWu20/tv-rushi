@@ -3,7 +3,6 @@
 //! this order for television's typed-query results.
 
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, SystemTime};
@@ -32,7 +31,7 @@ fn set_mtime(p: &Path, secs: u64) {
     f.set_modified(t).unwrap();
 }
 
-fn make_session(dir: &Path, name: &str, mtime_secs: u64, live: bool) {
+fn make_session(dir: &Path, _name: &str, mtime_secs: u64, live: bool) {
     std::fs::create_dir_all(dir).unwrap();
     let ev = dir.join("events.jsonl");
     let mut f = std::fs::File::create(&ev).unwrap();

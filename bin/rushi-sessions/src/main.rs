@@ -28,17 +28,33 @@
 //!   `bat` is on PATH the card is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
 //!   "Catppuccin Macchiato"); otherwise plain TOML is printed.
-//! - `rushi-sessions events [DIR] [--chat]`
-//!   Print one TSV row per entry of the session's events.jsonl, newest
-//!   first. Columns: seq, tag (the short marker of the entry type), ts,
-//!   summary, and the tree-depth indent (the TUI tree view's box
-//!   connector, empty on the trunk). `--chat` keeps only the active-path
-//!   user and assistant messages. A row masked by a rewind marker carries
-//!   a `[masked]` summary prefix in the full view.
+//! - `rushi-sessions events [DIR] [--chat] [--branch SEQ]`
+//!   Print the collapsed branch view of the session's events.jsonl,
+//!   newest first: the active branch plus the history before the
+//!   diverging node, one TSV row per shown entry. Columns: seq, tag
+//!   (the short marker of the entry type), ts, the annotated summary
+//!   (the `(Folded N)` count and the `branched from` / `branched
+//!   out to` / `hidden` annotations), and the tree-depth indent (the
+//!   down-pointing box connector, empty on the trunk, the `+` fold
+//!   marker on a row that hides a span). `--chat` keeps the user and
+//!   assistant messages and the markers. With `--branch SEQ` the
+//!   view takes SEQ as the cutoff and the picked block as the focus
+//!   (the parent-branch view of the branch_view action).
+//!   Print one TSV row per shown entry of the session's events.jsonl,
+//!   newest first, in the collapsed branch view: the active branch plus
+//!   the history before each diverging node. The abandoned spans fold
+//!   onto the row that hides them; the summary carries the `(Folded N)`
+//!   count and the `branched from` / `branched out to` / `K hidden`
+//!   annotations. Columns: seq, tag (the short marker of the entry
+//!   type), ts, summary, and the down-pointing tree-depth indent
+//!   (`┌─`, `┌+` on a row that hides a span, empty on the trunk).
+//!   `--chat` keeps the user and assistant messages and the rewind
+//!   markers.
 //!
 //! - `rushi-sessions rewind [DIR] SEQ [--events]`
 //!   Append a `rewind` marker (the tree view's "Rewind without summary")
-//!   through the kernel's `log` binary. A user-message target rewinds
+//!   through the kernel's log appender (`rushi-log`, the legacy
+//!   `log` of older kernels). A user-message target rewinds
 //!   `before` it, every other target rewinds `on` it. Needs an idle
 //!   loop (the kernel's `.loop.lock` probe). With `--events` the CWD is
 //!   the session dir.
@@ -78,6 +94,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod branch;
+mod branchview;
 mod devshell;
 mod doc;
 mod events;
@@ -128,11 +145,15 @@ enum Command {
         /// Session directory path.
         path: String,
     },
-    /// Print one TSV row per entry of the session's events.jsonl.
-    /// Columns: seq, tag (the short marker of the entry type), ts, summary, and the tree-depth indent. The rows come newest first.
+    /// Print one TSV row per shown entry of the session's
+    /// events.jsonl, newest first, in the collapsed branch view:
+    /// the active branch plus the history before each diverging
+    /// node, the abandoned spans folded onto the row that hides
+    /// them (the `(Folded N)` and branch annotations in the summary
+    /// column). Columns: seq, tag (the short marker of the entry
+    /// type), ts, summary, and the down-pointing tree-depth indent.
     /// Without DIR, the CWD is the session dir. `--chat` keeps the
-    /// active-path user and assistant messages. Rows masked by a
-    /// rewind marker carry a `[masked]` summary prefix.
+    /// user and assistant messages and the rewind markers.
     Events {
         /// The session dir (the dir that holds events.jsonl).
         #[arg(value_name = "DIR")]
@@ -140,6 +161,10 @@ enum Command {
         /// Only the user and assistant messages.
         #[arg(long)]
         chat: bool,
+        /// The parent-branch view focused on SEQ: the picked seq is
+        /// the cutoff, the picked block the focus.
+        #[arg(long, value_name = "SEQ")]
+        branch: Option<u64>,
     },
     /// Open the new-session prompt: the editor on a temp file, then
     /// the create step (a detached `rushi run`). When the project
@@ -175,7 +200,8 @@ enum Command {
     /// log seq: a user-message target rewinds `before` it (the
     /// message leaves the context), every other target rewinds `on`
     /// it. Needs an idle loop. The marker is appended through the
-    /// kernel's `log` binary (the sibling of `rushi`). The session
+    /// kernel's log appender (`rushi-log`, the legacy `log` of older
+    /// kernels; the sibling of the resolved `rushi`). The session
     /// dir is the CWD (the events channel) or `--dir`.
     Rewind {
         /// The picked entry's 1-based log seq (the row token).
@@ -262,7 +288,7 @@ fn main() {
             mtime,
             path,
         } => preview::preview(&status, &name, &repo, &phase, &last, &mtime, &path),
-        Command::Events { dir, chat } => events::events(dir, chat),
+        Command::Events { dir, chat, branch } => events::events(dir, chat, branch),
         Command::NewSession { row } => std::process::exit(prompt::new_session(&row)),
         Command::SendMessage { row, events } => {
             std::process::exit(prompt::send_message(row.as_deref(), events))

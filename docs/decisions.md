@@ -1,3 +1,93 @@
+## 91. The events channel shows the collapsed branch view, and branch_view re-opens the picked parent branch (2026-10-26)
+
+The user asked for three things in the `rushi-sessions-events`
+channel. The branch connectors pointed the wrong way for the
+newest-first listing (the `└─` ran up to the target row, but the
+branch block sits above its target). The listing printed every
+historical entry, including the abandoned branch spans that a
+rewind left behind; the user wanted only the active branch plus
+the history before each diverging node, the hidden spans folded
+into counts and labels. And a fork-mode action that opens the
+picked entry's parent branch in a nested tv, so the channel's
+preview, refresh and the rewind/summarize/send_message actions
+work inside that view; closing the nested tv restores the
+original.
+
+Decisions (all in the `rushi-sessions` binary, no new channel):
+
+- Newest-first plus down-pointing connectors: the indent column
+  now emits `┌─ ` at depth d (three spaces per level) and `┌+ `
+  when the row hides a folded span; the trunk stays empty (the
+  `+` marks the fold). `tree_depths` and the depth math are
+  unchanged; only the glyph output changed.
+- `rushi-sessions events` runs the collapsed view. The binary
+  computes the active ranges from the rewind markers (the
+  `rushi-common` math), keeps the active branch plus the trunk
+  history, and folds every hidden span onto the row that owns
+  it. One summary column carries the annotations: a `(Folded N)`
+  count of the folded span, a `branched from #T` label where a
+  hidden branch left the trunk, a `branched out to #M` label
+  where a hidden branch leaves the shown span, and a trailing
+  `K hidden` for the gap behind the newest row. The `#N`
+  numbers are 0-based item numbers (the log seq minus 1). The
+  `User+Assistant` view adds the rewind markers to the message
+  rows so the annotations stay visible; markers were never
+  `[masked]` and stay untagged.
+- One new flag, `--branch SEQ`, carries both the cutoff and the
+  focus of a focused view: the listing folds every span outside
+  the focus and marks the focus row. The focus is the deepest
+  block that contains the pick's branch point; a marker pick
+  focuses its target, so the abandoned gap folds onto the
+  marker row and the latest branch's user intention stays
+  visible. An out-of-range focus prints
+  `rushi-sessions: seq F is out of range (the log has L
+  entries)` on stderr and exits 1. The stable kernel consumers
+  (`numbered_events`, `event_at`, `log_active_ranges`) are
+  unchanged.
+- The `branch_view` action (bound to alt-b) is the fork-mode
+  shell body. It guards the channel CWD (`pwd` empty aborts
+  with a message), then mirrors the main channel's
+  browse_events pane plumbing: the control-char `-F` pane
+  lookup (the pane id and floating flag assembled without
+  braces, so television's template pipeline sees one split
+  token and no stray group). When tv runs inside tmux, the
+  nested tv opens in a floating pane over the tv window:
+  `tmux new-pane -f` in the multi-arg command form (the same
+  idiom as the prompt actions' floating pane, the tmux 3.8+
+  tier), centered, 62% width and 90% height, labeled
+  `rushi branch view`, running
+  `tv rushi-sessions-events --source-command "rushi-sessions
+  events --branch <seq>"` from the session dir. The pane dies
+  when the nested tv exits, restoring the original view with
+  no layout change. When the floating pane is unavailable
+  (older tmux) the browse_events split below the newest pane
+  is the fallback tier; outside tmux the nested tv runs in the
+  fork's pane. The nested tv keeps the channel's display
+  template, preview and actions through the source-command
+  override, so ctrl-r re-sources the view and the
+  rewind/summarize/send_message actions work there.
+
+Updated `rushi-sessions-events.toml` (the header, the alt-b
+binding and the action), its Nix mirror
+`rushi-sessions-events-channel.nix`, and locked the action in
+`tests/toml_channel.rs`. The events tests carry the user's
+nine-entry example (the items 0-8 log with two rewinds) as a
+fixture: the main view, the focused views and the out-of-range
+error are asserted line by line.
+
+Verification: 138 tests green. `nix eval` of the channel
+attrset reproduces the repo TOML command byte for byte
+(`untab` restores the real tab of the split token; the
+multi-line `''` string keeps the trailing newline of the TOML
+multi-line value). The action body parses (`sh -n` on the
+decoded inner script) and ran end to end in a live tmux 3.8
+server: the floating pane landed over the tv window and the
+pane program ran the nested tv with the expected args. The
+live session e2e (alt-b on a marker row, rewind and summarize
+in the nested view, ctrl-r refresh, esc to close the floating
+pane and restore the original) passes with the deployed
+binary.
+
 ## 92. The log-appender name tracks the kernel's 58 rename: `rushi-log`, legacy `log` (2026-10-26)
 
 The kernel's 58 (closes 57) renames the log-appender binary from

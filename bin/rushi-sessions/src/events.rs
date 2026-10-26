@@ -1,18 +1,21 @@
 //! The `events` command: one TSV row per entry of events.jsonl, plus the
 //! log access helpers shared with the other commands.
 //!
-//! Rewound sessions carry the kernel's `rewind` markers in the same
-//! log. The active-path math comes from `rushi-common`, the kernel's
-//! shared crate: `log_active_ranges` projects the log onto the spans
-//! that survive every marker. The `chat` view shows the active path
-//! only. The full view keeps every row and tags the masked ones.
+//! The list is the collapsed branch view of `branchview`: the active
+//! branch plus the history before the diverging node, with the
+//! inactive spans folded onto the rows that hide them. The default
+//! view takes the cutoff at the log's last seq. With `--branch SEQ`
+//! the view takes the picked seq as the cutoff and the picked
+//! block as the focus: the parent-branch view of the `branch_view`
+//! action. The `chat` view keeps the user and assistant messages and
+//! the markers. The active-range projection of the preview card
+//! still runs on the kernel's `log_active_ranges`.
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 
-use rushi_common::rewind::{parse_rewind_event, seq_in_ranges};
+use rushi_common::rewind::parse_rewind_event;
 
-use crate::format::{flatten_ws, marker_summary, short_tag, ts_local, value_inline};
-use crate::tree::{indent_for, tree_depths};
+use crate::format::{flatten_ws, marker_summary, value_inline};
 
 /// The 1-based line numbers of the parseable lines of the session's
 /// events.jsonl, paired with those events. Unparseable lines are
@@ -62,65 +65,47 @@ pub(crate) fn log_active_ranges(rows: &[(u64, Value)]) -> Vec<(usize, usize)> {
         .collect();
     rushi_common::rewind::active_ranges(rows.len(), &refs)
 }
-/// One TSV row per numbered event, oldest first. The caller prints
-/// them reversed. The columns are seq, tag, ts, summary, indent.
-/// The tag is the short marker of the entry type (at most two
-/// capitalized letters, `[U]` in the display template). The indent
-/// is the tree-depth box connector (three spaces per level, the
-/// `└─` branch marker, empty on the trunk), the port of the TUI tree
-/// view's indent. With `chat`, only the active-path user and
-/// assistant messages print. A row masked by a rewind marker carries
-/// a `[masked]` summary prefix. The marker itself never carries it.
-pub(crate) fn event_rows(
-    rows: &[(u64, Value)],
-    ranges: &[(usize, usize)],
-    chat: bool,
-) -> Vec<String> {
-    let depths = tree_depths(rows);
-    rows.iter()
-        .enumerate()
-        .filter_map(|(i, (seq, o))| {
-            let ty = o.get("type").and_then(|v| v.as_str()).unwrap_or("?");
-            let active = seq_in_ranges(*seq as usize, ranges);
-            let is_message = matches!(ty, "user_message" | "assistant_message");
-            if chat && (!active || !is_message) {
-                return None;
-            }
-            let ts = o.get("ts").map(ts_local).unwrap_or_default();
-            let mut summary = event_summary(o);
-            if !chat && !active && ty != "rewind" {
-                summary = format!("[masked] {summary}");
-            }
-            let tag = short_tag(ty);
-            let indent = indent_for(depths[i]);
-            Some(format!("{seq}\t{tag}\t{ts}\t{summary}\t{indent}"))
-        })
-        .collect()
-}
-/// One TSV row per entry of the session's events.jsonl. The columns
-/// are seq (the 1-based line number), tag (the short marker of the
-/// entry type), ts (local wall-clock time), a one-line summary, and
-/// the tree-depth indent (the TUI tree view's box connector, empty
-/// on the trunk). The summary carries no tabs or newlines, so the
-/// row stays a single TSV line. Nothing is clipped; the list side
-/// truncates. The rows come newest first. With `chat`, only the
-/// active-path user and assistant messages print. A row masked by a
-/// rewind marker carries a `[masked]` summary prefix.
-pub fn events(dir: Option<PathBuf>, chat: bool) {
+
+/// The collapsed view of the session's events.jsonl: one TSV row per
+/// shown entry, the columns are seq, tag, ts, the annotated summary,
+/// and the tree-depth indent. The rows come oldest first; the caller
+/// prints them reversed. The view is the active branch plus the
+/// history before the diverging node: the trunk down to the first
+/// branch point, the chain of branch markers to the focus block, the
+/// focus block's interior to the cutoff, and the picked block's
+/// child markers past the cutoff. The inactive spans fold onto the
+/// row that hides them; the summary carries the `(Folded N)` count
+/// and the branch annotations (`branched from`, `branched out to`,
+/// `hidden`). With `focus`, the picked seq is the cutoff and the
+/// picked block the focus (the parent-branch view); the caller
+/// validates the focus against the log length. With `chat`, only the
+/// user and assistant messages and the markers print.
+pub fn events(dir: Option<PathBuf>, chat: bool, focus: Option<u64>) {
     let base = match dir {
         Some(d) => d,
         None => std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
     };
     let rows = numbered_events(&base);
-    let ranges = log_active_ranges(&rows);
-    for row in event_rows(&rows, &ranges, chat).iter().rev() {
+    if let Some(f) = focus {
+        let last = rows.last().map(|(s, _)| *s).unwrap_or(0);
+        if f < 1 || (last > 0 && f > last) {
+            eprintln!(
+                "rushi-sessions: seq {f} is out of range (the log has {last} entries)"
+            );
+            std::process::exit(1);
+        }
+    }
+    let view = crate::branchview::view_rows(&rows, focus, chat);
+    for row in view.iter().rev() {
         println!("{row}");
     }
 }
+
+
 /// The one-line summary of an event for the list column. It keeps the
 /// whole payload; it only flattens tabs and newlines to spaces so the
 /// TSV row cannot break.
-fn event_summary(o: &Value) -> String {
+pub(crate) fn event_summary(o: &Value) -> String {
     let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
     match t {
         "rewind" | "user_message_retract" => marker_summary(o),
@@ -282,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn event_rows_chat_keeps_active_messages_only() {
+    fn branch_view_folds_the_abandoned_span() {
         let v = |t: &str| serde_json::json!({"type": t});
         let rows: Vec<(u64, Value)> = vec![
             (1, v("user_message")),
@@ -296,19 +281,32 @@ mod tests {
             (5, v("user_message")),
             (6, v("assistant_message")),
         ];
-        let ranges = log_active_ranges(&rows);
-        let chat: Vec<u64> = event_rows(&rows, &ranges, true)
-            .into_iter()
+        // The main view: the active path {1, 2, 5, 6} plus the
+        // marker row 4. The abandoned tool_call (seq 3) folds onto
+        // the branch-point row 2.
+        let all: Vec<u64> = crate::branchview::view_rows(&rows, None, false)
+            .iter()
             .map(|r| r.split('\t').next().unwrap().parse().unwrap())
             .collect();
-        assert_eq!(chat, vec![1, 2, 5, 6]);
-        let all = event_rows(&rows, &ranges, false);
-        assert_eq!(all.len(), 6);
-        // The abandoned tool_call at seq 3 is tagged. The marker at
-        // seq 4 is never tagged.
-        assert!(all[2].contains("[masked]"), "{}", all[2]);
-        assert!(!all[3].contains("[masked]"), "{}", all[3]);
-        assert!(all[3].contains("rewind -> seq 2 (on)"), "{}", all[3]);
+        assert_eq!(all, vec![1, 2, 4, 5, 6]);
+        let row2 = crate::branchview::view_rows(&rows, None, false)
+            .into_iter()
+            .find(|r| r.starts_with("2\t"))
+            .unwrap();
+        assert!(row2.contains("(Folded 1)"), "{}", row2);
+        assert!(row2.contains("branched out to #3"), "{}", row2);
+        let row4 = crate::branchview::view_rows(&rows, None, false)
+            .into_iter()
+            .find(|r| r.starts_with("4\t"))
+            .unwrap();
+        assert!(row4.contains("branched from #1"), "{}", row4);
+        // The chat view keeps the messages and the marker, drops the
+        // tool rows.
+        let chat: Vec<u64> = crate::branchview::view_rows(&rows, None, true)
+            .iter()
+            .map(|r| r.split('\t').next().unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(chat, vec![1, 2, 4, 5, 6]);
     }
 
     /// One zstd frame per line, the kernel's per-commit layout (P1).

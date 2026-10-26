@@ -309,4 +309,63 @@ fn events_channel_toml_parses() {
         "actions:yank_entry",
         "ctrl-y binds yank_entry"
     );
+
+    // The branch_view action (alt-b): re-open the channel on the
+    // picked row's parent branch. The nested tv re-sources the
+    // channel with the binary's `--branch` focus flag through
+    // television's `--source-command` override, so the display
+    // template, preview and actions stay and the fork-mode shell
+    // body runs the pane plumbing of the main channel's
+    // browse_events. The nested tv runs in a floating pane
+    // (`tmux new-pane -f`, the tmux 3.8+ tier); the split-pane
+    // form stays as the fallback tier for older tmux.
+    let bv = v["actions"]["branch_view"].clone();
+    let bc = bv["command"].as_str().unwrap();
+    assert!(
+        bc.contains("rushi-sessions events --branch $s"),
+        "binary focus call: {bc}"
+    );
+    assert!(
+        bc.contains("tv rushi-sessions-events --source-command"),
+        "the nested tv re-sources this channel: {bc}"
+    );
+    assert!(bc.contains("'{split:\t:0}'"), "seq token: {bc}");
+    // The pane lookup keeps the browse_events control-char -F
+    // format (the pane id and floating flag assembled without
+    // braces, so television's template pipeline sees no stray
+    // group token).
+    assert!(
+        bc.contains("pane_floating_flag"),
+        "the pane lookup keeps the control-char -F format: {bc}"
+    );
+    // The floating-pane tier (tmux 3.8+): the nested tv runs in
+    // a `new-pane -f` pane over the tv window, sized and
+    // labeled; the split-pane fallback stays behind it.
+    assert!(
+        bc.contains("new-pane -f"),
+        "the floating pane (tmux 3.8+ tier): {bc}"
+    );
+    assert!(
+        bc.contains("tmux split-window"),
+        "the split-pane fallback tier: {bc}"
+    );
+    assert_eq!(
+        bc.matches('{').count(),
+        1,
+        "one split token, no stray brace: {bc}"
+    );
+    assert_eq!(
+        bv["mode"].as_str().unwrap(),
+        "fork",
+        "branch_view fork mode"
+    );
+    assert!(
+        bv["shell"].as_str().unwrap().contains("bash"),
+        "branch_view bash shell"
+    );
+    assert_eq!(
+        v["keybindings"]["alt-b"].as_str().unwrap(),
+        "actions:branch_view",
+        "alt-b binds branch_view"
+    );
 }
