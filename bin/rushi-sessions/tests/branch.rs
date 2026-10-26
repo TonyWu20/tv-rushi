@@ -1,6 +1,7 @@
 //! Integration tests for the `rewind` and `summarize` subcommands,
 //! run against a fixture session dir and a stubbed kernel bin dir
-//! (the `rushi`/`log`/`compact` stubs, the real kernel's siblings).
+//! (the `rushi`/`rushi-log`/`log`/`compact` stubs, the real
+//! kernel's siblings across the 58 rename).
 
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
@@ -18,7 +19,8 @@ struct Fixture {
     dir: PathBuf,
     /// The project dir (the `cwd` file's target).
     project: PathBuf,
-    /// The stub kernel bin dir (the `rushi`/`log`/`compact` stubs).
+    /// The stub kernel bin dir (the `rushi`/`rushi-log`/`log`/
+    /// `compact` stubs).
     stubs: PathBuf,
 }
 
@@ -52,14 +54,22 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
     let cwd = project.to_string_lossy().into_owned();
     std::fs::write(session.join("cwd"), cwd).unwrap();
     // The stub kernel bin dir: `rushi` (the resolver's anchor),
-    // `log` (the marker append), `compact` (the branch summary).
-    // The stubs record their calls through the STUB_* env vars.
+    // `rushi-log` and `log` (the marker appender across the 58
+    // rename, new name first in the channel's name list),
+    // `compact` (the branch summary). The stubs record their
+    // calls through the STUB_* env vars; the stub echo labels the
+    // name that won the resolve.
     let stubs = d.join("bin");
     std::fs::create_dir_all(&stubs).unwrap();
     std::fs::write(stubs.join("rushi"), "#!/bin/sh\nexit 0\n").unwrap();
     std::fs::write(
+        stubs.join("rushi-log"),
+        "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-rushi-log $@\" >> \"$STUB_LOG_FILE\"\n",
+    )
+    .unwrap();
+    std::fs::write(
         stubs.join("log"),
-        "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"$@\" >> \"$STUB_LOG_FILE\"\n",
+        "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-log $@\" >> \"$STUB_LOG_FILE\"\n",
     )
     .unwrap();
     std::fs::write(
@@ -68,7 +78,7 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
     )
     .unwrap();
     use std::os::unix::fs::PermissionsExt;
-    for name in ["rushi", "log", "compact"] {
+    for name in ["rushi", "rushi-log", "log", "compact"] {
         let p = stubs.join(name);
         let mut perms = std::fs::metadata(&p).unwrap().permissions();
         perms.set_mode(0o755);
@@ -154,7 +164,8 @@ fn rewind_appends_the_marker_for_a_user_message_target() {
     assert!(out.contains("rewound to seq 5 (before)"), "{out}");
     assert!(out.contains("left the context"), "{out}");
     let calls = std::fs::read_to_string(&log_file).unwrap();
-    // The marker JSON and the `--session` arg of the `log` call.
+    // The marker JSON and the `--session` arg of the appender call.
+    // With both stubs present, the new name wins the name list.
     let marker = calls.lines().next().unwrap();
     let v: serde_json::Value = serde_json::from_str(marker).unwrap();
     assert_eq!(v["type"], "rewind");
@@ -162,6 +173,28 @@ fn rewind_appends_the_marker_for_a_user_message_target() {
     assert_eq!(v["mode"], "before");
     assert_eq!(v["reason"], "tv_pick");
     assert!(calls.contains("--session"), "{calls}");
+}
+
+/// Without the new `rushi-log` stub (an older kernel build) the
+/// name list falls through to the legacy `log` stub: both
+/// generations of the kernel stay launchable.
+#[test]
+fn rewind_resolves_the_legacy_log_name_without_rushi_log() {
+    let f = fixture("br-legacy", true);
+    let _ = std::fs::remove_file(f.stubs.join("rushi-log"));
+    let log_file = f.dir.join("log-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["rewind", "5", "--dir", &dir_arg(&f)],
+        &[("STUB_LOG_FILE", log_file.to_str().unwrap())],
+    );
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let marker = calls.lines().next().unwrap();
+    let v: serde_json::Value = serde_json::from_str(marker).unwrap();
+    assert_eq!(v["type"], "rewind");
+    assert!(calls.contains("stub-log"), "{calls}");
+    assert!(!calls.contains("stub-rushi-log"), "{calls}");
 }
 
 #[test]

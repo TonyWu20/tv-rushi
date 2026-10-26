@@ -1,3 +1,100 @@
+## 92. The log-appender name tracks the kernel's 58 rename: `rushi-log`, legacy `log` (2026-10-26)
+
+The kernel's 58 (closes 57) renames the log-appender binary from
+`log` to `rushi-log`: the reserved buildEnv name of 57. No
+`bin/log` alias: the builder drops the alias too. Kernel builds
+older than 0.2.0 still ship `log`, so a deployed host can carry
+either generation of the kernel.
+
+Decision (the branch's `kernel_launch` and `kernel_bin`; the 90
+mechanism is unchanged):
+
+- The log-appender launch resolves a name list, new kernel first:
+  `["rushi-log", "log"]`. The gated devShell probe and the
+  PATH-sibling fallback walk the list in turn; the first resolvable
+  name wins the launch. The new-kernel host resolves `rushi-log`,
+  the older-kernel host resolves the legacy `log`. No kernel
+  version check: the resolution is the version check.
+- The `summarize` call is unchanged: `compact` keeps its name in
+  the 58 rename. The name list is the log appender's alone.
+
+Verification: the launch worlds are unit-tested on the name list
+(the gated probe hits the first seeded name, the unresolvable gate
+falls back on the list). The integration stubs carry both
+appender names: with both stubs the new name wins the marker
+append, without the `rushi-log` stub the legacy `log` stub runs.
+139 tests green. The `nix build` of the three channel derivations
+fails on a co-resident uncommitted module (`branchview`, declared
+in `main.rs` but untracked, outside `cleanSource`'s git filter):
+the build is clean for this change's own hunks and re-runs once
+the co-resident work is tracked.
+
+## 90. The kernel bin launch keeps the devShell only when the bin resolves from the devShell PATH (2026-10-26)
+
+The 88 kernel-bin extension launched `rewind` and `summarize` as a
+bare `nix develop -c <bin>` in the session's project dir, on the
+premise that a binary the devShell does not ship falls back to the
+inherited PATH entry. For the kernel bins that premise is false on
+the host that matters: `log` and `compact` are siblings of the
+kernel's `rushi` in the package's one bin dir, and the per-user
+symlink farm does not expose them as bare names. A project whose
+devShell ships no kernel bin (a flake without a devShell, or a
+devShell that omits the kernel package) leaves a bare `log`
+unfindable on the devShell PATH and on the inherited PATH alike.
+The bare launch dies with a 127, the marker never lands, and
+`rewind` is broken. `summarize` survives only when the farm does
+expose `compact` on the inherited PATH.
+
+Decision (the branch's `kernel_launch`; the 88 gate and the devshell
+module are unchanged):
+
+- With the gate, `kernel_launch` keeps the `nix develop -c <bin>`
+  in the flake dir only when `<bin>` resolves from the devShell
+  PATH. The probe is the cached `devshell::resolve(dir, bin)` of
+  89: its materialize `nix develop -c bash -c 'command -v <bin>'`
+  searches the devShell PATH including the inherited PATH, and a
+  hit is cached per flake generation.
+- A resolve miss (the devShell and the inherited PATH both lack
+  the name, or the bounded materialize times out) falls back to
+  the PATH sibling of the resolved `rushi` with the caller's
+  working dir, the pre-flake behavior of 87. The miss is not
+  cached: a repeated manual action re-probes, and the TTL of a
+  later hit still bounds the inherited-PATH staleness.
+- The fallback sibling search follows the resolved `rushi` entry
+  to the end of its symlink chain (the per-user farm and the nix
+  profile entries are symlinks into the store's real bin dir, the
+  one dir that carries the sibling). The farm does not expose a
+  bare `log`, so a chain-less search on the farm dir missed the
+  sibling even before 88.
+- A resolve hit changes nothing about the launch: the `nix
+  develop -c <bin>` in the flake dir and the full devShell
+  environment of 88. The resolved store path is the resolvability
+  proof only; it is not exec'd, unlike the 89 preview probe.
+
+The kernel-side twin is the kernel issue 57: the nixpkgs buildEnv
+builder skips the reserved name `log`, so a buildEnv-merged devShell
+ships 16 of the 17 kernel bins. The bare `log` is absent even when
+the devShell carries the kernel package. A 57 resolution changes
+which world the probe lands in (a workaround restores the devShell
+hit, a rename adds a new name to the channel's kernel bin names),
+but it does not change this fallback. The no-devShell world (this
+project) sits outside 57's scope entirely. No host where the kernel
+is reachable only through the dropped devShell merge is fixed by
+either side alone.
+
+Verification: `kernel_launch` is unit-tested in the three worlds:
+the gated launch with a seeded fresh cache entry (no nix call),
+the gated fall-back on a bare flake whose materialize fails in
+under a second, and the no-gate PATH sibling. Against the repro
+project (a flake without a devShell, a farm that exposes
+`compact` but no bare `log`), the pre-fix rewind died with a 127
+from `nix develop -c log`; the fixed rewind appends the marker
+through the PATH sibling of the resolved `rushi`. The `summarize`
+`compact` launch keeps the gated form on that project (the bare
+`compact` resolves from the inherited farm PATH through the
+devShell PATH). 138 tests green; `nix build` of the three channel
+derivations clean.
+
 ## 89. The preview devShell probe caches the binary's store path by generation (2026-10-24)
 
 The 88 extension made the preview card's `rushi config`

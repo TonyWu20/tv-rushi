@@ -5,12 +5,19 @@
 //! at the picked event, then run the kernel's `compact --branch`).
 //!
 //! Both call the kernel's own binaries, the way the TUI does: the
-//! marker is appended through the kernel's `log` binary (the one
-//! locked single-write append, FT-005), the branch summary through
-//! the kernel's `compact` binary. The binaries are the siblings of
-//! `rushi` on PATH: the kernel's Nix package ships one bin dir, and
-//! the per-user symlink farm does not expose `log` or `compact`
-//! individually.
+//! marker is appended through the kernel's log-appender binary
+//! (the one locked single-write append, FT-005), the branch
+//! summary through the kernel's `compact` binary. The binaries are
+//! the siblings of `rushi`: the kernel's Nix package ships one bin
+//! dir, and the per-user symlink farm does not expose the kernel
+//! bins individually. The log appender is `rushi-log` since the
+//! kernel's 58 rename (the reserved name `log` of 57); the legacy
+//! `log` name of the older kernels is kept as the second entry of
+//! the name list. When the session's project dir carries a flake
+//! and `nix` is on PATH and a name resolves from the devShell
+//! PATH, the launch is `nix develop -c <bin>` in that dir
+//! (decision 88, the 90 resolvability fallback); otherwise the
+//! PATH sibling of the resolved `rushi`.
 //!
 //! Both actions need the loop to be idle, the TUI's guard. The probe
 //! is the kernel's `.loop.lock` flock, the same authority `rushi
@@ -135,7 +142,7 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     // recorded working dir.
     let w = local_workdir(&base);
     let projdir = base.parent().and_then(|p| p.parent());
-    let (argv, cwd) = kernel_launch("compact", projdir, Some(PathBuf::from(&w)));
+    let (argv, cwd) = kernel_launch(&["compact"], projdir, Some(PathBuf::from(&w)));
     let label = argv[0].clone();
     let mut c = launch_command(&argv, &cwd);
     c.arg(&base).arg("--branch");
@@ -202,48 +209,73 @@ fn probe_idle(dir: &Path) -> Result<bool, String> {
 }
 
 /// The kernel binaries next to `rushi` (the Nix package ships one
-/// bin dir): the per-user farm does not symlink `log` or `compact`,
-/// so the sibling of the resolved `rushi` is the source of truth. A
-/// missing sibling falls back to the bare name on PATH.
-fn kernel_bin(name: &str) -> String {
+/// bin dir): the per-user farm does not symlink the kernel bins,
+/// so the sibling of the resolved `rushi` is the source of truth.
+/// The resolved entry may be a farm or profile symlink: the chain
+/// is followed to the store's real bin dir, which carries the
+/// sibling. Each name is tried in turn: the sibling of the
+/// resolved `rushi` first, then the bare name on PATH. When no
+/// name resolves, the last bare name (the spawn fails visibly).
+fn kernel_bin(names: &[&str]) -> String {
     if let Some(rushi) = which("rushi") {
-        if let Some(d) = rushi.parent() {
-            let p = d.join(name);
-            if p.is_file() {
-                return p.to_string_lossy().into_owned();
+        let real = std::fs::canonicalize(&rushi).unwrap_or(rushi);
+        if let Some(d) = real.parent() {
+            for name in names {
+                let p = d.join(name);
+                if p.is_file() {
+                    return p.to_string_lossy().into_owned();
+                }
             }
         }
     }
-    name.to_string()
+    for name in names {
+        if which(name).is_some() {
+            return name.to_string();
+        }
+    }
+    names.last().unwrap_or(&"").to_string()
 }
 
-/// The kernel binary launch of a session (decision 88): the argv
-/// plus the working dir of the launch. The project dir carries a
-/// flake and `nix` is on PATH: `nix develop -c <name>` in that
-/// dir. The kernel binaries (`log`, `compact`) resolve from the
-/// devShell, shadowing the inherited PATH; a binary the devShell
-/// does not ship falls back to the inherited PATH entry. Without
-/// the gate, the PATH sibling of the resolved `rushi` with the
-/// caller's working dir.
+/// The kernel binary launch of a session (decision 88, the 90
+/// resolvability fallback): the argv plus the working dir of the
+/// launch. The project dir carries a flake and `nix` is on PATH:
+/// `nix develop -c <name>` in that dir, when the gate holds. The
+/// bare `nix develop -c <name>` only works when `<name>` resolves
+/// from the devShell PATH (the devShell packages shadowing the
+/// inherited PATH). The kernel bins (`log`, `compact`) are the
+/// siblings of the kernel's `rushi` in the package's one bin dir;
+/// a devShell that ships no kernel bin leaves a bare `log`
+/// unfindable on the inherited PATH too, and the bare launch dies
+/// with a 127 (decision 90). The probe is the cached devShell
+/// resolve of `<name>` (decision 89): a resolve hit keeps the
+/// gated launch in the flake dir; a miss (the devShell and the
+/// inherited PATH both lack the name, or the bounded materialize
+/// times out) falls back to the PATH sibling of the resolved
+/// `rushi` with the caller's working dir, the pre-flake behavior.
+/// Without the gate, the fallback is unconditional.
 fn kernel_launch(
-    name: &str,
+    names: &[&str],
     projdir: Option<&Path>,
     cwd: Option<PathBuf>,
 ) -> (Vec<String>, Option<PathBuf>) {
     if let Some(p) = projdir {
         if nix_dev_dir(&p.to_string_lossy()) {
-            return (
-                vec![
-                    "nix".to_string(),
-                    "develop".to_string(),
-                    "-c".to_string(),
-                    name.to_string(),
-                ],
-                Some(p.to_path_buf()),
-            );
+            for name in names {
+                if crate::devshell::resolve(p, name).is_some() {
+                    return (
+                        vec![
+                            "nix".to_string(),
+                            "develop".to_string(),
+                            "-c".to_string(),
+                            name.to_string(),
+                        ],
+                        Some(p.to_path_buf()),
+                    );
+                }
+            }
         }
     }
-    (vec![kernel_bin(name)], cwd)
+    (vec![kernel_bin(names)], cwd)
 }
 
 /// The launch's command builder: the argv as a `Command`, plus the
@@ -275,14 +307,22 @@ fn rewind_marker(seq: u64, mode: &str) -> String {
     .to_string()
 }
 
+/// The kernel's log-appender names, new kernel first: `rushi-log`
+/// since the kernel's 58 rename of the reserved name (kernel 57),
+/// and the legacy `log` of the older kernel builds. The first
+/// name that resolves from the devShell PATH (the gated probe) or
+/// from the resolved `rushi`'s sibling bin dir (the fallback)
+/// wins. Both generations of the kernel stay launchable.
+const LOG_BIN_NAMES: &[&str] = &["rushi-log", "log"];
+
 /// Append the one `rewind` marker of a pick through the kernel's
-/// `log` binary (the locked single-write append, FT-005), and wait
-/// for it. The marker must land in the log before a `compact` child
-/// reads it, so the append is synchronous.
+/// log appender (the locked single-write append, FT-005), and wait
+/// for it. The marker must land in the log before a `compact`
+/// child reads it, so the append is synchronous.
 fn append_rewind_marker(base: &Path, seq: u64, mode: &str) -> Result<(), String> {
     let marker = rewind_marker(seq, mode);
     let projdir = base.parent().and_then(|p| p.parent());
-    let (argv, cwd) = kernel_launch("log", projdir, None);
+    let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, projdir, None);
     let label = argv[0].clone();
     let mut c = launch_command(&argv, &cwd);
     c.arg("--session").arg(base);
@@ -371,7 +411,7 @@ mod tests {
     /// dir, the pre-flake behavior.
     #[test]
     fn kernel_launch_without_gate_keeps_the_path_binary() {
-        let (argv, cwd) = kernel_launch("log", None, None);
+        let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, None, None);
         assert_eq!(argv.len(), 1);
         assert!(!argv[0].is_empty());
         assert!(cwd.is_none());
@@ -380,14 +420,16 @@ mod tests {
         let _ = std::fs::create_dir_all(&base);
         let bare = base.join("bare");
         std::fs::create_dir_all(&bare).unwrap();
-        let (argv, cwd) = kernel_launch("log", Some(bare.as_path()), Some(bare.clone()));
+        let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, Some(bare.as_path()), Some(bare.clone()));
         assert_eq!(argv.len(), 1);
         assert_eq!(cwd, Some(bare));
     }
 
     /// With the gate (a flake.nix in the projdir, nix on the host
-    /// PATH) the launch is `nix develop -c <bin>` in the flake dir;
-    /// the launch dir is the flake dir, not the caller's.
+    /// PATH) and a resolvable bin the launch is `nix develop -c
+    /// <bin>` in the flake dir; the launch dir is the flake dir,
+    /// not the caller's. The resolve is a seeded fresh cache entry,
+    /// so the probe runs no nix call.
     #[test]
     fn kernel_launch_with_gate_is_the_devshell() {
         let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
@@ -397,8 +439,17 @@ mod tests {
         if which("nix").is_none() {
             return;
         }
+        // Seed a fresh cache entry per bin so the resolve probe
+        // serves the seeded path without a nix call. The seeded
+        // paths must exist (the freshness check re-stats them).
+        let compact = base.join("compact");
+        std::fs::write(&compact, "x").unwrap();
+        crate::devshell::seed(flake.as_path(), "compact", compact.to_str().unwrap());
+        let rushi_log = base.join("rushi-log");
+        std::fs::write(&rushi_log, "x").unwrap();
+        crate::devshell::seed(flake.as_path(), "rushi-log", rushi_log.to_str().unwrap());
         let w = base.join("work");
-        let (argv, cwd) = kernel_launch("compact", Some(flake.as_path()), Some(w.clone()));
+        let (argv, cwd) = kernel_launch(&["compact"], Some(flake.as_path()), Some(w.clone()));
         assert_eq!(
             argv,
             vec![
@@ -409,8 +460,37 @@ mod tests {
             ]
         );
         assert_eq!(cwd, Some(flake.clone()));
-        let (argv, cwd) = kernel_launch("log", Some(flake.as_path()), None);
+        // The probe walks the name list: the first name with a
+        // resolve hit (the new `rushi-log`) wins the launch.
+        let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, Some(flake.as_path()), None);
         assert_eq!(argv[0], "nix");
+        assert_eq!(argv[3], "rushi-log");
         assert_eq!(cwd, Some(flake));
+    }
+
+    /// With the gate but a devShell that resolves no name of the
+    /// list (no cache entry, the materialize fails on a bare `{}`
+    /// flake with no devShell) the launch falls back to the PATH
+    /// sibling of the resolved `rushi` with the caller's working
+    /// dir, the pre-flake behavior (decision 90). The bare `nix
+    /// develop -c <bin>` of decision 88 is what dies with a 127
+    /// in this world.
+    #[test]
+    fn kernel_launch_with_gate_unresolvable_keeps_the_path_sibling() {
+        let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
+        let flake = base.join("unresolvable");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        if which("nix").is_none() {
+            return;
+        }
+        // No cache entry for either name: the probe materializes
+        // `nix develop` on the bare flake, which lacks a devShell,
+        // so every resolve is None and the fallback holds. The
+        // bare flake fails the evaluate in under a second, so the
+        // materialize never hits its wall-clock cap.
+        let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, Some(flake.as_path()), Some(flake.clone()));
+        assert_eq!(argv, vec![kernel_bin(LOG_BIN_NAMES)]);
+        assert_eq!(cwd, Some(flake.clone()));
     }
 }

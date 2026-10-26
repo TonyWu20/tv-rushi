@@ -128,6 +128,15 @@ fn entry_store(f: &Path, path: &str, gen: &str) {
     std::fs::write(f, v.to_string()).ok();
 }
 
+/// The test hook of the resolve probe: store a fresh cache entry for
+/// `bin` in `dir`'s devShell cache (the current generation, a
+/// wall-clock now), so a later `resolve` serves the seeded path
+/// without a nix call.
+#[cfg(test)]
+pub(crate) fn seed(dir: &Path, bin: &str, path: &str) {
+    entry_store(&cache_path(dir, bin), path, &generation(dir));
+}
+
 /// The wall-clock time in seconds, for the cache TTL.
 fn now_unix() -> u64 {
     std::time::SystemTime::now()

@@ -54,14 +54,17 @@ action (enter) launches it from the session list.
   When the session's project dir carries a `flake.nix` and `nix`
   is on PATH, the actions run in that devShell instead
   (`nix develop -c ...`, decisions 87/88 in `docs/decisions.md`);
-  the remote rows run the same check on the remote host, and the
-  `rewind`/`summarize` kernel bins and the preview card's
-  `rushi config` probe resolve the same way. The devShell shadows
-  the inherited PATH, so a binary the devShell does not ship falls
-  back to the inherited PATH entry. The preview's `rushi config`
-  probe resolves the devShell `rushi` store path once per flake
-  generation and execs it directly (decision 89), so a repeated
-  preview fetch does not re-run the heavy `nix develop`.
+  the remote rows run the same check on the remote host. The
+  devShell shadows the inherited PATH, so a binary the devShell
+  does not ship falls back to the inherited PATH entry. The
+  `rewind`/`summarize` kernel bins keep the `nix develop` launch
+  only when the bin resolves from the devShell PATH (the cached
+  probe of decision 89); otherwise the launch falls back to the
+  PATH sibling of the resolved `rushi` (decision 90). The preview's
+  `rushi config` probe resolves the devShell `rushi` store path
+  once per flake generation and execs it directly (decision 89),
+  so a repeated preview fetch does not re-run the heavy
+  `nix develop`.
 - `setsid` and `stty`, which `send_message` uses to detach the loop and
   to restore the terminal. Both ship in the standard Unix base.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`
