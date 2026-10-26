@@ -1,3 +1,56 @@
+## 93. The open* actions land in the recorded working dir, and the TUI gets the absolute session dir (2026-10-27)
+
+The open, open_v, open_dir, open_dir_tmux_h and open_dir_tmux_v
+actions resolve the session's working dir from the session's
+recorded `cwd` file. The decision 52 resolution walks up from the
+`cwd` value to the nearest ancestor that holds a `sessions` dir.
+That walk-up assumes the sessions tree sits in the project root.
+It breaks for a git worktree without a `sessions` symlink. The
+session dir stays in the main worktree's tree, and the worktree
+holds no `sessions` dir. The walk-up climbs to the main worktree
+root. The `check-placeholder-hardcode` session records its `cwd`
+in the `code-check` worktree, but its `open` landed in the repo
+root.
+
+Decision (all five actions, local and remote branches):
+
+- The resolution block drops the walk-up. The path fallback
+  `dirname(dirname(session_dir))` stays for a missing or stale
+  `cwd` file. The `cwd` file value then applies as-is:
+  `w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w`.
+- The remote branch keeps the single read-only `ssh -T` read.
+  Its one-liner is `w=\$(cat \"$rp/cwd\" 2>/dev/null);
+  [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\");
+  printf \"%s\" \"\$w\"`.
+- open and open_v hand the TUI the absolute session dir `$rp`,
+  not a bare name. The TUI uses an explicit session dir as-is
+  (kernel issue 31), so the pane and fork tiers carry `$rp`.
+  The remote tiers carry the remote session dir the same way.
+- open_dir, open_dir_tmux_h and open_dir_tmux_v only cd and
+  exec the shell. They change only in the resolution block.
+
+Files: `rushi-sessions.toml` (the five commands, their comment
+blocks and descriptions), `rushi-sessions-channel.nix` (the
+byte-for-byte mirror), `bin/rushi-sessions/tests/toml_channel.rs`
+(the decision 52 pins move to the new semantics: the `cwd` file
+read, the as-is use, the dirname fallback, the no-walk-up
+negative, and the session-dir handoff in open and open_v), and
+`docs/television-integration.md` (the walk-up wording in three
+places, plus a new item 70 that supersedes the item 52 walk-up
+wording), and the README's devShell line (the gate keys off the
+working dir).
+
+Verification: 139 tests green. The TOML and the Nix mirror
+compare byte for byte across the full channel attrset. The
+resolution block ran in a sandbox across four cases. The
+worktree session lands in the worktree. The plain session lands
+in the project root. The missing `cwd` file falls back to the
+path rule. The stale `cwd` file falls back the same way. On the
+real tree, `check-placeholder-hardcode` resolves to
+`.worktree/code-check`, where the old walk-up gave the repo
+root.
+
+
 ## 91. The events channel shows the collapsed branch view, and branch_view re-opens the picked parent branch (2026-10-26)
 
 The user asked for three things in the `rushi-sessions-events`

@@ -14,11 +14,11 @@ fn repo() -> std::path::PathBuf {
         .unwrap()
 }
 
-/// The actions that resolve the session's project dir from the
-/// session's recorded `cwd` file (walked up to the nearest ancestor
-/// that holds a `sessions` dir), with the path-based
-/// dirname(dirname(session_dir)) as the fallback.
-const PROJECT_DIR_ACTIONS: [&str; 5] = [
+/// The actions that resolve the session's working dir from the
+/// session's recorded `cwd` file (the file's value, used as-is),
+/// with the path-based dirname(dirname(session_dir)) as the
+/// fallback for a missing or stale file.
+const WORKDIR_ACTIONS: [&str; 5] = [
     "open",
     "open_v",
     "open_dir",
@@ -83,6 +83,26 @@ fn session_channel_toml_parses() {
             c.contains("cd $r && $rt"),
             "{a} remote branch uses the resolved TUI command: {c}"
         );
+        // Decision 93: the absolute session dir (not a bare name)
+        // is handed to the TUI, so the sessions tree may live
+        // anywhere (a git worktree). The local pane command, the
+        // fork fallback and the remote handoff all carry it.
+        assert!(
+            c.contains("cd \\\"$r\\\" && $tu \\\"$rp\\\""),
+            "{a} local pane passes the session dir to the TUI: {c}"
+        );
+        assert!(
+            c.contains("cd \"$r\" && $tu \"$rp\""),
+            "{a} fork passes the session dir to the TUI: {c}"
+        );
+        assert!(
+            c.contains("cd $r && $rt \\\"$rp\\\""),
+            "{a} remote tiers pass the remote session dir: {c}"
+        );
+        assert!(
+            !c.contains("basename"),
+            "{a} the bare-name handoff is gone (no basename): {c}"
+        );
         // The simplification is pinned: the pre-88 machinery is
         // gone.
         assert!(
@@ -99,23 +119,30 @@ fn session_channel_toml_parses() {
         );
     }
 
-    // Decision 52: the project dir comes from the session's recorded
-    // `cwd` file (walked up to the nearest `sessions` ancestor), not
-    // from the session path. The dirname fallback stays for a missing
-    // or stale `cwd` file.
-    for a in PROJECT_DIR_ACTIONS {
+    // Decision 93: the working dir is the session's recorded `cwd`
+    // file's value, used as-is (no walk-up to a `sessions`
+    // ancestor): a git worktree without a `sessions` symlink keeps
+    // the session dir in the main worktree's tree while the session
+    // works in the worktree, and the actions land in the worktree.
+    // The dirname(dirname(session_dir)) path fallback stays for a
+    // missing or stale `cwd` file.
+    for a in WORKDIR_ACTIONS {
         let c = v["actions"][a]["command"].as_str().unwrap();
         assert!(
             c.contains("cat \"$rp/cwd\""),
             "{a} must read the session's cwd file: {c}"
         );
         assert!(
-            c.contains("[ ! -d \"$w/sessions\" ]"),
-            "{a} must walk up to the sessions ancestor: {c}"
+            c.contains("[ -d \"$w\" ] && r=$w"),
+            "{a} must use the recorded cwd value as-is: {c}"
         );
         assert!(
             c.contains("$(dirname \"$(dirname "),
             "{a} keeps the dirname fallback: {c}"
+        );
+        assert!(
+            !c.contains("$w/sessions"),
+            "{a} must not walk up to a sessions ancestor: {c}"
         );
     }
 
@@ -137,8 +164,8 @@ fn session_channel_toml_parses() {
         );
     }
 
-    // open_dir: the remote branch cds to the project dir, not the
-    // session dir.
+    // open_dir: the remote branch cds to the working dir (the
+    // remote cwd file), not the session dir.
     let od = v["actions"]["open_dir"]["command"].as_str().unwrap();
     assert!(
         od.contains("cd \\\"$r\\\" && exec"),

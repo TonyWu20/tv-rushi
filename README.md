@@ -51,7 +51,7 @@ action (enter) launches it from the session list.
 - `bat`, optional. The preview prints plain TOML without it.
 - `rushi` and `rushi-tui` on PATH, for the `send_message` and `open`
   actions. Nix builds and installs these with the `rushi` package.
-  When the session's project dir carries a `flake.nix` and `nix`
+  When the session's working dir carries a `flake.nix` and `nix`
   is on PATH, the actions run in that devShell instead
   (`nix develop -c ...`, decisions 87/88 in `docs/decisions.md`);
   the remote rows run the same check on the remote host. The

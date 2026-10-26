@@ -297,32 +297,34 @@ Decisions (user, 2026-10-04):
   `execute` mode, so tv exits and the command takes over the terminal.
   - `ctrl-e` open: inside tmux, the fork runs `tmux split-window -h -c`.
     The new pane sits to the right of tv, in the same window. It starts
-    in the session's project dir: the recorded `cwd` (where the session's
-    tools run) walked up to the nearest ancestor that holds a `sessions`
-    dir. The path rule `dirname(dirname(session_dir))` stays the
-    fallback for a missing or stale `cwd` file. It runs
-    `rushi-tui <session>` in that pane. The pane closes on exit.
-    Remote rows (`host:` prefix) also split a local pane: the pane runs
-    `ssh -t HOST "cd REPO && rushi-tui NAME"`, so the remote TUI shows
-    up next to tv. No remote tmux server is needed. The remote project
-    dir resolves on the remote host with one read-only `ssh -T` call
-    (the remote `cwd` file). Outside tmux, or without the `tmux`
+    in the session's working dir: the recorded `cwd` value (where the
+    session's tools run), used as-is. The path rule
+    `dirname(dirname(session_dir))` stays the fallback for a missing or
+    stale `cwd` file. It runs `rushi-tui SESSION_DIR` in that pane,
+    passing the absolute session dir: the TUI uses an explicit session
+    dir as-is, so no relative `sessions` tree is needed. The pane
+    closes on exit.
+    Remote rows (`host:` prefix) also split a local pane: the pane
+    runs `ssh -t HOST "cd REPO && rushi-tui SESSION_DIR"`, so the
+    remote TUI shows up next to tv. No remote tmux server is needed.
+    The remote working dir resolves on the remote host with one
+    read-only `ssh -T` call (the remote `cwd` file, used as-is, with
+    the dirname fallback). Outside tmux, or without the `tmux`
     binary, the fork runs `cd` to that base dir, then rushi-tui, as
-    before. The TUI resolves a bare name against a relative
-    `sessions_root`, so the pane or fork must start in that base dir.
-    The recorded `cwd` wins over the path rule: a git worktree symlinks
-    the `sessions` tree from the main worktree, so the session path
-    lands in the main worktree while the session works in the worktree
-    (decision 52).
+    before. The recorded `cwd` wins over the path rule: a git worktree
+    without a `sessions` symlink keeps the session dir in the main
+    worktree's tree while the session works in the worktree, and the
+    actions land in the worktree (decisions 52, 93).
   - `ctrl-v` open_v: same as open, but the new pane stacks below tv.
     It runs `tmux split-window -v -c` in the fork. The pane sits
     below the tv pane, in the same window. It starts in the same base
-    dir and runs `rushi-tui <session>` there. Outside tmux, it is the
+    dir and runs `rushi-tui SESSION_DIR` there. Outside tmux, it is the
     plain fork, like open. Remote rows are the same ssh -t local pane, with the -v split.
   - `alt-o` open_dir: exit tv and land in a shell at the session's
-    project dir: the recorded `cwd` walked up to the nearest `sessions`
-    ancestor, with the `dirname(dirname(session_dir))` path rule as the
-    fallback (decision 52). The command cds there,
+    working dir: the recorded `cwd` value, used as-is, with the
+    `dirname(dirname(session_dir))` path rule as the fallback for a
+    missing or stale `cwd` file (decisions 52, 93). The command cds
+    there,
     then execs `$SHELL` (fallback `bash`). Type `exit` to return to the
     shell that launched tv. This mode matters: a forked `cd` dies with
     the child, so only `execute` mode can hand the terminal over.

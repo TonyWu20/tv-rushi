@@ -90,11 +90,11 @@ in
     # not listed as core requirements: `rushi` for send_message and
     # new_session (0.1.1+ for the --sessions-root flag), `rushi-tui`
     # for open/open_v, and `tmux` for open, open_v, open_dir_tmux_h
-    # and open_dir_tmux_v. When the session's project dir carries a
+    # and open_dir_tmux_v. When the session's working dir carries a
     # `flake.nix` and `nix` is on PATH, the open actions run
     # `rushi-tui` in that devShell and the send/create actions run
     # `rushi run` in it; the remote rows run the same checks on the
-    # remote host and use its devShell (decision 87/88). The devShell
+    # remote host and use its devShell (decision 87/88, 93). The devShell
     # packages shadow the inherited PATH, so a binary the devShell
     # does not ship falls back to the inherited PATH entry. The
     # send_message and new_session prompts run
@@ -174,15 +174,18 @@ in
 
   actions.open = {
     # The TUI resolves a bare session name against a *relative*
-    # sessions_root, so it must start in the directory that contains the
-    # sessions tree. That project dir is the session's recorded `cwd`
-    # (where its tools run) walked up to the nearest ancestor holding a
-    # `sessions` dir. The path-based dirname(dirname(session_dir))
-    # stays the fallback: it breaks when a git worktree symlinks
-    # `sessions` from the main worktree, because the session path
-    # lands in the main worktree while the session works in the
-    # worktree. Remote rows resolve the dir on the remote host with
-    # one `ssh -T` call.
+    # sessions_root, so it must start in the directory that contains
+    # the sessions tree. That dir is the session's recorded working
+    # dir (the `cwd` file in the session dir, where its tools run):
+    # the file's value is used as-is, with no walk-up. The path-based
+    # dirname(dirname(session_dir)) stays the fallback for a missing
+    # or stale `cwd` file. The session dir is handed to the TUI as an
+    # absolute path (rushi-tui issue #31: an explicit session dir is
+    # used as-is), so the session's identity survives wherever the
+    # sessions tree lives: a git worktree without a `sessions`
+    # symlink keeps the session dir in the main worktree's tree
+    # while the session works in the worktree. Remote rows resolve
+    # the dir on the remote host with one `ssh -T` call.
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
@@ -192,7 +195,7 @@ in
     # to tv. Each later open stacks next to the pane it created.
     # Floating prompt panes are excluded from the lookup, so a
     # send_message or new_session pane never wins. The pane starts in
-    # the repo dir (-c). It runs rushi-tui there. The pane closes
+    # the working dir (-c). It runs rushi-tui there. The pane closes
     # when rushi-tui exits. The pane command cds to the resolved dir
     # itself. A tmux server whose own cwd was deleted fails its
     # getcwd. tmux (3.7) then skips the -c chdir for every new pane
@@ -202,21 +205,22 @@ in
     # television template pass. An empty lookup falls back to the
     # tmux default target, the active pane. Outside tmux, or when
     # the tmux binary is missing, keep the original behavior: it runs
-    # `cd` to the sessions root, then rushi-tui in this fork.
+    # `cd` to the working dir, then rushi-tui in this fork.
     #
     # A remote row (host: prefix) also opens a pane in the LOCAL tmux
     # server, never on the remote one. The pane runs
-    # `ssh -t HOST "cd REPO && rushi-tui NAME"`: the remote TUI shows
-    # up next to tv, and the pane closes when it exits. No tmux server
-    # is needed on the remote host (the old behavior spawned a pane on
-    # the remote server, invisible to the user). Outside local tmux the
+    # `ssh -t HOST "cd WORKDIR && rushi-tui SESSION_DIR"`: the
+    # remote TUI shows up next to tv, and the pane closes when it
+    # exits. No tmux server is needed on the remote host (the old
+    # behavior spawned a pane on the remote server, invisible to the
+    # user). Outside local tmux the
     # fork runs the ssh command directly. The remote host needs
     # `rushi-tui` reachable by a non-interactive ssh.
     #
-    # The devShell resolution (decision 87/88): when the session's
-    # project dir carries a `flake.nix` and `nix` is on PATH, the
-    # local branch runs the TUI as `nix develop -c rushi-tui` from
-    # that dir. The remote branch runs the same check over one
+    # The devShell resolution (decision 87/88, 93): when the working
+    # dir carries a `flake.nix` and `nix` is on PATH, the local
+    # branch runs the TUI as `nix develop -c rushi-tui` from that
+    # dir. The remote branch runs the same check over one
     # read-only `ssh -T` call (the remote flake file plus
     # `command -v nix`) and runs the TUI in the remote devShell. The
     # plain `nix develop` inherits the environment, so the devShell
@@ -230,11 +234,11 @@ in
     # treats a stray {group} as a template token and then leaves the
     # split placeholder unsubstituted. That is why the check reads
     # plain $TMUX instead of ${TMUX:-}.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the session's project dir carries a flake and nix is on PATH, local rows run the TUI in that devShell; remote rows do the same on the remote host when the remote project dir carries a flake and nix is reachable there (decision 87/88); a failed gate falls back to the PATH `rushi-tui`.";
+    description = "Open this session in rushi-tui. The TUI starts in the session's recorded working dir (the `cwd` file in the session dir), falling back to the session's project dir when the file is missing or stale. The session dir is handed to the TUI as an absolute path, so the sessions tree may live elsewhere (a git worktree). Inside tmux, a new pane to the right of the newest pane in the tv window runs it. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the working dir carries a flake and nix is on PATH, local rows run the TUI in that devShell; remote rows do the same on the remote host when the remote working dir carries a flake and nix is reachable there (decision 87/88, 93); a failed gate falls back to the PATH `rushi-tui`.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\"");  rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$n\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && $rt \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; tu=rushi-tui; if [ -f "$r/flake.nix" ] && command -v nix >/dev/null 2>&1; then tu="nix develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$n\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && $tu \"$n\""; fi; else cd "$r" && $tu "$n"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; if [ -f "$r/flake.nix" ] && command -v nix >/dev/null 2>&1; then tu="nix develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -243,51 +247,54 @@ in
     # to its right. tmux's flags are easy to mix up: -v puts the new
     # pane below the target pane (a horizontal divider). The
     # remote-row behavior is the same ssh -t local pane, with the -v
-    # split. The devShell resolution (decision 87/88) is the same
-    # as open: the TUI runs in the project flake's devShell when the
-    # project dir carries a `flake.nix` and nix is on PATH; remote
-    # rows run the same check on the remote host.
-    description = "Open this session in rushi-tui. Inside tmux, a new pane below the newest pane in the tv window runs it from the session's repo dir. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the session's project dir carries a flake and nix is on PATH, local rows run the TUI in that devShell; remote rows do the same on the remote host when the remote project dir carries a flake and nix is reachable there (decision 87/88); a failed gate falls back to the PATH `rushi-tui`.";
+    # split. The devShell resolution (decision 87/88, 93) is the
+    # same as open: the TUI runs in the working dir's flake devShell
+    # when the working dir carries a `flake.nix` and nix is on PATH;
+    # remote rows run the same check on the remote host.
+    description = "Open this session in rushi-tui. The TUI starts in the session's recorded working dir (the `cwd` file in the session dir), falling back to the session's project dir when the file is missing or stale. The session dir is handed to the TUI as an absolute path, so the sessions tree may live elsewhere (a git worktree). Inside tmux, a new pane below the newest pane in the tv window runs it. Outside tmux, it runs in this fork. Remote rows open the pane in the local tmux server: the pane runs the remote TUI over ssh -t. When the working dir carries a flake and nix is on PATH, local rows run the TUI in that devShell; remote rows do the same on the remote host when the remote working dir carries a flake and nix is reachable there (decision 87/88, 93); a failed gate falls back to the PATH `rushi-tui`.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then n=$(basename "$rp"); r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\"");  rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$n\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && $rt \\\"$n\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$n\""; fi; else n=$(basename "$s"); r=$(dirname "$(dirname "$s")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; tu=rushi-tui; if [ -f "$r/flake.nix" ] && command -v nix >/dev/null 2>&1; then tu="nix develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$n\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && $tu \"$n\""; fi; else cd "$r" && $tu "$n"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; if [ -f "$r/flake.nix" ] && command -v nix >/dev/null 2>&1; then tu="nix develop -c rushi-tui"; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_dir = {
-    # Exit tv and land in a shell at the session's project dir: the
-    # recorded `cwd` (the session's working dir) walked up to the
-    # nearest ancestor holding a `sessions` dir. The path-based
-    # dirname(dirname(session_dir)) stays the fallback for a missing
-    # or stale `cwd` file: a git worktree symlinks `sessions` from
-    # the main worktree, and the path rule would land in the main
-    # worktree. Uses mode = "execute" so tv quits
+    # Exit tv and land in a shell at the session's recorded working
+    # dir (the `cwd` file in the session dir, where the session's
+    # tools run): the file's value is used as-is, with no walk-up.
+    # The path-based dirname(dirname(session_dir)) stays the fallback
+    # for a missing or stale `cwd` file: a git worktree without a
+    # `sessions` symlink keeps the session dir in the main worktree's
+    # tree while the session works in the worktree; the shell lands
+    # in the worktree, where the session's relative paths complete.
+    # Uses mode = "execute" so tv quits
     # and the command takes over the terminal; a fork would cd in a dead
     # child and tv would just resume. Falls back to bash when $SHELL is
     # unset. The command keeps $vars plain (no ${...}) so the Nix
     # single-quote string does not interpolate them.
-    description = "Exit tv and cd into the session's project dir; a $SHELL shell (bash fallback) takes over the terminal";
+    description = "Exit tv and cd into the session's recorded working dir (the `cwd` file in the session dir); a $SHELL shell (bash fallback) takes over the terminal. A missing or stale `cwd` file lands in the session's project dir. Remote rows cd on the remote host over ssh -t.";
     shell = "bash";
     mode = "execute";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); ssh -t "$host" "cd \"$r\" && exec $sh2"; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); ssh -t "$host" "cd \"$r\" && exec $sh2"; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; cd "$r" && exec "$sh2"; fi' sh '{split:@TAB@:6}'
     '';
   };
 
   actions.open_dir_tmux_h = {
-    # Open a shell at the session's project dir in a tmux pane: the
-    # recorded `cwd` walked up to the nearest ancestor holding a
-    # `sessions` dir. The dirname(dirname(session_dir)) path rule
-    # stays the fallback, as in open_dir. The shell is $SHELL, with a bash
-    # fallback when $SHELL is unset.
+    # Open a shell at the session's recorded working dir (the `cwd`
+    # file in the session dir) in a tmux pane: the file's value is
+    # used as-is, with no walk-up. The
+    # dirname(dirname(session_dir)) path rule stays the fallback for a
+    # missing or stale `cwd` file, as in open_dir. The shell is
+    # $SHELL, with a bash fallback when $SHELL is unset.
     #
     # tv forks this action, so the fork inherits the pane environment.
     # When tv runs inside tmux, TMUX is set: create a new pane in the
     # current window. The split targets the newest pane of the window,
     # not the tv pane. The first open lands next to tv. Each later
     # open stacks next to the pane it created. Floating prompt panes
-    # are excluded from the lookup. The pane starts in the repo dir
+    # are excluded from the lookup. The pane starts in the working dir
     # (-c). It runs the shell there. The pane closes when the shell
     # exits. tmux runs the pane command through its default shell, so
     # the pane command is the plain shell path. The pane command cds
@@ -297,13 +304,13 @@ in
     # pane anchored. The newest-pane lookup stays brace-free, as in
     # open. An empty lookup falls back to the tmux default target, the
     # active pane. Outside tmux, or when the tmux binary is missing,
-    # the fork cds to the repo dir and execs the shell. tv resumes
+    # the fork cds to the working dir and execs the shell. tv resumes
     # when the shell exits.
     #
     # A remote row (host: prefix) also opens a pane in the LOCAL tmux
     # server, never on the remote one. The pane runs
-    # `ssh -t HOST "cd REPO && exec SHELL"`: a shell at the remote
-    # project dir shows up next to tv. No remote tmux server is needed.
+    # `ssh -t HOST "cd WORKDIR && exec SHELL"`: a shell at the
+    # remote working dir shows up next to tv. No remote tmux server is needed.
     # Outside local tmux the fork runs the ssh command directly. The
     # shell name is the local $SHELL value (bash fallback), matching the
     # old remote branch.
@@ -313,11 +320,11 @@ in
     # brace-free for the same reason as open: a stray {group} would
     # break the television template and leave the split placeholder
     # unsubstituted.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane to the right of the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
+    description = "Open a $SHELL shell (bash fallback) in the session's recorded working dir (the `cwd` file in the session dir). Inside tmux, a new pane to the right of the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. A missing or stale `cwd` file lands in the session's project dir. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -h -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -h -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -331,11 +338,11 @@ in
     #
     # The command keeps $vars plain (no ${...}) so the Nix
     # single-quote string does not interpolate them.
-    description = "Open a $SHELL shell (bash fallback) in the session's project dir. Inside tmux, a new pane below the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
+    description = "Open a $SHELL shell (bash fallback) in the session's recorded working dir (the `cwd` file in the session dir). Inside tmux, a new pane below the newest pane in the tv window runs it. Outside tmux, it runs in this fork. tv resumes when the shell exits. A missing or stale `cwd` file lands in the session's project dir. Remote rows open the pane in the local tmux server: the pane runs the remote shell over ssh -t.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); if [ -d \"\$w\" ]; then while [ ! -d \"\$w/sessions\" ] && [ \"\$w\" != / ]; do w=\$(dirname \"\$w\"); done; [ -d \"\$w/sessions\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); else w=\$(dirname \"\$(dirname \"$rp\")\"); fi; printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -v -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); if [ -d "$w" ]; then while [ ! -d "$w/sessions" ] && [ "$w" != / ]; do w=$(dirname "$w"); done; [ -d "$w/sessions" ] && r=$w; fi; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; sh2=$SHELL; [ -n "$sh2" ] || sh2=bash; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); c="cd $r && exec $sh2"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"$c\""; else tmux split-window -v -l "62%" "ssh -t $host \"$c\""; fi; else ssh -t "$host" "$c"; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && exec \"$sh2\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && exec \"$sh2\""; fi; else cd "$r" && exec "$sh2"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
