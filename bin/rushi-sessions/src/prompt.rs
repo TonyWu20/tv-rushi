@@ -474,6 +474,18 @@ pub(crate) fn nix_dev_dir(dir: &str) -> bool {
     which("nix").is_some()
 }
 
+/// The local devShell launch decision for a step that runs `rushi`
+/// (the `rushi run` send and new-session steps): the 88 gate, plus
+/// the requirement that the devShell actually resolves `rushi`
+/// (decision 90, applied to the `rushi run` step). A broken flake
+/// fails the bounded materialize, so the devShell launch is dropped
+/// and the step falls back to the global PATH `rushi` instead of a
+/// `nix develop` that dies with an error.
+pub(crate) fn local_nix_dev(dir: &str) -> bool {
+    nix_dev_dir(dir)
+        && crate::devshell::resolve(Path::new(dir), "rushi").is_some()
+}
+
 /// The step's argv after the detach tool: the PATH `rushi` binary,
 /// or the nix devShell launch when `nix_dev` is set. The launch
 /// resolves the flake from the step's working dir (the project dir,
@@ -698,7 +710,7 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     };
     let nix_dev = match (host.as_deref(), nix_dir.as_deref()) {
         (Some(h), Some(d)) => remote_nix_dev(h, d),
-        (None, Some(d)) => nix_dev_dir(d),
+        (None, Some(d)) => local_nix_dev(d),
         _ => false,
     };
     let prompt_dir = match kind {
@@ -1030,6 +1042,34 @@ mod tests {
         std::fs::write(flake.join("flake.nix"), "{}").unwrap();
         let dir = flake.to_str().unwrap().to_string();
         assert_eq!(nix_dev_dir(&dir), which("nix").is_some());
+    }
+
+    /// The `rushi run` step's local decision (decision 90 applied to
+    /// the step): the gate, plus the devShell resolving `rushi`. A
+    /// broken flake fails the bounded materialize, so this is false
+    /// and the step falls back to the global PATH `rushi`.
+    #[test]
+    fn local_nix_dev_gates_on_resolution() {
+        let base =
+            std::env::temp_dir().join(format!("rsrs-localnixdev-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+
+        // No flake.nix: the gate stops at the file check. No nix call.
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert!(!local_nix_dev(bare.to_str().unwrap()));
+
+        // A flake dir with a seeded (resolvable) `rushi`: true only
+        // when the host gate holds (nix on PATH). The resolve is a
+        // cache hit, so no nix call runs in the test.
+        let flake = base.join("flake");
+        std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        let bin = base.join("rushi-bin");
+        std::fs::write(&bin, "x").unwrap();
+        crate::devshell::seed(flake.as_path(), "rushi", bin.to_str().unwrap());
+        let dir = flake.to_str().unwrap().to_string();
+        assert_eq!(local_nix_dev(&dir), which("nix").is_some());
     }
 
     /// A cfg fixture for the args-file and tail tests.

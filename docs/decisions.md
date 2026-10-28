@@ -1,3 +1,40 @@
+## 94. The `rushi run` send/new-session step keeps the devShell only when `rushi` resolves (2026-10-27)
+
+The 88 devShell extension ran the `rushi run` step of
+`send_message` and `new_session` as `nix develop -c rushi run ...`
+whenever the 88 gate held. That step is detached (setsid, stdio to
+/dev/null), so a `nix develop` that errors (a broken flake, a failed
+build) dies with no observable signal: the message is never sent and
+the session is never created, and the caller cannot tell. The 89
+probe and the 90 kernel launch already fall back to the global PATH
+binary on a resolve miss. This extends that fallback to the
+`rushi run` step.
+
+Decision (the `prompt` step's local decision; the 88 gate and the
+devshell module are unchanged):
+
+- The local arm of the step's `nix_dev` decision is
+  `local_nix_dev(dir)`: the 88 gate, plus the requirement that the
+  devShell actually resolves `rushi` (the cached
+  `devshell::resolve(dir, "rushi")` of 89, the 90 pattern). A broken
+  flake fails the bounded materialize, the resolve is a miss, and the
+  step falls back to the global PATH `rushi run` instead of a
+  `nix develop` that dies with an error.
+- The remote arm keeps the 88 remote gate: the remote flake cannot be
+  cheaply resolved from the local host, so the remote step still runs
+  `nix develop -c rushi run` when the remote gate holds.
+- `rushi_run_tail` and `rushi_run_label` key off the same `nix_dev`
+  flag, so the argv and the spawn-failure label follow the fallback
+  automatically.
+
+Verification: `local_nix_dev` is unit-tested (a flake-less dir stays
+on the PATH binary; a flake dir with a seeded resolvable `rushi`
+matches the host gate without a nix call). The `rushi run` argv and
+label builders are covered by the existing tail/args-file tests. 141
+tests green; `nix build` of the three channel derivations is clean.
+The TUI `open`/`open_v` one-liners are the remaining `nix develop`
+site without a global-PATH fallback; that is a separate change.
+
 ## 93. The open* actions land in the recorded working dir, and the TUI gets the absolute session dir (2026-10-27)
 
 The open, open_v, open_dir, open_dir_tmux_h and open_dir_tmux_v
