@@ -38,8 +38,10 @@
           };
           rustToolchain = fenix.packages.${system}.stable.withComponents [
             "cargo"
+            "clippy"
             "rust-src"
             "rustc"
+            "rustfmt"
           ];
 
           # The three data files, the manual install path into the
