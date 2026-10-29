@@ -31,6 +31,8 @@
 //!   "Catppuccin Macchiato"); otherwise plain markdown is printed.
 //!   `--plain` skips the bat pass, for a channel-side renderer that
 //!   reads the plain card from stdin (a non-bat `sessionPreviewer`).
+//!   `--events` renders the recent-events view instead: the card
+//!   header plus the `recent-events` table (decision 99).
 //! - `rushi-sessions events [DIR] [--chat] [--branch SEQ]`
 //!   Print the collapsed branch view of the session's events.jsonl,
 //!   newest first: the active branch plus the history before the
@@ -152,6 +154,11 @@ enum Command {
         /// card from stdin.
         #[arg(long)]
         plain: bool,
+        /// Render the `--events` view instead of the card: the card
+        /// header plus the `recent-events` table (the last 20
+        /// meaningful events, decision 99).
+        #[arg(long)]
+        events: bool,
     },
     /// Print one TSV row per shown entry of the session's
     /// events.jsonl, newest first, in the collapsed branch view:
@@ -296,7 +303,12 @@ fn main() {
             mtime,
             path,
             plain,
-        } => preview::preview(&status, &name, &repo, &phase, &last, &mtime, &path, plain),
+            events,
+        } => {
+            preview::preview(
+                &status, &name, &repo, &phase, &last, &mtime, &path, plain, events,
+            )
+        }
         Command::Events { dir, chat, branch } => events::events(dir, chat, branch),
         Command::NewSession { row } => std::process::exit(prompt::new_session(&row)),
         Command::SendMessage { row, events } => {

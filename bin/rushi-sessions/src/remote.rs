@@ -152,23 +152,26 @@ pub(crate) fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
     })
 }
 /// The remote preview: run the remote binary's preview over ssh and
-/// stream its card to stdout. A failed ssh warns on stderr.
+/// stream its document to stdout. A failed ssh warns on stderr.
 ///
 /// The command sets `RUSHI_SESSIONS_PREVIEW_HOST` inline (the remote
-/// shell exports it for that one command). The remote card render
-/// reads it and puts a `host` row right under the `repo` row. An
-/// older remote binary ignores the variable; the card then has no
-/// host row, but the source row still shows the host in the repo
-/// column. With `plain`, the command passes `--plain`, so the remote
-/// card skips its own bat pass. An older remote binary rejects the
-/// flag; the remote preview then fails and warns.
-pub(crate) fn preview_remote(host: &str, cols: &[&str], plain: bool) {
+/// shell exports it for that one command). The remote document
+/// render reads it and puts a `host` row right under the `repo`
+/// row. An older remote binary ignores the variable; the document
+/// then has no host row, but the source row still shows the host in
+/// the repo column. The `--events` view flag and the `--plain` flag
+/// forward to the remote call; an older remote binary rejects
+/// either flag, and the remote preview then fails and warns.
+pub(crate) fn preview_remote(host: &str, cols: &[&str], plain: bool, events_view: bool) {
     let mut cmd = String::new();
     cmd.push_str("RUSHI_SESSIONS_PREVIEW_HOST=");
     cmd.push_str(&shell_quote(host));
     cmd.push(' ');
     cmd.push_str(&remote_binary());
     cmd.push_str(" preview");
+    if events_view {
+        cmd.push_str(" --events");
+    }
     if plain {
         cmd.push_str(" --plain");
     }

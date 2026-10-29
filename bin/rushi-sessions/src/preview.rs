@@ -1,15 +1,16 @@
-//! The `preview` command: render the markdown preview card for one
-//! session. The card scans keep only the active path: the kernel's
-//! rewind markers mask the abandoned branch, so the card shows what
-//! the model context sees. The session key table carries a `branch`
-//! row: the git branch of the session's recorded working dir, probed
-//! with git at render time. It carries a `worktree` row: the one-line
-//! `git status` brief of that worktree (`clean`, or the `<N>
-//! <status>` file counts), probed the same way. The card shows the
+//! The `preview` command: render the markdown preview document for
+//! one session. The document scans keep only the active path: the
+//! kernel's rewind markers mask the abandoned branch, so the
+//! document shows what the model context sees. The default view is
+//! the card: the session key table with a `branch` row (the git
+//! branch of the session's recorded working dir, probed with git at
+//! render time) and a `worktree` row (the one-line `git status`
+//! brief of that worktree, probed the same way). The card shows the
 //! full last user message and the last on-idle assistant message
-//! (the last assistant message with text, the in-flight turn excluded
-//! while the loop is live). It shows a `recent-events` table: the
-//! last 5 meaningful events.
+//! (the last assistant message with text, the in-flight turn
+//! excluded while the loop is live). The `--events` view is the
+//! recent-events table: the card header plus the last 20 meaningful
+//! events of the active path (decision 99).
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -38,16 +39,17 @@ pub fn preview(
     mtime: &str,
     path: &str,
     plain: bool,
+    events_view: bool,
 ) {
     if let Some((host, rpath)) = split_remote(path) {
         // The TSV repo column carries the `host:` prefix. The remote
-        // card renders the bare repo name plus its own `host` key, so
-        // the prefix is stripped before the ssh call.
+        // document renders the bare repo name plus its own `host`
+        // key, so the prefix is stripped before the ssh call.
         let bare = repo
             .strip_prefix(host)
             .and_then(|rest| rest.strip_prefix(':'))
             .unwrap_or(repo);
-        preview_remote(host, &[status, name, bare, phase, last, mtime, rpath], plain);
+        preview_remote(host, &[status, name, bare, phase, last, mtime, rpath], plain, events_view);
         return;
     }
     let pid = fs::read_to_string(Path::new(path).join("loop.pid"))
@@ -78,8 +80,8 @@ pub fn preview(
     let (think, last_user) = card_scans(&events);
     let last_assistant = last_idle_assistant(&events, status);
 
-    // The remote binary renders this same card with the host key,
-    // fed by the env var the local binary set over ssh.
+    // The remote binary renders this same document with the host
+    // key, fed by the env var the local binary set over ssh.
     let host = std::env::var(HOST_ENV).ok().filter(|h| !h.is_empty());
     // The session's recorded working dir. The git branch probe runs
     // on it; the `rushi config` probe of the usage line runs in its
@@ -89,22 +91,42 @@ pub fn preview(
     let workdir = session_workdir(Path::new(path));
     let branch = workdir.as_ref().and_then(|w| git_branch(w));
     let worktree = workdir.as_ref().and_then(|w| git_status_brief(w));
-    let card = render_card(
-        status,
-        name,
-        repo,
-        host.as_deref(),
-        branch.as_deref(),
-        worktree.as_deref(),
-        &pid,
-        phase,
-        &think,
-        last,
-        &last_user,
-        &last_assistant,
-        &events,
-        workdir.as_deref(),
-    );
+    let usage = last_usage(&events).map(|(in_tok, out_tok, _)| {
+        let used = in_tok.saturating_add(out_tok);
+        usage_line(used, context_window(workdir.as_deref()))
+    });
+    let card = if events_view {
+        render_events_view(
+            status,
+            name,
+            repo,
+            host.as_deref(),
+            branch.as_deref(),
+            worktree.as_deref(),
+            &pid,
+            phase,
+            &think,
+            last,
+            &events,
+            usage.as_deref(),
+        )
+    } else {
+        render_card(
+            status,
+            name,
+            repo,
+            host.as_deref(),
+            branch.as_deref(),
+            worktree.as_deref(),
+            &pid,
+            phase,
+            &think,
+            last,
+            &last_user,
+            &last_assistant,
+            usage.as_deref(),
+        )
+    };
 
     // The plain card for a channel-side renderer (the `--plain`
     // flag): no bat pass, the pipe owns the colors.
@@ -317,21 +339,16 @@ fn git_status_brief(dir: &Path) -> Option<String> {
     }
 }
 
-/// The markdown card text for one session. `host` (the ssh host of a
-/// remote session, set by the local binary through `HOST_ENV`)
+/// The card header block: the `# rushi-session` title and the
+/// two-column key table, as document lines. `host` (the ssh host of
+/// a remote session, set by the local binary through `HOST_ENV`)
 /// renders a `host` row right under `repo`. `branch` (the git
 /// branch of the session's recorded working dir, or None) renders a
 /// `branch` row under the host row. `worktree` (the one-line git
-/// status brief of that worktree, or None) renders a `worktree` row
-/// under the branch row, or under the host slot. `workdir` (the
-/// recorded working dir, or None) is the project dir of the usage
-/// line's `rushi config` probe (decision 88).
-///
-/// The card is a markdown document: the `# rushi-session` key table,
-/// the `last-user-message` section, the `last-assistant-message`
-/// section (the last on-idle message, un-clipped), and the
-/// `recent-events` table. An empty section or table omits itself.
-pub(crate) fn render_card(
+/// status brief of that worktree, or None) renders a `worktree`
+/// row under the branch row, or under the host slot. `usage` is the
+/// pre-rendered `in+out / context` line (decision 88), or None.
+fn card_header_lines(
     status: &str,
     name: &str,
     repo: &str,
@@ -342,11 +359,8 @@ pub(crate) fn render_card(
     phase: &str,
     think: &str,
     last: &str,
-    last_user: &str,
-    last_assistant: &str,
-    events: &[Value],
-    workdir: Option<&Path>,
-) -> String {
+    usage: Option<&str>,
+) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     out.push("# rushi-session".into());
     out.push(String::new());
@@ -370,19 +384,51 @@ pub(crate) fn render_card(
         keys.push(("think", md_cell(think)));
     }
     keys.push(("updated", md_cell(last)));
-    if let Some((in_tok, out_tok, _cached)) = last_usage(events) {
-        let used = in_tok.saturating_add(out_tok);
-        keys.push((
-            "usage",
-            md_cell(&usage_line(used, context_window(workdir))),
-        ));
+    if let Some(u) = usage {
+        keys.push(("usage", md_cell(u)));
     }
     out.push("| key | value |".into());
     out.push("| --- | --- |".into());
     for (k, v) in &keys {
         out.push(format!("| {} | {} |", k, v));
     }
+    out
+}
 
+/// The markdown card text for one session (the default preview
+/// view): the card header, the `last-user-message` section, and the
+/// `last-assistant-message` section (the last on-idle message,
+/// un-clipped). An empty section omits itself. The card carries no
+/// `recent-events` table: that table is the `--events` view
+/// (`render_events_view`, decision 99).
+pub(crate) fn render_card(
+    status: &str,
+    name: &str,
+    repo: &str,
+    host: Option<&str>,
+    branch: Option<&str>,
+    worktree: Option<&str>,
+    pid: &str,
+    phase: &str,
+    think: &str,
+    last: &str,
+    last_user: &str,
+    last_assistant: &str,
+    usage: Option<&str>,
+) -> String {
+    let mut out = card_header_lines(
+        status,
+        name,
+        repo,
+        host,
+        branch,
+        worktree,
+        pid,
+        phase,
+        think,
+        last,
+        usage,
+    );
     if !last_user.is_empty() {
         out.push(String::new());
         out.push("## last-user-message".into());
@@ -395,9 +441,50 @@ pub(crate) fn render_card(
         out.push(String::new());
         out.push(last_assistant.trim_end().to_string());
     }
+    out.join("\n") + "\n"
+}
 
-    // The last 40 events, reduced to (ts, type, brief), then the last 5 in
-    // log order (the old `events[-5:]`), so ts ties keep log order.
+/// The number of event rows the `--events` view renders: the last
+/// 20 of the last 40 meaningful events of the active path, in log
+/// order (the newest last, so the panel's bottom edge is the
+/// newest).
+const EVENTS_VIEW_ROWS: usize = 20;
+
+/// The `--events` preview view for one session (decision 99): the
+/// card header plus the `recent-events` table. The table holds the
+/// last 20 meaningful events of the active path, in log order. The
+/// view carries no message sections. An empty path renders the
+/// section with a note, so the cycled view never shows a blank
+/// panel.
+pub(crate) fn render_events_view(
+    status: &str,
+    name: &str,
+    repo: &str,
+    host: Option<&str>,
+    branch: Option<&str>,
+    worktree: Option<&str>,
+    pid: &str,
+    phase: &str,
+    think: &str,
+    last: &str,
+    events: &[Value],
+    usage: Option<&str>,
+) -> String {
+    let mut out = card_header_lines(
+        status,
+        name,
+        repo,
+        host,
+        branch,
+        worktree,
+        pid,
+        phase,
+        think,
+        last,
+        usage,
+    );
+    // The last 40 events, reduced to (ts, type, brief), then the
+    // last 20 in log order, so ts ties keep log order.
     let mut last40: Vec<&Value> = events.iter().rev().take(40).collect();
     last40.reverse();
     let tuples: Vec<(String, String, String)> = last40
@@ -416,31 +503,30 @@ pub(crate) fn render_card(
         })
         .collect();
     let recent: Vec<&(String, String, String)> =
-        tuples.iter().skip(tuples.len().saturating_sub(5)).collect();
-    if !recent.is_empty() {
-        out.push(String::new());
-        out.push("## recent-events".into());
-        out.push(String::new());
+        tuples.iter().skip(tuples.len().saturating_sub(EVENTS_VIEW_ROWS)).collect();
+    out.push(String::new());
+    out.push("## recent-events".into());
+    out.push(String::new());
+    if recent.is_empty() {
+        out.push("(no meaningful events)".into());
+    } else {
         out.push("| ts | type | brief |".into());
         out.push("| --- | --- | --- |".into());
-        for (ts, ty, brief) in recent {
+        for (ts, ty, b) in recent {
             out.push(format!(
                 "| {} | {} | {} |",
                 md_cell(ts),
                 md_cell(ty),
-                md_cell(&clip(brief, 80))
+                md_cell(&clip(b, 80))
             ));
         }
     }
-
     out.join("\n") + "\n"
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const EMPTY_EVENTS: &[Value] = &[];
 
     #[test]
     fn card_hosts_line_sits_under_repo() {
@@ -457,7 +543,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -483,7 +568,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| host |")));
@@ -533,7 +617,7 @@ mod tests {
             "ts": "2026-10-01T01:30:59Z",
             "content": "hi"
         })];
-        let card = render_card(
+        let card = render_events_view(
             "IDLE",
             "foo",
             "repoR",
@@ -544,8 +628,6 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
-            "u",
-            "",
             &evts,
             None,
         );
@@ -588,7 +670,6 @@ mod tests {
             "10-02 14:11",
             "line one\nline two",
             &long,
-            EMPTY_EVENTS,
             None,
         );
         // The user section keeps the newline. The 400-char clip is
@@ -613,12 +694,12 @@ mod tests {
             "10-02 14:11",
             "",
             "",
-            EMPTY_EVENTS,
             None,
         );
         assert!(!card.contains("## last-user-message"));
         assert!(!card.contains("## last-assistant-message"));
-        // No events, no recent-events table.
+        // The card carries no recent-events table: the table is the
+        // `--events` view (decision 99).
         assert!(!card.contains("## recent-events"));
     }
 
@@ -628,7 +709,7 @@ mod tests {
             serde_json::json!({"type": "ext_status", "id": "loop_phase", "value": "wait"}),
             serde_json::json!({"type": "user_message", "content": "hi"}),
         ];
-        let card = render_card(
+        let card = render_events_view(
             "IDLE",
             "foo",
             "repoR",
@@ -639,8 +720,6 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
-            "",
-            "",
             &evts,
             None,
         );
@@ -663,7 +742,7 @@ mod tests {
             "name": "bash",
             "arguments": {"command": "echo a|b"}
         })];
-        let card = render_card(
+        let card = render_events_view(
             "IDLE",
             "foo",
             "repoR",
@@ -674,8 +753,6 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
-            "",
-            "",
             &evts,
             None,
         );
@@ -733,7 +810,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -760,7 +836,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -792,7 +867,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| worktree |")));
@@ -813,7 +887,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -845,7 +918,6 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
-            EMPTY_EVENTS,
             None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| branch |")));
@@ -1014,5 +1086,111 @@ mod tests {
         std::fs::remove_file(sess.join("cwd")).unwrap();
         assert_eq!(session_workdir(&sess), Some(proj.clone()));
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn card_never_renders_recent_events() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            None,
+        );
+        // Decision 99: the table moved to the `--events` view. The
+        // card shows the header and the two message sections only.
+        assert!(card.contains("## last-user-message"), "{card}");
+        assert!(card.contains("## last-assistant-message"), "{card}");
+        assert!(!card.contains("## recent-events"), "{card}");
+    }
+
+    #[test]
+    fn events_view_renders_the_last_20_rows() {
+        // 45 brief-bearing events: the view renders the last 20, in
+        // log order, the newest last.
+        let evts: Vec<Value> = (0..45)
+            .map(|i| {
+                serde_json::json!({"type": "user_message", "content": format!("m{i}")})
+            })
+            .collect();
+        let card = render_events_view(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            &evts,
+            None,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let h = lines
+            .iter()
+            .position(|l| *l == "| ts | type | brief |")
+            .expect("recent-events header");
+        // The separator row is h+1. The 20 data rows follow.
+        let data: Vec<&str> = lines[h + 2..].iter().copied().filter(|l| l.starts_with('|')).collect();
+        assert_eq!(data.len(), 20, "{card}");
+        assert!(data[0].contains("m25"), "first row is event 25: {data:?}");
+        assert!(data[19].contains("m44"), "last row is event 44: {data:?}");
+    }
+
+    #[test]
+    fn events_view_carries_no_message_sections() {
+        let evts: Vec<Value> =
+            vec![serde_json::json!({"type": "user_message", "content": "hi"})];
+        let card = render_events_view(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            &evts,
+            None,
+        );
+        assert!(card.contains("## recent-events"), "{card}");
+        assert!(!card.contains("## last-user-message"), "{card}");
+        assert!(!card.contains("## last-assistant-message"), "{card}");
+    }
+
+    #[test]
+    fn events_view_empty_path_renders_the_note() {
+        let card = render_events_view(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            &[],
+            None,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let h = lines
+            .iter()
+            .position(|l| *l == "## recent-events")
+            .expect("section");
+        assert_eq!(lines[h + 2], "(no meaningful events)", "{card}");
     }
 }

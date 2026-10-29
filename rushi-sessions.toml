@@ -152,16 +152,23 @@ run = "rushi-sessions source"
 [preview]
 shell = "bash"
 cached = true
-# Structured markdown card, syntax-highlighted by bat when it is on
-# PATH (theme override: RUSHI_PREVIEW_THEME, default "Catppuccin
-# Macchiato" to match the catppuccin tv theme). The card shows the
-# session key table, the full last user message, the last on-idle
-# assistant message, and the recent-events table. It falls back to
-# plain markdown when bat is absent. Home-manager users pick another
-# renderer with programs."rushi-sessions".sessionPreviewer: the
-# channel then pipes the plain card (--plain) into that command line.
-# This repo copy is the bat baseline.
-command = "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'"
+# Two preview commands, cycled with the cycle_previews action
+# (Ctrl+F by default, decision 99): the session card, then the
+# recent-events table view. Both are structured markdown documents,
+# syntax-highlighted by bat when it is on PATH (theme override:
+# RUSHI_PREVIEW_THEME, default "Catppuccin Macchiato" to match the
+# catppuccin tv theme). The card shows the session key table, the
+# full last user message, and the last on-idle assistant message.
+# The events view shows the key table plus the recent-events table
+# (the last 20 meaningful events). Both fall back to plain markdown
+# when bat is absent. Home-manager users pick another renderer with
+# programs."rushi-sessions".sessionPreviewer: the channel then pipes
+# the plain document (--plain) into that command line. This repo
+# copy is the bat baseline.
+command = [
+  "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'",
+  "rushi-sessions preview --events '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'",
+]
 
 [ui]
 orientation = "portrait"

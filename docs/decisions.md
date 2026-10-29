@@ -1,3 +1,38 @@
+## 99. The recent-events table becomes a second cycled preview command (2026-10-29)
+
+television cycles multiple preview commands with the
+`cycle_previews` action (Ctrl+F by default). The channel now
+registers two preview commands. The recent-events table moves
+out of the card and into that second view.
+
+Decision:
+
+- The `[preview]` section holds a list of two commands.
+  television runs the first one on startup and cycles to the
+  second on `cycle_previews` (Ctrl+F by default).
+- Command 1 is the session card. It no longer renders the
+  `recent-events` table. The table is the second view.
+- Command 2 is the recent-events view. The binary flag is
+  `preview --events`. The view renders the card header plus the
+  `recent-events` table. The table holds the last 20 meaningful
+  events of the active path, in log order. An empty path renders
+  the section with a note.
+- The `sessionPreviewer` option (decision 98) covers both
+  commands. The non-bat form pipes the plain document of each
+  command into the renderer.
+- The remote ssh call forwards the `--events` and `--plain`
+  flags. An older remote binary rejects the flags, and the
+  remote preview fails with a warning.
+
+Verification: `cargo test -p rushi-sessions` is green (130 unit
+tests, plus the 32 integration tests). A Nix evaluation of the
+channel attrset pins the two preview command strings of both
+branches. The flake build of the channel derivation is clean.
+The repo TOML guard parses the two-command `[preview]` array.
+
+Out of scope: per-view renderers, and a configurable row count
+for the events table.
+
 ## 98. The session card renderer is a channel option (2026-10-29)
 
 The `rushi-sessions` channel preview panel renders the session

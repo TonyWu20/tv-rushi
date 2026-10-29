@@ -211,9 +211,20 @@ fn session_channel_toml_parses() {
         "description names the binary: {smd}"
     );
 
-    // The preview command still carries the seven split tokens.
-    let prev = v["preview"]["command"].as_str().unwrap();
-    assert!(prev.contains("rushi-sessions preview"), "preview: {prev}");
+    // Decision 99: the preview section carries two preview commands,
+    // cycled with the cycle_previews action (Ctrl+F by default): the
+    // session card, then the recent-events table view.
+    let prev = v["preview"]["command"].as_array().expect("preview commands");
+    assert_eq!(prev.len(), 2, "the two preview commands: {prev:?}");
+    let card = prev[0].as_str().expect("card command");
+    let evts = prev[1].as_str().expect("events command");
+    assert!(card.contains("rushi-sessions preview"), "card: {card}");
+    assert!(!card.contains("--events"), "the card is the default view: {card}");
+    assert!(evts.contains("rushi-sessions preview --events"), "events view: {evts}");
+    for c in [card, evts] {
+        assert!(c.contains("'{split:\t:0}'"), "tab token: {c}");
+        assert!(c.contains("'{split:\t:6}'"), "tab token: {c}");
+    }
 
     // Decision 55: new_session creates a sibling session in the
     // entry's project dir with an explicit --sessions-root (rushi

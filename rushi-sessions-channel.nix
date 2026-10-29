@@ -19,17 +19,19 @@
 #
 # The channel takes two arguments: `sourceRoots`, a list of local and
 # remote paths the source commands scan, and `sessionPreviewer`, the
-# preview panel's card renderer. The home-manager options
+# preview panel's document renderer. The home-manager options
 # `programs."rushi-sessions".sourceRoots` and
 # `programs."rushi-sessions".sessionPreviewer` feed them. The module
 # calls this file once, at `programs.television.channels."rushi-sessions"`,
 # with the configured roots and renderer. An empty roots list leaves
-# only the `CWD` view. The default `sessionPreviewer` (bat) is the
-# repo TOML baseline: the bare binary command, whose internal bat
+# only the `CWD` view. The preview section carries two preview
+# commands (the card and the recent-events view, cycled with
+# `cycle_previews`). The default `sessionPreviewer` (bat) is the
+# repo TOML baseline: the bare binary commands, whose internal bat
 # pass keeps the RUSHI_PREVIEW_THEME override and the plain fallback
 # when bat is absent. Any other value is one command line, run
-# through `sh -c` on the plain card (`--plain`), reading the card
-# from stdin (for example `mdcat` or `glow`).
+# through `sh -c` on the plain document (`--plain`), reading the
+# document from stdin (for example `mdcat` or `glow`).
 
 { sourceRoots ? [ ], sessionPreviewer ? "bat", ... }:
 
@@ -75,22 +77,35 @@ let
     ++ (if sourceRoots != [ ] then [ allCmd ] else [ ])
     ++ [ cwdCmd ];
 
-  # The repo TOML holds this command as a single-line basic string, so
-  # the value carries no trailing newline. rstripNewline strips the one
-  # the untab string adds.
+  # The two preview commands of the channel. television runs the
+  # first on startup and cycles to the next on `cycle_previews`
+  # (Ctrl+F by default): the session card, then the recent-events
+  # table view (`--events`, decision 99).
+  #
+  # The repo TOML holds each command as a single-line basic string,
+  # so the values carry no trailing newline. rstripNewline strips
+  # the one the untab string adds.
   #
   # The default `sessionPreviewer` (bat) is that baseline: the bare
-  # binary command, whose internal bat pass keeps the theme override
-  # and the plain fallback. Any other value pipes the plain card
-  # (`--plain`) into the renderer, run through `sh -c` and reading
-  # the card from stdin.
-  previewCommand =
+  # binary commands, whose internal bat pass keeps the theme
+  # override and the plain fallback. Any other value pipes the
+  # plain document (`--plain`) into the renderer, run through
+  # `sh -c` and reading the document from stdin.
+  previewCommands =
     if sessionPreviewer == "bat" then
-      rstripNewline (untab ''
-        rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
-      '')
+      [
+        (rstripNewline (untab ''
+          rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
+        ''))
+        (rstripNewline (untab ''
+          rushi-sessions preview --events '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
+        ''))
+      ]
     else
-      untab ("rushi-sessions preview --plain '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}' | sh -c \"${sessionPreviewer}\"");
+      [
+        (untab ("rushi-sessions preview --plain '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}' | sh -c \"${sessionPreviewer}\""))
+        (untab ("rushi-sessions preview --events --plain '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}' | sh -c \"${sessionPreviewer}\""))
+      ];
 in
 {
   metadata = {
@@ -167,7 +182,10 @@ in
   preview = {
     shell = "bash";
     cached = true;
-    command = previewCommand;
+    # Two preview commands. television runs the first one on startup
+    # and cycles to the next on `cycle_previews` (Ctrl+F by
+    # default): the session card, then the recent-events table view.
+    command = previewCommands;
   };
 
   ui = {

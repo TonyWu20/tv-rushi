@@ -3,10 +3,11 @@
 `tv-rushi` is a [television](https://github.com/alexpasmantier/television)
 channel for the rushi Unix agent harness. It gives a quick-peek window over
 rushi sessions. Each entry shows the session status, repo, last loop phase,
-and last activity. The preview panel shows a markdown status card.
-The card lists the git branch of the session's working dir (when
-one resolves). It shows the full last user message, the last
-on-idle assistant message, and a recent-events table. A second channel,
+and last activity. The preview panel shows two markdown documents,
+cycled with Ctrl+F (decision 99). The card lists the git branch of
+the session's working dir (when one resolves), the full last user
+message, and the last on-idle assistant message. The recent-events
+view shows the last 20 meaningful events. A second channel,
 `rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
 and previews each entry as a markdown or toml document. The `browse_events`
 action (enter) launches it from the session list.
@@ -16,7 +17,8 @@ action (enter) launches it from the session list.
 - List rushi sessions under a directory. Rows sort by the session's
   last update time, newest first. The channel sets `no_sort`, so a
   typed query in television keeps that order for its results.
-- Show a status card in the preview panel. `bat` colors it when present.
+- Show the session card and the recent-events view in the preview
+  panel (Ctrl+F cycles them). `bat` colors both when present.
 - Open a session in `rushi-tui` with ctrl-e.
 - Edit a message in `$EDITOR` (fallback `nvim`) and send it with ctrl-t.
   The send runs in the session's recorded working dir (the `cwd`
@@ -117,18 +119,21 @@ programs."rushi-sessions" = {
 };
 ```
 
-The main channel preview renders the session card through a renderer.
-The option is a string, default `bat`:
+The main channel preview shows two documents, cycled with Ctrl+F
+(the `cycle_previews` action): the session card, then the
+recent-events table view (decision 99). The `sessionPreviewer`
+option renders both documents through one shared renderer. The
+option is a string, default `bat`:
 
 ```nix
 programs."rushi-sessions" = {
-  sessionPreviewer = "mdcat --ansi";   # the card renderer
+  sessionPreviewer = "mdcat --ansi";   # the document renderer
 };
 ```
 
 A value other than `bat` is one command line, run through `sh -c`
-on the plain card (`--plain`) and reading the card from stdin.
-Pipe filters only.
+on the plain document (`--plain`) and reading the document from
+stdin. Pipe filters only.
 
 The events channel preview pipes each entry document into a renderer.
 The options are strings, default `bat`:

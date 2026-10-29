@@ -74,7 +74,7 @@ in
   options.programs."rushi-sessions".sessionPreviewer = lib.mkOption {
     type = lib.types.str;
     default = "bat";
-    description = "The pipe command the rushi-sessions channel uses to render the session card in the preview panel. It reads the card from stdin. The default bat keeps the binary's internal bat pass, with the RUSHI_PREVIEW_THEME override and the plain-text fallback when bat is absent. Any other value is one command line, run through sh -c on the plain card (--plain), for example mdcat or glow. Remote rows pass the --plain flag to the remote binary, so a remote host on an older binary fails the remote preview for a non-bat value.";
+    description = "The pipe command the rushi-sessions channel uses to render its preview documents in the preview panel (the session card and the recent-events view). It reads the document from stdin. The default bat keeps the binary's internal bat pass, with the RUSHI_PREVIEW_THEME override and the plain-text fallback when bat is absent. Any other value is one command line, run through sh -c on the plain document (--plain), for example mdcat or glow. Remote rows pass the --plain flag to the remote binary, so a remote host on an older binary fails the remote preview for a non-bat value.";
   };
 
   options.programs."rushi-sessions".eventPreviewer = lib.mkOption {
