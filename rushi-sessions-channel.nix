@@ -17,13 +17,21 @@
 # configured root (local + remote). `CWD` scans the current directory
 # (no roots) and is always present, last.
 #
-# The channel takes one argument: `sourceRoots`, a list of local and
-# remote paths the source commands scan. The home-manager option
-# `programs."rushi-sessions".sourceRoots` feeds it. The module calls this
-# file once, at `programs.television.channels."rushi-sessions"`, with the
-# configured roots. An empty list leaves only the `CWD` view.
+# The channel takes two arguments: `sourceRoots`, a list of local and
+# remote paths the source commands scan, and `sessionPreviewer`, the
+# preview panel's card renderer. The home-manager options
+# `programs."rushi-sessions".sourceRoots` and
+# `programs."rushi-sessions".sessionPreviewer` feed them. The module
+# calls this file once, at `programs.television.channels."rushi-sessions"`,
+# with the configured roots and renderer. An empty roots list leaves
+# only the `CWD` view. The default `sessionPreviewer` (bat) is the
+# repo TOML baseline: the bare binary command, whose internal bat
+# pass keeps the RUSHI_PREVIEW_THEME override and the plain fallback
+# when bat is absent. Any other value is one command line, run
+# through `sh -c` on the plain card (`--plain`), reading the card
+# from stdin (for example `mdcat` or `glow`).
 
-{ sourceRoots ? [ ], ... }:
+{ sourceRoots ? [ ], sessionPreviewer ? "bat", ... }:
 
 let
   tab = "\t";
@@ -70,9 +78,19 @@ let
   # The repo TOML holds this command as a single-line basic string, so
   # the value carries no trailing newline. rstripNewline strips the one
   # the untab string adds.
-  previewCommand = rstripNewline (untab ''
-    rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
-  '');
+  #
+  # The default `sessionPreviewer` (bat) is that baseline: the bare
+  # binary command, whose internal bat pass keeps the theme override
+  # and the plain fallback. Any other value pipes the plain card
+  # (`--plain`) into the renderer, run through `sh -c` and reading
+  # the card from stdin.
+  previewCommand =
+    if sessionPreviewer == "bat" then
+      rstripNewline (untab ''
+        rushi-sessions preview '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}'
+      '')
+    else
+      untab ("rushi-sessions preview --plain '{split:@TAB@:0}' '{split:@TAB@:1}' '{split:@TAB@:2}' '{split:@TAB@:3}' '{split:@TAB@:4}' '{split:@TAB@:5}' '{split:@TAB@:6}' | sh -c \"${sessionPreviewer}\"");
 in
 {
   metadata = {

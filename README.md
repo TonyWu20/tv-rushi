@@ -49,7 +49,8 @@ action (enter) launches it from the session list.
 - [television](https://github.com/alexpasmantier/television)
 - `fd`, a hard dependency of the backend binary
 - the `rushi-sessions` binary, which this repo builds
-- `bat`, optional. The preview prints plain markdown without it.
+- `bat`, optional. The preview prints plain markdown without it. The
+  `sessionPreviewer` option picks another renderer for the card.
 - `rushi` and `rushi-tui` on PATH, for the `send_message` and `open`
   actions. Nix builds and installs these with the `rushi` package.
   When the session's working dir carries a `flake.nix` and `nix`
@@ -115,6 +116,19 @@ programs."rushi-sessions" = {
   sourceRoots = [ "/export" "build:/export" "~/Downloads" ];
 };
 ```
+
+The main channel preview renders the session card through a renderer.
+The option is a string, default `bat`:
+
+```nix
+programs."rushi-sessions" = {
+  sessionPreviewer = "mdcat --ansi";   # the card renderer
+};
+```
+
+A value other than `bat` is one command line, run through `sh -c`
+on the plain card (`--plain`) and reading the card from stdin.
+Pipe filters only.
 
 The events channel preview pipes each entry document into a renderer.
 The options are strings, default `bat`:

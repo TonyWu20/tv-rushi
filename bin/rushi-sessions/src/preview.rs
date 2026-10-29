@@ -37,6 +37,7 @@ pub fn preview(
     last: &str,
     mtime: &str,
     path: &str,
+    plain: bool,
 ) {
     if let Some((host, rpath)) = split_remote(path) {
         // The TSV repo column carries the `host:` prefix. The remote
@@ -46,7 +47,7 @@ pub fn preview(
             .strip_prefix(host)
             .and_then(|rest| rest.strip_prefix(':'))
             .unwrap_or(repo);
-        preview_remote(host, &[status, name, bare, phase, last, mtime, rpath]);
+        preview_remote(host, &[status, name, bare, phase, last, mtime, rpath], plain);
         return;
     }
     let pid = fs::read_to_string(Path::new(path).join("loop.pid"))
@@ -104,6 +105,13 @@ pub fn preview(
         &events,
         workdir.as_deref(),
     );
+
+    // The plain card for a channel-side renderer (the `--plain`
+    // flag): no bat pass, the pipe owns the colors.
+    if plain {
+        print!("{}", card);
+        return;
+    }
 
     // Optional colorization through `bat` when it is available.
     match which("bat") {

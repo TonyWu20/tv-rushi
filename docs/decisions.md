@@ -1,3 +1,39 @@
+## 98. The session card renderer is a channel option (2026-10-29)
+
+The `rushi-sessions` channel preview panel renders the session
+card through a configurable previewer. The option follows the
+`eventPreviewer` contract of the events channel. It is a string,
+default `bat`.
+
+Decision:
+
+- The home-manager option is
+  `programs."rushi-sessions".sessionPreviewer`. The value is a
+  string, default `bat`.
+- `bat` keeps the repo baseline. The channel command is the bare
+  `rushi-sessions preview` call. The binary's internal bat pass
+  colors the card. The RUSHI_PREVIEW_THEME override and the
+  plain fallback stay.
+- Any other value is one command line. The channel runs it
+  through `sh -c` on the plain card and reads the card from
+  stdin. For example `mdcat --ansi` or `glow`.
+- The binary gains a `--plain` flag on `preview`. The flag
+  skips the internal bat pass. The remote ssh call forwards the
+  flag, so remote rows render plain under the pipe.
+- The repo TOML keeps the bat baseline. It is the manual-install
+  copy. Home-manager users get the pipe form when the option is
+  not `bat`.
+
+Verification: `cargo test -p rushi-sessions` is green (126 unit
+tests, plus the 32 integration tests). A Nix evaluation of the
+channel attrset pins both branches of the preview command. The
+flake build of the channel derivation is clean. A CLI smoke
+render shows 58 ANSI lines through the bat pass and 0 through
+`--plain`. A `sh -c` pipe simulation prints the plain card.
+
+Out of scope: a per-file previewer override in the manual TOML
+install, and a viewer option for the main channel.
+
 ## 97. The preview card renders as markdown, with the last on-idle assistant message (2026-10-29)
 
 The `rushi-sessions preview` card switches from a TOML document

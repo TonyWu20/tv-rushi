@@ -156,17 +156,22 @@ pub(crate) fn parse_remote_line(line: &str, host: &str) -> Option<Row> {
 ///
 /// The command sets `RUSHI_SESSIONS_PREVIEW_HOST` inline (the remote
 /// shell exports it for that one command). The remote card render
-/// reads it and puts a `host` key right under the `repo` key. An
+/// reads it and puts a `host` row right under the `repo` row. An
 /// older remote binary ignores the variable; the card then has no
-/// host line, but the source row still shows the host in the repo
-/// column.
-pub(crate) fn preview_remote(host: &str, cols: &[&str]) {
+/// host row, but the source row still shows the host in the repo
+/// column. With `plain`, the command passes `--plain`, so the remote
+/// card skips its own bat pass. An older remote binary rejects the
+/// flag; the remote preview then fails and warns.
+pub(crate) fn preview_remote(host: &str, cols: &[&str], plain: bool) {
     let mut cmd = String::new();
     cmd.push_str("RUSHI_SESSIONS_PREVIEW_HOST=");
     cmd.push_str(&shell_quote(host));
     cmd.push(' ');
     cmd.push_str(&remote_binary());
     cmd.push_str(" preview");
+    if plain {
+        cmd.push_str(" --plain");
+    }
     for c in cols {
         cmd.push(' ');
         cmd.push_str(&shell_quote(c));

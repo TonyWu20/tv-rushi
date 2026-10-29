@@ -16,6 +16,8 @@
 #     ~/.config/television/cable/rushi-sessions.toml;
 #   - declares `programs."rushi-sessions".sourceRoots` (a list of paths,
 #     default empty). Local and remote roots mix in the same list.
+#     `sessionPreviewer` (a string, default `bat`) picks the main
+#     channel's card renderer for the preview panel.
 #   - registers the rushi-sessions-events channel (the fuzzy search
 #     over one session's events.jsonl) and its branch sibling
 #     rushi-sessions-events-branch (the same channel focused on the
@@ -69,6 +71,12 @@ in
     description = "The scan roots for the rushi-sessions channel. The channel always exposes a CWD view (no roots). When roots are set it also exposes a Local view (local roots only) and an All view (local + remote roots). An entry can be a local path or a remote path in the form host:/path or user@host:/path. A remote entry must be reachable by an ssh alias. The shell expands a leading ~. Paths with spaces are not supported.";
   };
 
+  options.programs."rushi-sessions".sessionPreviewer = lib.mkOption {
+    type = lib.types.str;
+    default = "bat";
+    description = "The pipe command the rushi-sessions channel uses to render the session card in the preview panel. It reads the card from stdin. The default bat keeps the binary's internal bat pass, with the RUSHI_PREVIEW_THEME override and the plain-text fallback when bat is absent. Any other value is one command line, run through sh -c on the plain card (--plain), for example mdcat or glow. Remote rows pass the --plain flag to the remote binary, so a remote host on an older binary fails the remote preview for a non-bat value.";
+  };
+
   options.programs."rushi-sessions".eventPreviewer = lib.mkOption {
     type = lib.types.str;
     default = "bat";
@@ -100,7 +108,10 @@ in
     # local + remote views (see rushi-sessions-channel.nix). It is
     # registered even with empty roots: it then exposes the CWD view only.
     programs.television.channels."rushi-sessions" =
-      (import ./rushi-sessions-channel.nix) { sourceRoots = cfg.sourceRoots; };
+      (import ./rushi-sessions-channel.nix) {
+        sourceRoots = cfg.sourceRoots;
+        sessionPreviewer = cfg.sessionPreviewer;
+      };
     # The events channel fuzzy-searches one session's events.jsonl.
     # It is registered next to the main channel: the browse_events
     # action (alt-e) of the main channel launches it with the session

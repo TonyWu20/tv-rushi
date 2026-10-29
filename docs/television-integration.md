@@ -292,6 +292,13 @@ Decisions (user, 2026-10-04):
   last on-idle assistant message (decision 97), in full. It has
   a `recent-events` table with `ts`, `type` and `brief`
   columns: the last 5 meaningful events.
+
+  The card renderer is configurable (decision 98). The
+  home-manager option `programs."rushi-sessions".sessionPreviewer`
+  picks it. The default `bat` keeps the binary's internal bat
+  pass. Any other value is one command line. The channel runs it
+  through `sh -c` on the plain card, which the binary's
+  `--plain` flag prints. The pipe reads the card from stdin.
 - `usage` shows the context window usage of the last model call. It reads
   `input_tokens + output_tokens` of the last `assistant_message` usage
   record in `events.jsonl`. The window is the active model's

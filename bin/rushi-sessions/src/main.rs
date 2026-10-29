@@ -29,6 +29,8 @@
 //!   `bat` is on PATH the card is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
 //!   "Catppuccin Macchiato"); otherwise plain markdown is printed.
+//!   `--plain` skips the bat pass, for a channel-side renderer that
+//!   reads the plain card from stdin (a non-bat `sessionPreviewer`).
 //! - `rushi-sessions events [DIR] [--chat] [--branch SEQ]`
 //!   Print the collapsed branch view of the session's events.jsonl,
 //!   newest first: the active branch plus the history before the
@@ -145,6 +147,11 @@ enum Command {
         mtime: String,
         /// Session directory path.
         path: String,
+        /// Print the card without the bat pass. A channel-side
+        /// renderer (a non-bat `sessionPreviewer`) reads the plain
+        /// card from stdin.
+        #[arg(long)]
+        plain: bool,
     },
     /// Print one TSV row per shown entry of the session's
     /// events.jsonl, newest first, in the collapsed branch view:
@@ -288,7 +295,8 @@ fn main() {
             last,
             mtime,
             path,
-        } => preview::preview(&status, &name, &repo, &phase, &last, &mtime, &path),
+            plain,
+        } => preview::preview(&status, &name, &repo, &phase, &last, &mtime, &path, plain),
         Command::Events { dir, chat, branch } => events::events(dir, chat, branch),
         Command::NewSession { row } => std::process::exit(prompt::new_session(&row)),
         Command::SendMessage { row, events } => {
