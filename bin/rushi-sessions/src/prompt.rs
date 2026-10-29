@@ -55,10 +55,16 @@ pub(crate) struct PromptCfg {
     pub ssh: String,
     /// The detach tool: "setsid" or "nohup".
     pub detach: String,
-    /// True when the create/send step runs in the project flake's
-    /// devShell (`nix develop -c rushi run ...`), not the PATH
-    /// `rushi` (decision 87).
+    /// True when the create/send step runs in the project's devShell
+    /// (`nix develop -c rushi run ...`), not the PATH `rushi`
+    /// (decision 87, re-gated on the `.envrc` devShell by decision
+    /// 95).
     pub nix_dev: bool,
+    /// The devShell flake dir the `nix develop` step loads, from the
+    /// project's `.envrc` (decision 95). Set only for the local
+    /// `.envrc` devShell; the remote step loads its own flake, so it
+    /// stays None there.
+    pub nix_flake_dir: Option<String>,
     /// True when stage 2 runs as the floating pane's command.
     pub pane: bool,
 }
@@ -84,6 +90,7 @@ impl PromptCfg {
             ("ssh".into(), j(&self.ssh)),
             ("detach".into(), j(&self.detach)),
             ("nix_dev".into(), j(&self.nix_dev.to_string())),
+            ("nix_flake_dir".into(), j(&self.nix_flake_dir.clone().unwrap_or_default())),
         ]));
         let text = serde_json::to_string(&v).map_err(|e| e.to_string())?;
         std::fs::write(&p, text).map_err(|e| e.to_string())?;
@@ -124,6 +131,11 @@ impl PromptCfg {
             ssh: g("ssh"),
             detach: g("detach"),
             nix_dev: g("nix_dev") == "true",
+            nix_flake_dir: if g("nix_flake_dir").is_empty() {
+                None
+            } else {
+                Some(g("nix_flake_dir"))
+            },
             pane: true,
         };
         let _ = std::fs::remove_file(p);
@@ -456,34 +468,23 @@ pub(crate) fn which(name: &str) -> Option<PathBuf> {
     None
 }
 
-/// The nix devShell resolution (decision 87/88): true when the
-/// session's project dir carries a flake and `nix` is on PATH. The
-/// step then runs as `nix develop -c <binary>` from that dir. The
-/// plain `nix develop` inherits the environment, so the devShell
-/// packages shadow the inherited PATH, and a binary the devShell
-/// does not ship falls back to the inherited PATH entry naturally.
-/// A failed gate keeps the plain PATH binary, the pre-flake
-/// behavior.
-pub(crate) fn nix_dev_dir(dir: &str) -> bool {
+/// The local devShell flake dir (decision 95): the flake dir that the
+/// project's effective `.envrc` (this dir, then its ancestors) loads,
+/// when that devShell actually resolves `rushi` (the decision 90
+/// resolvability rule applied to the `rushi run` step). None when no
+/// `.envrc` is found on the chain, or when the devShell does not ship
+/// `rushi`: the step then falls back to the global PATH `rushi`
+/// instead of a `nix develop` that would die with an error.
+pub(crate) fn local_nix_flake_dir(dir: &str) -> Option<PathBuf> {
     if dir.is_empty() {
-        return false;
+        return None;
     }
-    if !Path::new(dir).join("flake.nix").is_file() {
-        return false;
+    let fd = crate::devshell::envrc_flake_dir(Path::new(dir))?;
+    if crate::devshell::resolve(fd.as_path(), "rushi").is_some() {
+        Some(fd)
+    } else {
+        None
     }
-    which("nix").is_some()
-}
-
-/// The local devShell launch decision for a step that runs `rushi`
-/// (the `rushi run` send and new-session steps): the 88 gate, plus
-/// the requirement that the devShell actually resolves `rushi`
-/// (decision 90, applied to the `rushi run` step). A broken flake
-/// fails the bounded materialize, so the devShell launch is dropped
-/// and the step falls back to the global PATH `rushi` instead of a
-/// `nix develop` that dies with an error.
-pub(crate) fn local_nix_dev(dir: &str) -> bool {
-    nix_dev_dir(dir)
-        && crate::devshell::resolve(Path::new(dir), "rushi").is_some()
 }
 
 /// The step's argv after the detach tool: the PATH `rushi` binary,
@@ -495,13 +496,27 @@ pub(crate) fn local_nix_dev(dir: &str) -> bool {
 /// message-mode `--` escape survives the nix arg pass.
 pub(crate) fn rushi_run_tail(cfg: &PromptCfg) -> Vec<String> {
     if cfg.nix_dev {
-        vec![
-            "nix".to_string(),
-            "develop".to_string(),
-            "-c".to_string(),
-            "rushi".to_string(),
-            "run".to_string(),
-        ]
+        // The `.envrc` devShell (decision 95) loads its flake by ref
+        // so the loop still runs in the project's working dir; the
+        // remote devShell loads the remote cwd's flake, so it keeps
+        // the plain form.
+        match &cfg.nix_flake_dir {
+            Some(fd) => vec![
+                "nix".to_string(),
+                "develop".to_string(),
+                fd.clone(),
+                "-c".to_string(),
+                "rushi".to_string(),
+                "run".to_string(),
+            ],
+            None => vec![
+                "nix".to_string(),
+                "develop".to_string(),
+                "-c".to_string(),
+                "rushi".to_string(),
+                "run".to_string(),
+            ],
+        }
     } else {
         vec![cfg.rushi.clone(), "run".to_string()]
     }
@@ -697,20 +712,26 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     } else {
         None
     };
-    // The nix devShell resolution (decision 87/88): the create/send
-    // step runs in the project flake's devShell. The dir is the
-    // recorded working dir (message) or the project root (new): the
-    // flake dir of the project. A remote row checks the gate on the
-    // remote host (the remote flake); a local row checks the local
-    // dir.
+    // The devShell resolution (decisions 87/88, re-gated by 95): the
+    // create/send step runs in the project's `.envrc` devShell. The
+    // flake dir comes from the project's `.envrc` (this dir, then its
+    // ancestors); the step's `nix develop` loads that flake by ref so
+    // the loop still runs in the working dir. No `.envrc` (or a
+    // devShell without `rushi`) keeps the global PATH `rushi`. A
+    // remote row checks the gate on the remote host (the remote
+    // flake) and loads the remote cwd's flake.
     let nix_dir = match (kind, w.as_deref(), r_root.as_deref()) {
         ("message", Some(d), _) if !d.is_empty() => Some(d),
         ("new", _, Some(d)) if !d.is_empty() => Some(d),
         _ => None,
     };
-    let nix_dev = match (host.as_deref(), nix_dir.as_deref()) {
+    let nix_flake_dir: Option<String> = match (host.as_deref(), nix_dir) {
+        (None, Some(d)) => local_nix_flake_dir(d).map(|p| p.to_string_lossy().into_owned()),
+        _ => None,
+    };
+    let nix_dev = match (host.as_deref(), nix_dir) {
         (Some(h), Some(d)) => remote_nix_dev(h, d),
-        (None, Some(d)) => local_nix_dev(d),
+        (None, Some(_)) => nix_flake_dir.is_some(),
         _ => false,
     };
     let prompt_dir = match kind {
@@ -761,6 +782,7 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         ssh,
         detach: detach.to_string(),
         nix_dev,
+        nix_flake_dir,
         pane: false,
     };
     let floating = tmux_floating_ok();
@@ -1018,58 +1040,60 @@ mod tests {
         );
     }
 
-    /// The local gate: an empty dir and a flake-less dir stay on
-    /// the PATH binary. The flake-present arm also needs nix on
-    /// PATH, so it is asserted against the host's own gate state.
+    /// The local `.envrc` gate (decision 95): the step uses the
+    /// devShell only when an effective `.envrc` (this dir, then
+    /// ancestors) names a flake whose devShell resolves `rushi`. An
+    /// empty dir, a dir with no `.envrc` on the chain, or a devShell
+    /// without `rushi` all stay on the global PATH `rushi`.
     #[test]
-    fn nix_dir_gates() {
-        let base = std::env::temp_dir().join(format!("rsrs-nixdev-{}", std::process::id()));
+    fn local_nix_flake_dir_gates() {
+        let base = std::env::temp_dir().join(format!("rsrs-envrcgate-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&base);
 
-        // No flake.nix: the gate stops at the file check.
+        // An empty dir (the resolution-failure shape) stays on PATH.
+        assert_eq!(local_nix_flake_dir(""), None);
+
+        // No `.envrc` on the chain: the gate stops at the `.envrc`
+        // lookup, no nix call.
         let bare = base.join("bare");
         std::fs::create_dir_all(&bare).unwrap();
-        assert!(!nix_dev_dir(bare.to_str().unwrap()));
+        assert_eq!(local_nix_flake_dir(bare.to_str().unwrap()), None);
 
-        // An empty dir (the resolution-failure shape) resolves to
-        // the PATH binary.
-        assert!(!nix_dev_dir(""));
-
-        // The flake-present arm: true only when nix is on the
-        // host's PATH (the gate's last check).
-        let flake = base.join("flake");
-        std::fs::create_dir_all(&flake).unwrap();
-        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
-        let dir = flake.to_str().unwrap().to_string();
-        assert_eq!(nix_dev_dir(&dir), which("nix").is_some());
-    }
-
-    /// The `rushi run` step's local decision (decision 90 applied to
-    /// the step): the gate, plus the devShell resolving `rushi`. A
-    /// broken flake fails the bounded materialize, so this is false
-    /// and the step falls back to the global PATH `rushi`.
-    #[test]
-    fn local_nix_dev_gates_on_resolution() {
-        let base =
-            std::env::temp_dir().join(format!("rsrs-localnixdev-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&base);
-
-        // No flake.nix: the gate stops at the file check. No nix call.
-        let bare = base.join("bare");
-        std::fs::create_dir_all(&bare).unwrap();
-        assert!(!local_nix_dev(bare.to_str().unwrap()));
-
-        // A flake dir with a seeded (resolvable) `rushi`: true only
-        // when the host gate holds (nix on PATH). The resolve is a
-        // cache hit, so no nix call runs in the test.
-        let flake = base.join("flake");
-        std::fs::create_dir_all(&flake).unwrap();
-        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
+        // A `.envrc` loading this dir's flake, with a seeded (and
+        // resolvable) `rushi`: the flake dir is returned. The resolve
+        // is a cache hit, so no nix call runs in the test.
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join(".envrc"), "use flake .\n").unwrap();
+        std::fs::write(proj.join("flake.nix"), "{}").unwrap();
         let bin = base.join("rushi-bin");
         std::fs::write(&bin, "x").unwrap();
-        crate::devshell::seed(flake.as_path(), "rushi", bin.to_str().unwrap());
-        let dir = flake.to_str().unwrap().to_string();
-        assert_eq!(local_nix_dev(&dir), which("nix").is_some());
+        crate::devshell::seed(proj.as_path(), "rushi", bin.to_str().unwrap());
+        let want = proj.canonicalize().unwrap();
+        assert_eq!(local_nix_flake_dir(proj.to_str().unwrap()), Some(want));
+    }
+
+    /// The `.envrc` flake can differ from the project's own flake: a
+    /// `.envrc` pointing at another flake returns that flake's dir,
+    /// not the local one.
+    #[test]
+    fn local_nix_flake_dir_follows_the_envrc_target() {
+        let base = std::env::temp_dir().join(format!("rsrs-envrctgt-{}", std::process::id()));
+        let other = base.join("other");
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::create_dir_all(&proj).unwrap();
+        // The project carries no flake of its own; its `.envrc` loads
+        // the sibling flake.
+        std::fs::write(proj.join(".envrc"), "use flake ../other\n").unwrap();
+        std::fs::write(other.join("flake.nix"), "{}").unwrap();
+        let bin = base.join("rushi-bin");
+        std::fs::write(&bin, "x").unwrap();
+        crate::devshell::seed(other.as_path(), "rushi", bin.to_str().unwrap());
+        assert_eq!(
+            local_nix_flake_dir(proj.to_str().unwrap()),
+            Some(other.canonicalize().unwrap())
+        );
     }
 
     /// A cfg fixture for the args-file and tail tests.
@@ -1087,6 +1111,7 @@ mod tests {
             ssh: "ssh".to_string(),
             detach: "setsid".to_string(),
             nix_dev,
+            nix_flake_dir: None,
             pane: false,
         }
     }
@@ -1098,6 +1123,8 @@ mod tests {
             rushi_run_tail(&cfg),
             vec!["/store/bin/rushi".to_string(), "run".to_string()]
         );
+        // The remote devShell keeps the plain `nix develop -c` form:
+        // it loads the remote cwd's flake.
         let mut cfg2 = cfg_fixture(true);
         assert_eq!(
             rushi_run_tail(&cfg2),
@@ -1110,6 +1137,20 @@ mod tests {
             ]
         );
         assert_eq!(rushi_run_label(&cfg2), "the nix devShell launch");
+        // The local `.envrc` devShell loads its flake by ref so the
+        // loop runs in the working dir (decision 95).
+        cfg2.nix_flake_dir = Some("/proj/flake".to_string());
+        assert_eq!(
+            rushi_run_tail(&cfg2),
+            vec![
+                "nix".to_string(),
+                "develop".to_string(),
+                "/proj/flake".to_string(),
+                "-c".to_string(),
+                "rushi".to_string(),
+                "run".to_string()
+            ]
+        );
         cfg2.nix_dev = false;
         assert_eq!(rushi_run_label(&cfg2), "/store/bin/rushi");
     }
@@ -1161,6 +1202,7 @@ mod roundtrip_tests {
             ssh: "ssh".into(),
             detach: "setsid".into(),
             nix_dev: false,
+            nix_flake_dir: None,
             pane: true,
         };
         let p = cfg.to_args_file().unwrap();

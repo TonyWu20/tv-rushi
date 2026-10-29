@@ -37,9 +37,10 @@ pub(crate) fn usage_line(used: u64, window: Option<u64>) -> String {
 }
 /// The context window in tokens. Resolution order: the
 /// `RUSHI_CONTEXT_WINDOW` env var (a positive integer), then the
-/// `rushi config` of the session's project. The project dir carries
-/// a flake and `nix` is on PATH: the project's own devShell `rushi`
-/// is probed (decision 88); otherwise the `rushi` on PATH. The
+/// `rushi config` of the session's project. The project's effective
+/// `.envrc` (this dir, then its ancestors) names the devShell flake
+/// (decision 95): that flake's devShell `rushi` is probed; a dir
+/// with no `.envrc` on the chain probes the `rushi` on PATH. The
 /// probe reads the active model's `context_tokens`, then
 /// `limits.context_budget_tokens`. None when nothing resolves.
 ///
@@ -58,10 +59,11 @@ pub(crate) fn context_window(dir: Option<&std::path::Path>) -> Option<u64> {
         }
     }
     match dir {
-        Some(d) if crate::prompt::nix_dev_dir(&d.to_string_lossy()) => {
-            devshell_context_window(d).or_else(path_context_window)
-        }
-        _ => path_context_window(),
+        // The `.envrc` gate lives inside `devshell_context_window`: a
+        // dir with no `.envrc` on the chain resolves to None there,
+        // and the PATH probe takes over.
+        Some(d) => devshell_context_window(d).or_else(path_context_window),
+        None => path_context_window(),
     }
 }
 
@@ -79,13 +81,16 @@ fn path_context_window() -> Option<u64> {
 }
 
 /// The devShell probe (decision 89): run the project's own `rushi`
-/// and read its config. The binary's store path is resolved once per
-/// devShell generation and cached by `devshell::resolve`, so a
+/// and read its config. The `.envrc` flake dir (decision 95) is the
+/// flake to materialize; the binary's store path is resolved once
+/// per devShell generation and cached by `devshell::resolve`, so a
 /// repeated preview execs the cached path directly instead of
-/// re-running the heavy `nix develop` probe. None when the devShell
-/// binary does not resolve; the caller falls back to the PATH probe.
+/// re-running the heavy `nix develop` probe. None when no `.envrc`
+/// is found on the chain, or when the devShell binary does not
+/// resolve; the caller falls back to the PATH probe.
 fn devshell_context_window(dir: &std::path::Path) -> Option<u64> {
-    let bin = crate::devshell::resolve(dir, "rushi")?;
+    let fd = crate::devshell::envrc_flake_dir(dir)?;
+    let bin = crate::devshell::resolve(fd.as_path(), "rushi")?;
     run_config(&bin)
 }
 
@@ -186,26 +191,31 @@ context_budget_tokens = 333
         assert_eq!(context_window_from_config(text), Some(222));
     }
 
-    /// Probe routing (decision 89): a session project dir that
-    /// carries a flake routes to the devShell probe only when nix
-    /// is on PATH (the gate), so the project's own `rushi` is
-    /// probed. A flake-less dir routes to the PATH `rushi config`.
+    /// Probe routing (decision 89, re-gated by 95): a session
+    /// project dir routes to the devShell probe only when an
+    /// effective `.envrc` (this dir, then ancestors) names a flake;
+    /// a dir with no `.envrc` on the chain routes to the PATH
+    /// `rushi config`.
     #[test]
     fn probe_routing_gate() {
         let base = std::env::temp_dir().join(format!("rsrs-probe-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&base);
 
+        // No `.envrc` on the chain: the dir does not route to the
+        // devShell probe.
         let bare = base.join("bare");
         std::fs::create_dir_all(&bare).unwrap();
-        assert!(!crate::prompt::nix_dev_dir(&bare.to_string_lossy()));
+        assert_eq!(crate::devshell::envrc_flake_dir(bare.as_path()), None);
 
-        let flake = base.join("flake");
-        std::fs::create_dir_all(&flake).unwrap();
-        std::fs::write(flake.join("flake.nix"), "{}").unwrap();
-        // The flake dir routes to the devShell probe only when nix
-        // is available (the gate's last check).
-        let has_nix = crate::prompt::which("nix").is_some();
-        assert_eq!(crate::prompt::nix_dev_dir(&flake.to_string_lossy()), has_nix);
+        // An `.envrc` loading this dir's flake routes to the
+        // devShell probe.
+        let proj = base.join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join(".envrc"), "use flake .\n").unwrap();
+        assert_eq!(
+            crate::devshell::envrc_flake_dir(proj.as_path()),
+            Some(proj.canonicalize().unwrap())
+        );
     }
 
     #[test]

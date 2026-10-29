@@ -40,25 +40,32 @@ fn session_channel_toml_parses() {
     let cmdv = v["actions"]["open_v"]["command"].as_str().unwrap();
     assert!(cmdv.contains("split-window -v"), "open_v: {cmdv}");
 
-    // Decision 88: the plain devShell gate. When the session's
-    // project dir carries a flake.nix and nix is on PATH, the local
-    // branch runs the TUI as `nix develop -c rushi-tui`. The remote
-    // branch runs the same check over one read-only ssh -T call
-    // (the remote flake file plus `command -v nix`) and runs the
-    // remote TUI in the remote devShell. A failed gate keeps the
-    // PATH `rushi-tui` (the `tu`/`rt` defaults). No env-var
-    // opt-out, no probe, no absolute nix path: the plain
-    // `nix develop` inherits the environment, so a binary the
-    // devShell does not ship falls back to the inherited PATH
-    // entry.
+    // Decision 95: the local gate is the effective `.envrc` (this
+    // dir, then its ancestors), which names the devShell flake. The
+    // TUI runs as `nix develop <flake> -c rushi-tui` so it stays in
+    // the working dir; with no `.envrc` the PATH `rushi-tui` is
+    // used. The plain local flake gate of decision 88 is gone.
     for a in ["open", "open_v"] {
         let c = v["actions"][a]["command"].as_str().unwrap();
-        // The local gate and launch.
+        // The `.envrc` walk-up and parse.
+        assert!(
+            c.contains("tu=rushi-tui; fd=\"\"; d=$r; while :; do if [ -f \"$d/.envrc\" ]; then"),
+            "{a} .envrc gate walk: {c}"
+        );
+        // The flake-ref launch: the devShell flake loads by ref so
+        // the TUI still runs in the working dir.
         assert!(
             c.contains(
-                "tu=rushi-tui; if [ -f \"$r/flake.nix\" ] && command -v nix >/dev/null 2>&1; then tu=\"nix develop -c rushi-tui\"; fi;"
+                "[ -n \"$fd\" ] && command -v nix >/dev/null 2>&1 && tu=\"nix develop $fd -c rushi-tui\";"
             ),
-            "{a} local gate: {c}"
+            "{a} .envrc flake-ref launch: {c}"
+        );
+        // The plain local flake gate of decision 88 is replaced by
+        // the `.envrc` gate (the remote gate keeps its `test -f`
+        // ssh form).
+        assert!(
+            !c.contains("[ -f \"$r/flake.nix\" ] && command -v nix >/dev/null 2>&1; then tu="),
+            "{a} the 88 local flake gate is gone: {c}"
         );
         // The remote gate and launch (the decoded value carries the
         // backslash quotes of the local shell line).

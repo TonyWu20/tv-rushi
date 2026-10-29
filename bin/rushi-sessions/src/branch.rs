@@ -30,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use crate::events::numbered_events;
-use crate::prompt::{is_blank, new_prompt_file, nix_dev_dir, stty_save, which};
+use crate::prompt::{is_blank, new_prompt_file, stty_save, which};
 
 /// The stage entry of the `rewind` command. Without DIR, the CWD is
 /// the session dir (the events channel runs in it).
@@ -238,30 +238,32 @@ fn kernel_bin(names: &[&str]) -> String {
 
 /// The kernel binary launch of a session (decision 88, the 90
 /// resolvability fallback): the argv plus the working dir of the
-/// launch. The project dir carries a flake and `nix` is on PATH:
-/// `nix develop -c <name>` in that dir, when the gate holds. The
-/// bare `nix develop -c <name>` only works when `<name>` resolves
-/// from the devShell PATH (the devShell packages shadowing the
-/// inherited PATH). The kernel bins (`log`, `compact`) are the
-/// siblings of the kernel's `rushi` in the package's one bin dir;
-/// a devShell that ships no kernel bin leaves a bare `log`
-/// unfindable on the inherited PATH too, and the bare launch dies
-/// with a 127 (decision 90). The probe is the cached devShell
-/// resolve of `<name>` (decision 89): a resolve hit keeps the
-/// gated launch in the flake dir; a miss (the devShell and the
-/// inherited PATH both lack the name, or the bounded materialize
-/// times out) falls back to the PATH sibling of the resolved
-/// `rushi` with the caller's working dir, the pre-flake behavior.
-/// Without the gate, the fallback is unconditional.
+/// launch. The project's effective `.envrc` (this dir, then its
+/// ancestors) names the devShell flake (decision 95): the launch is
+/// `nix develop -c <name>` in that flake dir, when the gate holds.
+/// The bare `nix develop -c <name>` only works when `<name>`
+/// resolves from the devShell PATH (the devShell packages shadowing
+/// the inherited PATH). The kernel bins (`rushi-log`,
+/// `rushi-compact`, and the legacy `log`) are the siblings of the
+/// kernel's `rushi` in the package's one bin dir; a devShell that
+/// ships no kernel bin leaves a bare name unfindable on the
+/// inherited PATH too, and the bare launch dies with a 127
+/// (decision 90). The probe is the cached devShell resolve of
+/// `<name>` (decision 89): a resolve hit keeps the gated launch in
+/// the flake dir; a miss (the devShell and the inherited PATH both
+/// lack the name, or the bounded materialize times out) falls back
+/// to the PATH sibling of the resolved `rushi`, the pre-flake
+/// behavior. Without an `.envrc` on the chain, the fallback is
+/// unconditional.
 fn kernel_launch(
     names: &[&str],
     projdir: Option<&Path>,
     cwd: Option<PathBuf>,
 ) -> (Vec<String>, Option<PathBuf>) {
     if let Some(p) = projdir {
-        if nix_dev_dir(&p.to_string_lossy()) {
+        if let Some(fd) = crate::devshell::envrc_flake_dir(p) {
             for name in names {
-                if crate::devshell::resolve(p, name).is_some() {
+                if crate::devshell::resolve(fd.as_path(), name).is_some() {
                     return (
                         vec![
                             "nix".to_string(),
@@ -269,7 +271,7 @@ fn kernel_launch(
                             "-c".to_string(),
                             name.to_string(),
                         ],
-                        Some(p.to_path_buf()),
+                        Some(fd),
                     );
                 }
             }
@@ -406,9 +408,9 @@ fn local_workdir(base: &Path) -> String {
 mod tests {
     use super::*;
 
-    /// Without the gate (no projdir, or a flake-less projdir) the
-    /// launch is the single PATH binary with the caller's working
-    /// dir, the pre-flake behavior.
+    /// Without the gate (no projdir, or a projdir with no `.envrc`
+    /// on the chain) the launch is the single PATH binary with the
+    /// caller's working dir, the pre-flake behavior.
     #[test]
     fn kernel_launch_without_gate_keeps_the_path_binary() {
         let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, None, None);
@@ -425,20 +427,18 @@ mod tests {
         assert_eq!(cwd, Some(bare));
     }
 
-    /// With the gate (a flake.nix in the projdir, nix on the host
-    /// PATH) and a resolvable bin the launch is `nix develop -c
-    /// <bin>` in the flake dir; the launch dir is the flake dir,
-    /// not the caller's. The resolve is a seeded fresh cache entry,
-    /// so the probe runs no nix call.
+    /// With the gate (an `.envrc` in the projdir loading its flake,
+    /// decision 95) and a resolvable bin the launch is
+    /// `nix develop -c <bin>` in the flake dir; the launch dir is
+    /// the flake dir, not the caller's. The resolve is a seeded
+    /// fresh cache entry, so the probe runs no nix call.
     #[test]
     fn kernel_launch_with_gate_is_the_devshell() {
         let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
         let flake = base.join("flake");
         std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join(".envrc"), "use flake .\n").unwrap();
         std::fs::write(flake.join("flake.nix"), "{}").unwrap();
-        if which("nix").is_none() {
-            return;
-        }
         // Seed a fresh cache entry per bin so the resolve probe
         // serves the seeded path without a nix call. The seeded
         // paths must exist (the freshness check re-stats them).
@@ -468,18 +468,19 @@ mod tests {
         assert_eq!(cwd, Some(flake));
     }
 
-    /// With the gate but a devShell that resolves no name of the
-    /// list (no cache entry, the materialize fails on a bare `{}`
-    /// flake with no devShell) the launch falls back to the PATH
-    /// sibling of the resolved `rushi` with the caller's working
-    /// dir, the pre-flake behavior (decision 90). The bare `nix
-    /// develop -c <bin>` of decision 88 is what dies with a 127
-    /// in this world.
+    /// With the gate (an `.envrc` in the projdir, decision 95) but a
+    /// devShell that resolves no name of the list (no cache entry,
+    /// the materialize fails on a bare `{}` flake with no devShell)
+    /// the launch falls back to the PATH sibling of the resolved
+    /// `rushi` with the caller's working dir, the pre-flake
+    /// behavior (decision 90). The bare `nix develop -c <bin>` of
+    /// decision 88 is what dies with a 127 in this world.
     #[test]
     fn kernel_launch_with_gate_unresolvable_keeps_the_path_sibling() {
         let base = std::env::temp_dir().join(format!("rsrs-klaunch-{}", std::process::id()));
         let flake = base.join("unresolvable");
         std::fs::create_dir_all(&flake).unwrap();
+        std::fs::write(flake.join(".envrc"), "use flake .\n").unwrap();
         std::fs::write(flake.join("flake.nix"), "{}").unwrap();
         if which("nix").is_none() {
             return;

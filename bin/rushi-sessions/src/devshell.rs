@@ -44,6 +44,90 @@ pub(crate) fn resolve(dir: &Path, bin: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+/// The flake dir that `dir`'s effective `.envrc` loads (decision 95).
+/// The `.envrc` of `dir` itself is first priority; if it is absent,
+/// the parent dirs are walked up to the first `.envrc`. The
+/// `use flake <path>` line names the flake: a bare `use flake` (or
+/// `use flake .`) loads the `.envrc`'s own dir; a path form loads
+/// that dir (`~` expanded, relative to the `.envrc` dir). None when
+/// no `.envrc` is found on the chain.
+pub(crate) fn envrc_flake_dir(dir: &Path) -> Option<PathBuf> {
+    let mut cur = Some(dir.to_path_buf());
+    while let Some(d) = cur {
+        if let Some(fd) = envrc_flake_dir_in(&d) {
+            return Some(norm_lexical(fd));
+        }
+        cur = d.parent().map(Path::to_path_buf);
+    }
+    None
+}
+
+/// Lexically normalize a path: drop `.` and resolve `..` against the
+/// components already seen (never past the root). An input from
+/// `envrc_flake_dir` is absolute, so the result stays absolute.
+fn norm_lexical(p: PathBuf) -> PathBuf {
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            std::path::Component::RootDir => out.push(c.as_os_str()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                // `Path::pop` is a no-op at the root, so this never
+                // climbs past it.
+                out.pop();
+            }
+            c => out.push(c.as_os_str()),
+        }
+    }
+    if out.as_os_str().is_empty() {
+        out.push(std::ffi::OsString::from("."));
+    }
+    out
+}
+
+/// The flake dir named by `<d>/.envrc`, when that file exists.
+fn envrc_flake_dir_in(d: &Path) -> Option<PathBuf> {
+    let envrc = d.join(".envrc");
+    if !envrc.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(envrc).ok()?;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = t.strip_prefix("use flake") {
+            return flake_ref_dir(rest.trim(), d);
+        }
+    }
+    None
+}
+
+/// The flake dir of a `use flake` reference. A bare `.` (or empty)
+/// is the `.envrc`'s own dir. A local path is `~`-expanded and
+/// resolved against the `.envrc` dir. A non-local reference (a
+/// `github:` or URL form) cannot be materialized locally, so it
+/// resolves to None and the caller falls back to the global PATH.
+fn flake_ref_dir(ref_: &str, envrc_dir: &Path) -> Option<PathBuf> {
+    let ref_ = ref_.trim();
+    if ref_.is_empty() || ref_ == "." {
+        return Some(envrc_dir.to_path_buf());
+    }
+    if let Some(rest) = ref_.strip_prefix("~/") {
+        let home = std::env::var("HOME").ok()?;
+        return Some(PathBuf::from(home).join(rest));
+    }
+    if ref_ == "~" {
+        return std::env::var("HOME").ok().map(PathBuf::from);
+    }
+    if ref_.starts_with("github:") || ref_.contains("://") || ref_.starts_with("git+") {
+        return None;
+    }
+    let pb = PathBuf::from(ref_);
+    Some(if pb.is_absolute() { pb } else { envrc_dir.join(pb) })
+}
+
 /// The devShell generation fingerprint: the flake file mtimes plus
 /// the host arch. It is stable while the flake is unchanged and
 /// shifts when the flake (or lock) is edited, which rebuilds the
@@ -223,6 +307,56 @@ fn run_with_timeout(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn envrc_flake_dir_local_dot() {
+        let d = std::env::temp_dir().join(format!("rsrs-envrc-dot-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        std::fs::write(d.join(".envrc"), "use flake .\n").unwrap();
+        assert_eq!(envrc_flake_dir(d.as_path()), Some(d.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn envrc_flake_dir_tilde_expands() {
+        let d = std::env::temp_dir().join(format!("rsrs-envrc-tilde-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let home = std::env::var("HOME").unwrap();
+        std::fs::write(d.join(".envrc"), "use flake ~/someflake\n").unwrap();
+        assert_eq!(
+            envrc_flake_dir(d.as_path()),
+            Some(PathBuf::from(home).join("someflake"))
+        );
+    }
+
+    #[test]
+    fn envrc_flake_dir_walks_up_to_first_envrc() {
+        let base =
+            std::env::temp_dir().join(format!("rsrs-envrc-walk-{}", std::process::id()));
+        let proj = base.join("sub").join("proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        // No .envrc in proj or sub; the .envrc is in base.
+        std::fs::write(base.join(".envrc"), "use flake .\n").unwrap();
+        assert_eq!(envrc_flake_dir(proj.as_path()), Some(base.canonicalize().unwrap()));
+    }
+
+    #[test]
+    fn envrc_flake_dir_none_when_no_envrc() {
+        let d = std::env::temp_dir().join(format!("rsrs-envrc-none-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        // No .envrc anywhere up the /tmp chain.
+        assert_eq!(envrc_flake_dir(d.as_path()), None);
+    }
+
+    #[test]
+    fn envrc_flake_dir_relative_ref_resolves() {
+        let d = std::env::temp_dir().join(format!("rsrs-envrc-rel-{}", std::process::id()));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(d.join(".envrc"), "use flake ./myflake\n").unwrap();
+        assert_eq!(
+            envrc_flake_dir(d.as_path()),
+            Some(d.canonicalize().unwrap().join("myflake"))
+        );
+    }
 
     #[test]
     fn fnv1a_is_stable_and_distinct() {

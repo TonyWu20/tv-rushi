@@ -1,3 +1,52 @@
+## 95. devShell resolution follows the project's `.envrc` (2026-10-27)
+
+The 88 through 94 devShell gates used the local `flake.nix` as the
+gate. But a project's devShell is named by its `.envrc` (`use flake
+<path>`), which can differ from the local `flake.nix`. In
+`rushi-config` the local flake has no devShell. `nix develop .` fell
+back to a default shell of the flake packages. The `.envrc`
+(`use flake ~/programming/`) named the real devShell. This replaces
+the local-flake gate with the `.envrc` gate.
+
+Decision (the `.envrc` is the devShell source of truth):
+
+- The effective `.envrc` is the project dir's own, else the first
+  one up the parent chain (to `/`).
+- Its `use flake <ref>` names the flake dir. A bare `use flake` (or
+  `use flake .`) is the `.envrc` dir. A path resolves against it,
+  with `~` expanded and relative to the dir. A non-local ref
+  (`github:`, a URL) resolves to None.
+- No `.envrc` on the chain: the global PATH binary applies, the
+  pre-flake behavior. This replaces the 88 local-flake gate.
+- The flake dir feeds `devshell::resolve` (the 89 cache and
+  materialize) and the 90 kernel launch. The `rushi run` step loads
+  the flake by ref so the loop still runs in the working dir.
+- The TUI `open`/`open_v` one-liners run the same walk in shell and
+  launch `nix develop <flake> -c rushi-tui`. With no `.envrc` they
+  keep the PATH `rushi-tui`. The `nix develop` inherits the
+  environment, so a binary the devShell lacks keeps the inherited
+  PATH entry.
+- The remote arm keeps the 88 remote gate: the remote `.envrc` is
+  not cheaply readable from the local host.
+
+Confirmed (user): the no-`.envrc` behavior replaces the 88 local-flake
+gate. A project with a `flake.nix` but no `.envrc` does not use its
+own flake's devShell.
+
+Note: inside a nix `''` string, a `${...}` whose content holds `/`,
+`%`, or is empty breaks the parse. So the shell `.envrc` resolver
+uses the substring form `${ref:2}` instead of `${ref#"~/"}`.
+
+Verification: `envrc_flake_dir` is unit-tested for the local
+`.envrc`, the tilde expansion, the walk-up, the no-`.envrc` None,
+and the relative ref. The probe, kernel launch, and `rushi run`
+gate follow it. `local_nix_flake_dir` is unit-tested for the
+no-`.envrc` PATH case and the seeded devShell case. 146 tests are
+green and the three channel derivations build clean in `nix build`.
+The `open`/`open_v` one-liners parse under `sh -n`. A
+`rushi-config` session now probes the `~/programming` devShell, not
+the local flake.
+
 ## 94. The `rushi run` send/new-session step keeps the devShell only when `rushi` resolves (2026-10-27)
 
 The 88 devShell extension ran the `rushi run` step of
