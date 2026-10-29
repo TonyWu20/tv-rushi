@@ -296,7 +296,7 @@ Decisions (user, 2026-10-04):
 
   The recent-events view has a `recent-events` table with `ts`,
   `type` and `brief` columns. The table lists the last 20
-  meaningful events in log order, the newest last. An empty
+  meaningful events, newest first (decision 100). An empty
   path renders the section with a note.
 
   The document renderer is configurable (decision 98). The

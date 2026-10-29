@@ -1,3 +1,20 @@
+## 100. The recent-events table lists its rows newest first (2026-10-29)
+
+The recent-events table of decision 99 listed its rows in log
+order, the newest last. The user wants the table sorted from
+newest to oldest.
+
+Decision:
+
+- The `--events` view prints the event rows newest first. The
+  newest row sits under the table header. A ts tie keeps the
+  reverse log order within the tie.
+
+Verification: the unit tests pin the row order. The test
+`events_view_renders_the_last_20_rows` asserts the newest row
+first and the oldest of the 20 last. The shape test asserts the
+newest of two events first.
+
 ## 99. The recent-events table becomes a second cycled preview command (2026-10-29)
 
 television cycles multiple preview commands with the

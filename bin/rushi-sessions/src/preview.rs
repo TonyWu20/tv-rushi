@@ -445,14 +445,14 @@ pub(crate) fn render_card(
 }
 
 /// The number of event rows the `--events` view renders: the last
-/// 20 of the last 40 meaningful events of the active path, in log
-/// order (the newest last, so the panel's bottom edge is the
-/// newest).
+/// 20 of the last 40 meaningful events of the active path, newest
+/// first (the newest on the panel's top edge, decision 100).
 const EVENTS_VIEW_ROWS: usize = 20;
 
 /// The `--events` preview view for one session (decision 99): the
 /// card header plus the `recent-events` table. The table holds the
-/// last 20 meaningful events of the active path, in log order. The
+/// last 20 meaningful events of the active path, newest first
+/// (decision 100). The
 /// view carries no message sections. An empty path renders the
 /// section with a note, so the cycled view never shows a blank
 /// panel.
@@ -484,7 +484,8 @@ pub(crate) fn render_events_view(
         usage,
     );
     // The last 40 events, reduced to (ts, type, brief), then the
-    // last 20 in log order, so ts ties keep log order.
+    // last 20. The rows print newest first (decision 100); a ts
+    // tie keeps the reverse log order within the tie.
     let mut last40: Vec<&Value> = events.iter().rev().take(40).collect();
     last40.reverse();
     let tuples: Vec<(String, String, String)> = last40
@@ -512,7 +513,8 @@ pub(crate) fn render_events_view(
     } else {
         out.push("| ts | type | brief |".into());
         out.push("| --- | --- | --- |".into());
-        for (ts, ty, b) in recent {
+        // Newest first (decision 100).
+        for (ts, ty, b) in recent.iter().rev() {
             out.push(format!(
                 "| {} | {} | {} |",
                 md_cell(ts),
@@ -729,10 +731,11 @@ mod tests {
             .position(|l| *l == "| ts | type | brief |")
             .expect("recent-events header");
         assert_eq!(lines[h + 1], "| --- | --- | --- |");
-        // Two brief-bearing events: two data rows, in log order. The
-        // events carry no ts, so the ts cell is empty.
-        assert_eq!(lines[h + 2], "|  | ext_status | loop_phase=wait |");
-        assert_eq!(lines[h + 3], "|  | user_message | hi |");
+        // Two brief-bearing events: two data rows, newest first
+        // (decision 100). The events carry no ts, so the ts cell is
+        // empty.
+        assert_eq!(lines[h + 2], "|  | user_message | hi |");
+        assert_eq!(lines[h + 3], "|  | ext_status | loop_phase=wait |");
     }
 
     #[test]
@@ -1114,8 +1117,8 @@ mod tests {
 
     #[test]
     fn events_view_renders_the_last_20_rows() {
-        // 45 brief-bearing events: the view renders the last 20, in
-        // log order, the newest last.
+        // 45 brief-bearing events: the view renders the last 20,
+        // newest first (decision 100).
         let evts: Vec<Value> = (0..45)
             .map(|i| {
                 serde_json::json!({"type": "user_message", "content": format!("m{i}")})
@@ -1143,8 +1146,8 @@ mod tests {
         // The separator row is h+1. The 20 data rows follow.
         let data: Vec<&str> = lines[h + 2..].iter().copied().filter(|l| l.starts_with('|')).collect();
         assert_eq!(data.len(), 20, "{card}");
-        assert!(data[0].contains("m25"), "first row is event 25: {data:?}");
-        assert!(data[19].contains("m44"), "last row is event 44: {data:?}");
+        assert!(data[0].contains("m44"), "first row is event 44: {data:?}");
+        assert!(data[19].contains("m25"), "last row is event 25: {data:?}");
     }
 
     #[test]
