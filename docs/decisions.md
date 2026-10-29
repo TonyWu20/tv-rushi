@@ -1,3 +1,58 @@
+## 97. The preview card renders as markdown, with the last on-idle assistant message (2026-10-29)
+
+The `rushi-sessions preview` card switches from a TOML document
+to a markdown document. The `[rushi-session]` table becomes a
+`# rushi-session` two-column key table. The `[[recent-event]]`
+array becomes a `recent-events` markdown table. The
+`last-user-message` and `last-assistant-message` sections print
+the full message text.
+
+Decision:
+
+- The card is a markdown document. `bat` colors it with
+  `-l markdown`. Without `bat`, the card is plain markdown.
+- The key table keeps the old key order: name, repo, host,
+  branch, worktree, status, pid, phase, think, updated, usage.
+  Each key is one table row.
+- Table cells flatten: tabs and newlines become spaces, pipes
+  escape. Multi-line text belongs to the message sections, not
+  to a table.
+- The `last-user-message` section prints the full last user
+  message of the active path. An empty message omits the
+  section.
+- The `last-assistant-message` section shows the last on-idle
+  assistant message. It is the last assistant message with
+  non-empty text on the active path. While the loop is live,
+  the in-flight turn opens at the last user message. The scan
+  stops before that message.
+- `recent-events` is a markdown table with `ts`, `type` and
+  `brief` columns. It carries the last 5 brief-bearing events
+  of the last 40. The brief keeps its 80-char clip.
+- No new I/O for the on-idle scan. The card already reads and
+  decodes the full log. That is the full-log read of
+  `rushi_common::logstream`. The scan is an in-memory pass over
+  those events.
+- Measured release card render: about 97 ms wall on the largest
+  session log in this repo (1.1 MB zstd). That includes the
+  `bat` pass and the `rushi config` probe. The `--watch`
+  refresh re-runs only the `source` command. With the phase
+  cache and 36 sessions, it runs in about 22 ms.
+- Remote rows render the same card on the remote host. No new
+  channel plumbing.
+
+Verification: `cargo test -p rushi-sessions` is green (126 unit
+tests, up from 119, plus the 32 integration tests). The card
+tests pin the key-table row order and the row omission on None.
+They pin the un-clipped message text, the `recent-events` table
+shape, the pipe escape, and the ts cell shape. The
+`last_idle_assistant` tests pin the idle last-text rule, the
+active stop-before-last-user rule, and the empty result. A smoke
+render of an idle session shows the key table, the full
+messages, and the `recent-events` table.
+
+Out of scope: a preview cache, a reasoning section under the
+last assistant message, and a per-channel format toggle.
+
 ## 96. The preview card shows the worktree status brief of the session's git repo (2026-10-29)
 
 The `[rushi-session]` table of the preview card gains a `worktree`

@@ -2,7 +2,9 @@
 
 `rushi-sessions.toml` is a [television](https://github.com/alexpasmantier/television)
 channel. It gives a quick-peek window over rushi sessions. It lists sessions
-with status. It shows a status card and recent events in the preview panel.
+with status. It shows a status card, the last user message, the
+last on-idle assistant message, and recent events in the preview
+panel.
 It hands off to `rushi-tui` for full interaction.
 
 ## Decisions (user, 2026-09-30)
@@ -19,9 +21,10 @@ It hands off to `rushi-tui` for full interaction.
 4. Actions: `open` (rushi-tui), `tail` (follow events), `kill` (SIGTERM the
    loop pid). Full interaction stays in rushi-tui. This channel is a peek.
 5. Design notes live in this repo's `docs/`.
-6. Preview: a structured TOML card, syntax-highlighted by `bat` when
-   available. It shows the last user and last assistant messages. `bat`
-   is optional. The card prints plain without it.
+6. Preview: a structured markdown card, syntax-highlighted by
+   `bat` when available. It shows the full last user message and
+   the last on-idle assistant message. `bat` is optional. The card
+   prints plain without it.
 
 ## Decisions (user, 2026-10-01)
 
@@ -273,16 +276,22 @@ Decisions (user, 2026-10-04):
   television runs every command string through its template engine. The
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
   seven tab-separated fields they split on.
-- Preview output: a structured TOML card. It has a `[rushi-session]`
-  header. The header keys: name, repo, host, branch, worktree,
-  status, pid, phase, think, updated, usage. The `host` key shows
-  for remote rows. The `branch` key shows when the working dir
-  resolves to a git repo. The `worktree` key is the one-line
-  `git status` brief of that dir. It is `clean`, or the
-  `<N> <status>` file counts joined with a comma. It shows when
-  the probe succeeds. It has a `[last-user-message]` and a
-  `[last-assistant-message]`. It has a `[[recent-event]]` array of
-  the last 5 meaningful events.
+- Preview output: a structured markdown card. It opens a
+  `# rushi-session` two-column key table. The keys: name, repo,
+  host, branch, worktree, status, pid, phase, think, updated,
+  usage. An empty section or table omits itself.
+
+  The `host` row shows for remote rows. The `branch` row shows
+  when the working dir resolves to a git repo. The `worktree`
+  row is the one-line `git status` brief of that dir. It is
+  `clean`, or the `<N> <status>` file counts joined with a
+  comma. It shows when the probe succeeds.
+
+  The card has a `last-user-message` section with the full
+  message text. It has a `last-assistant-message` section: the
+  last on-idle assistant message (decision 97), in full. It has
+  a `recent-events` table with `ts`, `type` and `brief`
+  columns: the last 5 meaningful events.
 - `usage` shows the context window usage of the last model call. It reads
   `input_tokens + output_tokens` of the last `assistant_message` usage
   record in `events.jsonl`. The window is the active model's

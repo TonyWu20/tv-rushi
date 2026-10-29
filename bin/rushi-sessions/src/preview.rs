@@ -1,11 +1,15 @@
-//! The `preview` command: render the TOML preview card for one session.
-//! The card scans keep only the active path: the kernel's rewind
-//! markers mask the abandoned branch, so the card shows what the
-//! model context sees. The `[rushi-session]` table carries a
-//! `branch` key: the git branch of the session's recorded working
-//! dir, probed with git at render time. It carries a `worktree`
-//! key: the one-line `git status` brief of that worktree (`clean`,
-//! or the `<N> <status>` file counts), probed the same way.
+//! The `preview` command: render the markdown preview card for one
+//! session. The card scans keep only the active path: the kernel's
+//! rewind markers mask the abandoned branch, so the card shows what
+//! the model context sees. The session key table carries a `branch`
+//! row: the git branch of the session's recorded working dir, probed
+//! with git at render time. It carries a `worktree` row: the one-line
+//! `git status` brief of that worktree (`clean`, or the `<N>
+//! <status>` file counts), probed the same way. The card shows the
+//! full last user message and the last on-idle assistant message
+//! (the last assistant message with text, the in-flight turn excluded
+//! while the loop is live). It shows a `recent-events` table: the
+//! last 5 meaningful events.
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +17,7 @@ use std::path::{Path, PathBuf};
 use rushi_common::rewind::seq_in_ranges;
 
 use crate::events::{log_active_ranges, numbered_events};
-use crate::format::{brief, clip, json_str, ts_local, value_to_str, which};
+use crate::format::{brief, clip, md_cell, ts_local, value_to_str, which};
 use crate::remote::{preview_remote, split_remote};
 use crate::state::alive;
 use crate::usage::{context_window, last_usage, usage_line};
@@ -70,7 +74,8 @@ pub fn preview(
         .map(|(_, v)| v)
         .collect();
 
-    let (think, last_user, last_assistant) = card_scans(&events);
+    let (think, last_user) = card_scans(&events);
+    let last_assistant = last_idle_assistant(&events, status);
 
     // The remote binary renders this same card with the host key,
     // fed by the env var the local binary set over ssh.
@@ -107,7 +112,7 @@ pub fn preview(
                 .unwrap_or_else(|_| "Catppuccin Macchiato".to_string());
             let mut child = std::process::Command::new(&bat)
                 .args([
-                    "-l", "toml", "--theme", &theme, "--color", "always", "--style", "plain",
+                    "-l", "markdown", "--theme", &theme, "--color", "always", "--style", "plain",
                 ])
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
@@ -133,13 +138,11 @@ pub fn preview(
     }
 }
 
-/// The card's three text scans over the active-path events: the live
-/// `model_thinking` status, the last user message, and the last
-/// assistant message.
-pub(crate) fn card_scans(events: &[Value]) -> (String, String, String) {
+/// The card's two text scans over the active-path events: the live
+/// `model_thinking` status and the last user message.
+pub(crate) fn card_scans(events: &[Value]) -> (String, String) {
     let mut think = String::new();
     let mut last_user = String::new();
-    let mut last_assistant = String::new();
     for o in events {
         let t = o.get("type").and_then(|v| v.as_str()).unwrap_or("");
         if t == "ext_status" && o.get("id").and_then(|v| v.as_str()) == Some("model_thinking") {
@@ -152,15 +155,35 @@ pub(crate) fn card_scans(events: &[Value]) -> (String, String, String) {
                 .unwrap_or("")
                 .to_string();
         }
-        if t == "assistant_message" {
-            last_assistant = o
-                .get("content")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-        }
     }
-    (think, last_user, last_assistant)
+    (think, last_user)
+}
+
+/// The last on-idle assistant message: the last assistant message
+/// with non-empty text content, on the active path. While the loop
+/// is live (`ACTIVE`), the in-flight turn opens at the last user
+/// message, so the scan stops before it. An idle loop scans the
+/// whole active path. Empty when no such message exists.
+pub(crate) fn last_idle_assistant(events: &[Value], status: &str) -> String {
+    let end = if status == "ACTIVE" {
+        events
+            .iter()
+            .rposition(|o| {
+                o.get("type").and_then(|v| v.as_str()) == Some("user_message")
+            })
+            .unwrap_or(0)
+    } else {
+        events.len()
+    };
+    events[..end]
+        .iter()
+        .rev()
+        .find(|o| {
+            o.get("type").and_then(|v| v.as_str()) == Some("assistant_message")
+                && !o.get("content").and_then(|v| v.as_str()).unwrap_or("").is_empty()
+        })
+        .map(|o| o.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string())
+        .unwrap_or_default()
 }
 
 /// The session's recorded working dir (the `cwd` file), or the
@@ -286,15 +309,20 @@ fn git_status_brief(dir: &Path) -> Option<String> {
     }
 }
 
-/// The TOML card text for one session. `host` (the ssh host of a
+/// The markdown card text for one session. `host` (the ssh host of a
 /// remote session, set by the local binary through `HOST_ENV`)
-/// renders a `host` key right under `repo`. `branch` (the git
-/// branch of the session's recorded working dir, or None) renders
-/// a `branch` key under the host line. `worktree` (the one-line
-/// git status brief of that worktree, or None) renders a
-/// `worktree` key under the branch line, or under the host slot.
-/// `workdir` (the recorded working dir, or None) is the project
-/// dir of the usage line's `rushi config` probe (decision 88).
+/// renders a `host` row right under `repo`. `branch` (the git
+/// branch of the session's recorded working dir, or None) renders a
+/// `branch` row under the host row. `worktree` (the one-line git
+/// status brief of that worktree, or None) renders a `worktree` row
+/// under the branch row, or under the host slot. `workdir` (the
+/// recorded working dir, or None) is the project dir of the usage
+/// line's `rushi config` probe (decision 88).
+///
+/// The card is a markdown document: the `# rushi-session` key table,
+/// the `last-user-message` section, the `last-assistant-message`
+/// section (the last on-idle message, un-clipped), and the
+/// `recent-events` table. An empty section or table omits itself.
 pub(crate) fn render_card(
     status: &str,
     name: &str,
@@ -312,41 +340,53 @@ pub(crate) fn render_card(
     workdir: Option<&Path>,
 ) -> String {
     let mut out: Vec<String> = Vec::new();
-    out.push("[rushi-session]".into());
-    out.push(format!("name    = {}", json_str(name)));
-    out.push(format!("repo    = {}", json_str(repo)));
+    out.push("# rushi-session".into());
+    out.push(String::new());
+    // The two-column key table. The rows keep the old key order.
+    let mut keys: Vec<(&str, String)> = Vec::new();
+    keys.push(("name", md_cell(name)));
+    keys.push(("repo", md_cell(repo)));
     if let Some(h) = host {
-        out.push(format!("host    = {}", json_str(h)));
+        keys.push(("host", md_cell(h)));
     }
     if let Some(b) = branch {
-        out.push(format!("branch  = {}", json_str(b)));
+        keys.push(("branch", md_cell(b)));
     }
     if let Some(wt) = worktree {
-        out.push(format!("worktree = {}", json_str(wt)));
+        keys.push(("worktree", md_cell(wt)));
     }
-    out.push(format!("status  = {}", json_str(status)));
-    out.push(format!("pid     = {}", json_str(pid)));
-    out.push(format!("phase   = {}", json_str(phase)));
+    keys.push(("status", md_cell(status)));
+    keys.push(("pid", md_cell(pid)));
+    keys.push(("phase", md_cell(phase)));
     if !think.is_empty() {
-        out.push(format!("think   = {}", json_str(think)));
+        keys.push(("think", md_cell(think)));
     }
-    out.push(format!("updated = {}", json_str(last)));
+    keys.push(("updated", md_cell(last)));
     if let Some((in_tok, out_tok, _cached)) = last_usage(events) {
         let used = in_tok.saturating_add(out_tok);
-        out.push(format!(
-            "usage   = {}",
-            json_str(&usage_line(used, context_window(workdir)))
+        keys.push((
+            "usage",
+            md_cell(&usage_line(used, context_window(workdir))),
         ));
     }
-    out.push(String::new());
-    out.push("[last-user-message]".into());
-    out.push(format!("content = {}", json_str(&clip(last_user, 400))));
-    out.push(String::new());
-    out.push("[last-assistant-message]".into());
-    out.push(format!(
-        "content = {}",
-        json_str(&clip(last_assistant, 400))
-    ));
+    out.push("| key | value |".into());
+    out.push("| --- | --- |".into());
+    for (k, v) in &keys {
+        out.push(format!("| {} | {} |", k, v));
+    }
+
+    if !last_user.is_empty() {
+        out.push(String::new());
+        out.push("## last-user-message".into());
+        out.push(String::new());
+        out.push(last_user.trim_end().to_string());
+    }
+    if !last_assistant.is_empty() {
+        out.push(String::new());
+        out.push("## last-assistant-message".into());
+        out.push(String::new());
+        out.push(last_assistant.trim_end().to_string());
+    }
 
     // The last 40 events, reduced to (ts, type, brief), then the last 5 in
     // log order (the old `events[-5:]`), so ts ties keep log order.
@@ -369,12 +409,20 @@ pub(crate) fn render_card(
         .collect();
     let recent: Vec<&(String, String, String)> =
         tuples.iter().skip(tuples.len().saturating_sub(5)).collect();
-    for (ts, ty, brief) in recent {
+    if !recent.is_empty() {
         out.push(String::new());
-        out.push("[[recent-event]]".into());
-        out.push(format!("ts    = {}", json_str(ts)));
-        out.push(format!("type  = {}", json_str(ty)));
-        out.push(format!("brief = {}", json_str(&clip(brief, 80))));
+        out.push("## recent-events".into());
+        out.push(String::new());
+        out.push("| ts | type | brief |".into());
+        out.push("| --- | --- | --- |".into());
+        for (ts, ty, brief) in recent {
+            out.push(format!(
+                "| {} | {} | {} |",
+                md_cell(ts),
+                md_cell(ty),
+                md_cell(&clip(brief, 80))
+            ));
+        }
     }
 
     out.join("\n") + "\n"
@@ -407,9 +455,9 @@ mod tests {
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
             .iter()
-            .position(|l| l.starts_with("repo    = "))
-            .expect("repo line");
-        assert_eq!(lines[i + 1], "host    = \"host\"");
+            .position(|l| *l == "| repo | repoR |")
+            .expect("repo row");
+        assert_eq!(lines[i + 1], "| host | host |");
     }
 
     #[test]
@@ -430,14 +478,14 @@ mod tests {
             EMPTY_EVENTS,
             None,
         );
-        assert!(!card.lines().any(|l| l.starts_with("host    = ")));
-        // The repo line is followed straight by the status line.
+        assert!(!card.lines().any(|l| l.starts_with("| host |")));
+        // The repo row is followed straight by the status row.
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
             .iter()
-            .position(|l| l.starts_with("repo    = "))
-            .expect("repo line");
-        assert!(lines[i + 1].starts_with("status  = "));
+            .position(|l| *l == "| repo | repoR |")
+            .expect("repo row");
+        assert_eq!(lines[i + 1], "| status | IDLE |");
     }
 
     #[test]
@@ -461,12 +509,12 @@ mod tests {
             .filter(|(s, _)| seq_in_ranges(*s as usize, &ranges))
             .map(|(_, v)| v)
             .collect();
-        let (think, last_user, last_assistant) = card_scans(&active);
+        let (think, last_user) = card_scans(&active);
         assert_eq!(think, "");
         assert_eq!(last_user, "re-asked question");
         // The abandoned branch A answer is masked. No active assistant
-        // message exists yet after the marker.
-        assert_eq!(last_assistant, "");
+        // message with text exists after the marker.
+        assert_eq!(last_idle_assistant(&active, "IDLE"), "");
         let _ = std::fs::remove_dir_all(&d);
     }
 
@@ -493,24 +541,173 @@ mod tests {
             &evts,
             None,
         );
-        let ts = card
-            .lines()
-            .find(|l| l.starts_with("ts    = "))
-            .expect("a recent-event ts line");
-        let v = ts.trim_start_matches("ts    = ");
-        // The json_str quotes wrap a 19-char wall clock. The shape
-        // check holds for every running-host offset; a UTC
-        // pass-through would carry the Z suffix and a date part.
-        assert_eq!(v.len(), 21, "{v}");
-        let inner = &v[1..20];
-        let shape = inner.chars().enumerate().all(|(i, c)| match i {
+        let lines: Vec<&str> = card.lines().collect();
+        let h = lines
+            .iter()
+            .position(|l| *l == "| ts | type | brief |")
+            .expect("recent-events header");
+        // The separator row is h+1, the first data row h+2. The
+        // first cell is the ts.
+        let line = lines[h + 2].to_string();
+        let v = line.trim_start_matches('|').split('|').next().unwrap().trim();
+        // The 19-char wall clock. The shape check holds for every
+        // running-host offset; a UTC pass-through would carry the Z
+        // suffix and a date part.
+        assert_eq!(v.len(), 19, "{v}");
+        let shape = v.chars().enumerate().all(|(i, c)| match i {
             4 | 7 => c == '-',
             10 => c == ' ',
             13 | 16 => c == ':',
             _ => c.is_ascii_digit(),
         });
         assert!(shape, "{v}");
-        assert!(!inner.contains('Z'), "{v}");
+        assert!(!v.contains('Z'), "{v}");
+    }
+
+    #[test]
+    fn card_messages_print_full_text_unclipped() {
+        let long = "w".repeat(5000);
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "",
+            "tools",
+            "",
+            "10-02 14:11",
+            "line one\nline two",
+            &long,
+            EMPTY_EVENTS,
+            None,
+        );
+        // The user section keeps the newline. The 400-char clip is
+        // gone: the 5000-char assistant text prints in full.
+        assert!(card.contains("## last-user-message\n\nline one\nline two"), "{card}");
+        assert!(card.contains(&long));
+        assert!(!card.contains(" ..."));
+    }
+
+    #[test]
+    fn card_omits_empty_message_sections() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "",
+            "tools",
+            "",
+            "10-02 14:11",
+            "",
+            "",
+            EMPTY_EVENTS,
+            None,
+        );
+        assert!(!card.contains("## last-user-message"));
+        assert!(!card.contains("## last-assistant-message"));
+        // No events, no recent-events table.
+        assert!(!card.contains("## recent-events"));
+    }
+
+    #[test]
+    fn card_recent_events_table_shape() {
+        let evts: Vec<Value> = vec![
+            serde_json::json!({"type": "ext_status", "id": "loop_phase", "value": "wait"}),
+            serde_json::json!({"type": "user_message", "content": "hi"}),
+        ];
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "",
+            "tools",
+            "",
+            "10-02 14:11",
+            "",
+            "",
+            &evts,
+            None,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let h = lines
+            .iter()
+            .position(|l| *l == "| ts | type | brief |")
+            .expect("recent-events header");
+        assert_eq!(lines[h + 1], "| --- | --- | --- |");
+        // Two brief-bearing events: two data rows, in log order. The
+        // events carry no ts, so the ts cell is empty.
+        assert_eq!(lines[h + 2], "|  | ext_status | loop_phase=wait |");
+        assert_eq!(lines[h + 3], "|  | user_message | hi |");
+    }
+
+    #[test]
+    fn card_recent_events_cells_escape_pipes() {
+        let evts: Vec<Value> = vec![serde_json::json!({
+            "type": "tool_call",
+            "name": "bash",
+            "arguments": {"command": "echo a|b"}
+        })];
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "",
+            "tools",
+            "",
+            "10-02 14:11",
+            "",
+            "",
+            &evts,
+            None,
+        );
+        assert!(card.contains(r"| bash echo a\|b |"), "{card}");
+    }
+
+    #[test]
+    fn last_idle_assistant_idle_takes_last_with_text() {
+        let evts: Vec<Value> = vec![
+            serde_json::json!({"type": "user_message", "content": "one"}),
+            serde_json::json!({"type": "assistant_message", "content": "first answer"}),
+            // The tool-step message has no text. It never wins.
+            serde_json::json!({"type": "assistant_message", "content": ""}),
+        ];
+        assert_eq!(last_idle_assistant(&evts, "IDLE"), "first answer");
+    }
+
+    #[test]
+    fn last_idle_assistant_active_stops_before_last_user() {
+        let evts: Vec<Value> = vec![
+            serde_json::json!({"type": "user_message", "content": "one"}),
+            serde_json::json!({"type": "assistant_message", "content": "prev answer"}),
+            serde_json::json!({"type": "user_message", "content": "two"}),
+            serde_json::json!({"type": "assistant_message", "content": "in-flight"}),
+        ];
+        // The live loop: the in-flight turn is open at the last user
+        // message. The on-idle message is the previous turn's answer.
+        assert_eq!(last_idle_assistant(&evts, "ACTIVE"), "prev answer");
+        // The idle loop: the last text-carrying answer of the path.
+        assert_eq!(last_idle_assistant(&evts, "IDLE"), "in-flight");
+    }
+
+    #[test]
+    fn last_idle_assistant_empty_when_no_text() {
+        let evts: Vec<Value> = vec![
+            serde_json::json!({"type": "user_message", "content": "one"}),
+            serde_json::json!({"type": "assistant_message", "content": ""}),
+        ];
+        assert_eq!(last_idle_assistant(&evts, "IDLE"), "");
+        assert_eq!(last_idle_assistant(&[], "IDLE"), "");
     }
 
     #[test]
@@ -534,10 +731,10 @@ mod tests {
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
             .iter()
-            .position(|l| l.starts_with("host    = "))
-            .expect("host line");
-        assert_eq!(lines[i + 1], "branch  = \"main\"");
-        assert_eq!(lines[i + 2], "worktree = \"clean\"");
+            .position(|l| *l == "| host | host |")
+            .expect("host row");
+        assert_eq!(lines[i + 1], "| branch | main |");
+        assert_eq!(lines[i + 2], "| worktree | clean |");
     }
 
     #[test]
@@ -561,15 +758,15 @@ mod tests {
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
             .iter()
-            .position(|l| l.starts_with("repo    = "))
-            .expect("repo line");
-        assert_eq!(lines[i + 1], "worktree = \"clean\"");
-        // The worktree line is followed straight by the status line.
+            .position(|l| *l == "| repo | repoR |")
+            .expect("repo row");
+        assert_eq!(lines[i + 1], "| worktree | clean |");
+        // The worktree row is followed straight by the status row.
         let j = lines
             .iter()
-            .position(|l| l.starts_with("worktree = "))
-            .expect("worktree line");
-        assert!(lines[j + 1].starts_with("status  = "));
+            .position(|l| *l == "| worktree | clean |")
+            .expect("worktree row");
+        assert_eq!(lines[j + 1], "| status | IDLE |");
     }
 
     #[test]
@@ -590,7 +787,7 @@ mod tests {
             EMPTY_EVENTS,
             None,
         );
-        assert!(!card.lines().any(|l| l.starts_with("worktree = ")));
+        assert!(!card.lines().any(|l| l.starts_with("| worktree |")));
     }
 
     #[test]
@@ -614,15 +811,15 @@ mod tests {
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
             .iter()
-            .position(|l| l.starts_with("repo    = "))
-            .expect("repo line");
-        assert_eq!(lines[i + 1], "branch  = \"dev\"");
-        // The branch line is followed straight by the status line.
+            .position(|l| *l == "| repo | repoR |")
+            .expect("repo row");
+        assert_eq!(lines[i + 1], "| branch | dev |");
+        // The branch row is followed straight by the status row.
         let j = lines
             .iter()
-            .position(|l| l.starts_with("branch  = "))
-            .expect("branch line");
-        assert!(lines[j + 1].starts_with("status  = "));
+            .position(|l| *l == "| branch | dev |")
+            .expect("branch row");
+        assert_eq!(lines[j + 1], "| status | IDLE |");
     }
 
     #[test]
@@ -643,7 +840,7 @@ mod tests {
             EMPTY_EVENTS,
             None,
         );
-        assert!(!card.lines().any(|l| l.starts_with("branch  = ")));
+        assert!(!card.lines().any(|l| l.starts_with("| branch |")));
     }
 
     #[test]

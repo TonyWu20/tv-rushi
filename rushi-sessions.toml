@@ -36,9 +36,10 @@
 #
 # The list shows status, repo/name, phase, last activity; remote rows
 # carry the host in the repo field. The preview shows a status card
-# (a `host` key under `repo` for remote rows, a `branch` key for
-# the git branch of the session's working dir when one resolves)
-# and the last few events.
+# (a `host` row under `repo` for remote rows, a `branch` row for
+# the git branch of the session's working dir when one resolves),
+# the full last user message, the last on-idle assistant message,
+# and a recent-events table.
 # Full interaction happens in rushi-tui (the open action). The channel
 # is a peek plus a message poke:
 # send_message (ctrl-t) opens $EDITOR, then pokes the session with one
@@ -52,7 +53,7 @@
 #
 # Requirements: `fd` (hard, the binary's walk) and `rushi-sessions`
 # (the backend binary, built by this repo's flake). `bat` is optional:
-# the preview falls back to plain TOML when bat is absent. The interactive
+# the preview falls back to plain markdown when bat is absent. The interactive
 # actions call binaries resolved on PATH, which are not listed as core
 # requirements: `rushi` for send_message and new_session (0.1.1+ for the flags), `rushi-tui` for open/open_v,
 # and `tmux` for open, open_v, open_dir_tmux_h and open_dir_tmux_v
@@ -151,10 +152,12 @@ run = "rushi-sessions source"
 [preview]
 shell = "bash"
 cached = true
-# Structured TOML card, syntax-highlighted by bat when it is on PATH
-# (theme override: RUSHI_PREVIEW_THEME, default "Catppuccin Macchiato"
-# to match the catppuccin tv theme). Falls back to plain text when
-# bat is absent.
+# Structured markdown card, syntax-highlighted by bat when it is on
+# PATH (theme override: RUSHI_PREVIEW_THEME, default "Catppuccin
+# Macchiato" to match the catppuccin tv theme). The card shows the
+# session key table, the full last user message, the last on-idle
+# assistant message, and the recent-events table. It falls back to
+# plain markdown when bat is absent.
 command = "rushi-sessions preview '{split:\t:0}' '{split:\t:1}' '{split:\t:2}' '{split:\t:3}' '{split:\t:4}' '{split:\t:5}' '{split:\t:6}'"
 
 [ui]

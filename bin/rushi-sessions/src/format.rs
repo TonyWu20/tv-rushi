@@ -22,6 +22,12 @@ pub(crate) fn flatten_ws(s: &str) -> String {
         })
         .collect()
 }
+/// One markdown table cell. Tabs, newlines and line feeds become
+/// single spaces. Pipes escape as `\|`, so the value cannot break
+/// the table.
+pub(crate) fn md_cell(s: &str) -> String {
+    flatten_ws(s).replace('|', "\\|")
+}
 /// A JSON value for display in a document: strings as is, everything
 /// else as compact JSON.
 pub(crate) fn value_inline(v: &Value) -> String {
@@ -169,27 +175,6 @@ pub(crate) fn ts_local(v: &Value) -> String {
         _ => v.to_string(),
     }
 }
-/// A JSON string (the `q()` helper): double-quoted, ASCII-escaped the way
-/// Python's `json.dumps` does, keeping non-ASCII as is.
-pub(crate) fn json_str(s: &str) -> String {
-    let mut out = String::with_capacity(s.len() + 2);
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0C}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
 /// Find an executable on PATH (the `shutil.which` equivalent).
 pub(crate) fn which(name: &str) -> Option<PathBuf> {
     use std::os::unix::fs::PermissionsExt;
@@ -239,14 +224,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_str_escapes() {
-        assert_eq!(json_str("a\"b"), "\"a\\\"b\"");
-        assert_eq!(json_str("a\\b"), "\"a\\\\b\"");
-        assert_eq!(json_str("a\nb"), "\"a\\nb\"");
-        assert_eq!(json_str("héllo"), "\"héllo\"");
-    }
-
-    #[test]
     fn clip_truncates_by_chars() {
         let s = "x".repeat(200);
         let c = clip(&s, 400);
@@ -284,6 +261,12 @@ mod tests {
     fn flatten_ws_stays_one_line() {
         assert_eq!(flatten_ws("a\tb\nc\rd"), "a b c d");
         assert_eq!(flatten_ws("x"), "x");
+    }
+
+    #[test]
+    fn md_cell_flattens_and_escapes_pipes() {
+        assert_eq!(md_cell("a\tb|c\nd"), "a b\\|c d");
+        assert_eq!(md_cell("plain"), "plain");
     }
 
     #[test]

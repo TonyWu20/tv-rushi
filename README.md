@@ -3,9 +3,10 @@
 `tv-rushi` is a [television](https://github.com/alexpasmantier/television)
 channel for the rushi Unix agent harness. It gives a quick-peek window over
 rushi sessions. Each entry shows the session status, repo, last loop phase,
-and last activity. The preview panel shows a TOML status card. The card lists
-the git branch of the session's working dir (when one resolves), the last
-user and assistant messages, and the recent events. A second channel,
+and last activity. The preview panel shows a markdown status card.
+The card lists the git branch of the session's working dir (when
+one resolves). It shows the full last user message, the last
+on-idle assistant message, and a recent-events table. A second channel,
 `rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
 and previews each entry as a markdown or toml document. The `browse_events`
 action (enter) launches it from the session list.
@@ -48,7 +49,7 @@ action (enter) launches it from the session list.
 - [television](https://github.com/alexpasmantier/television)
 - `fd`, a hard dependency of the backend binary
 - the `rushi-sessions` binary, which this repo builds
-- `bat`, optional. The preview prints plain TOML without it.
+- `bat`, optional. The preview prints plain markdown without it.
 - `rushi` and `rushi-tui` on PATH, for the `send_message` and `open`
   actions. Nix builds and installs these with the `rushi` package.
   When the session's working dir carries a `flake.nix` and `nix`

@@ -21,14 +21,14 @@
 //!   cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
-//!   Render the TOML preview card for one session: the git branch
+//!   Render the markdown preview card for one session: the git branch
 //!   and the one-line worktree status brief of the session's
-//!   recorded working dir, the last user/assistant
-//!   messages, the context window usage, and the most recent events.
-//!   When
+//!   recorded working dir, the full last user message, the last
+//!   on-idle assistant message, the context window usage, and the
+//!   most recent events as a markdown table. When
 //!   `bat` is on PATH the card is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
-//!   "Catppuccin Macchiato"); otherwise plain TOML is printed.
+//!   "Catppuccin Macchiato"); otherwise plain markdown is printed.
 //! - `rushi-sessions events [DIR] [--chat] [--branch SEQ]`
 //!   Print the collapsed branch view of the session's events.jsonl,
 //!   newest first: the active branch plus the history before the
@@ -133,7 +133,7 @@ enum Command {
         #[arg(value_name = "ROOT")]
         roots: Vec<PathBuf>,
     },
-    /// Render the TOML preview card for one session.
+    /// Render the markdown preview card for one session.
     Preview {
         status: String,
         name: String,

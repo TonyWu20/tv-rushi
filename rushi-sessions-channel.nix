@@ -79,7 +79,8 @@ in
     name = "rushi-sessions";
     description = "Peek at rushi sessions: status, loop phase, last activity";
     # `fd` is a hard dependency of the `rushi-sessions` binary. `bat` is
-    # optional; the preview falls back to plain TOML when it is absent.
+    # optional; the preview falls back to plain markdown when it is
+    # absent.
     # `tmux` is optional; open, open_v, open_dir_tmux_h and
     # open_dir_tmux_v use it only when tv runs inside a tmux session
     # (each detects $TMUX and falls back to the plain fork).
