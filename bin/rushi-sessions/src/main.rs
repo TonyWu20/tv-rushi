@@ -21,8 +21,9 @@
 //!   cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
-//!   Render the TOML preview card for one session: the git branch of
-//!   the session's recorded working dir, the last user/assistant
+//!   Render the TOML preview card for one session: the git branch
+//!   and the one-line worktree status brief of the session's
+//!   recorded working dir, the last user/assistant
 //!   messages, the context window usage, and the most recent events.
 //!   When
 //!   `bat` is on PATH the card is

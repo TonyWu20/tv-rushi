@@ -1,3 +1,44 @@
+## 96. The preview card shows the worktree status brief of the session's git repo (2026-10-29)
+
+The `[rushi-session]` table of the preview card gains a `worktree`
+key. It is the one-line `git status` brief of the session's
+recorded working dir. It is the sibling of decision 86's `branch`
+key. The key sits under the `branch` line, or under the `host`/`repo`
+slot when the branch key is absent.
+
+Decision:
+
+- The binary probes the dir at render time with `git -C <dir>
+  status --porcelain` and counts the files per status.
+- The buckets, in their fixed line order: `added`, `modified`,
+  `deleted`, `renamed`, `copied`, `conflict`, `untracked`.
+- `added` is an index add. `modified` is a worktree change, an
+  index change, or a type change. `conflict` is an unmerged
+  state: a `U` column, or an `AA`/`DD` pair.
+- A file with an index change and a worktree change counts in
+  both buckets.
+- The line is `clean` when the porcelain output is empty. Else it
+  joins one `<N> <status>` group per non-zero bucket with a comma.
+  Example: `1 added, 2 modified, 4 untracked`.
+- The key is omitted when git is missing, the dir is not in a
+  repo, or the probe fails. No new channel plumbing: the card keys
+  come from the binary. Remote rows probe on the remote host (the
+  remote binary renders the card there).
+- No cache. Decision 86 put a branch cache out of scope, and the
+  status probe follows the same render-time rule.
+
+Verification: `cargo test -p rushi-sessions` is green (119 unit
+tests, up from 114). The fixture git repo pins `clean`, the
+per-bucket counts with the `AM` line in two buckets, and the
+outside-repo None. The card tests pin the key under `branch` and
+under `repo`, and the omission on None. A smoke render shows
+`worktree = "1 added, 1 modified, 1 untracked"` on a dirty repo.
+A clean repo shows `worktree = "clean"`. A non-git dir shows no
+key.
+
+Out of scope: a status cache, ignored-file counts
+(`--ignored`), and a status column in the source list.
+
 ## 95. devShell resolution follows the project's `.envrc` (2026-10-27)
 
 The 88 through 94 devShell gates used the local `flake.nix` as the

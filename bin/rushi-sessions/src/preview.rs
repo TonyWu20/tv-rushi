@@ -3,7 +3,9 @@
 //! markers mask the abandoned branch, so the card shows what the
 //! model context sees. The `[rushi-session]` table carries a
 //! `branch` key: the git branch of the session's recorded working
-//! dir, probed with git at render time.
+//! dir, probed with git at render time. It carries a `worktree`
+//! key: the one-line `git status` brief of that worktree (`clean`,
+//! or the `<N> <status>` file counts), probed the same way.
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -80,12 +82,14 @@ pub fn preview(
     // the remote host, over the remote working dir.
     let workdir = session_workdir(Path::new(path));
     let branch = workdir.as_ref().and_then(|w| git_branch(w));
+    let worktree = workdir.as_ref().and_then(|w| git_status_brief(w));
     let card = render_card(
         status,
         name,
         repo,
         host.as_deref(),
         branch.as_deref(),
+        worktree.as_deref(),
         &pid,
         phase,
         &think,
@@ -215,19 +219,89 @@ fn git_branch(dir: &Path) -> Option<String> {
     }
 }
 
+/// The one-line `git status` brief of a working dir's worktree.
+/// `clean` when the porcelain output is empty. Else one
+/// `<N> <status>` group per non-zero bucket, comma-joined in the
+/// fixed order of the `BUCKETS` table: the index and worktree
+/// changes, and the untracked files. A file with an index change
+/// and a worktree change counts in both buckets. None when git
+/// is missing, the dir is not in a repo, or the probe fails.
+fn git_status_brief(dir: &Path) -> Option<String> {
+    let arg = dir.to_string_lossy();
+    let out = std::process::Command::new("git")
+        .args(["-C", arg.as_ref(), "status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+    // The fixed bucket order of the comma-joined line.
+    const BUCKETS: [&str; 7] = [
+        "added",
+        "modified",
+        "deleted",
+        "renamed",
+        "copied",
+        "conflict",
+        "untracked",
+    ];
+    let mut counts = [0usize; 7];
+    for line in stdout.lines() {
+        let x = *line.as_bytes().first().unwrap_or(&b' ');
+        let y = line.as_bytes().get(1).copied().unwrap_or(b' ');
+        if x == b'?' && y == b'?' {
+            counts[6] += 1;
+            continue;
+        }
+        let unmerged = x == b'U' || y == b'U' || (x == y && (x == b'A' || x == b'D'));
+        if unmerged {
+            counts[5] += 1;
+            continue;
+        }
+        if x == b'A' || y == b'A' {
+            counts[0] += 1;
+        }
+        if x == b'M' || y == b'M' || x == b'T' || y == b'T' {
+            counts[1] += 1;
+        }
+        if x == b'D' || y == b'D' {
+            counts[2] += 1;
+        }
+        if x == b'R' || y == b'R' {
+            counts[3] += 1;
+        }
+        if x == b'C' || y == b'C' {
+            counts[4] += 1;
+        }
+    }
+    let groups: Vec<String> = (0..BUCKETS.len())
+        .filter(|&i| counts[i] > 0)
+        .map(|i| format!("{} {}", counts[i], BUCKETS[i]))
+        .collect();
+    if groups.is_empty() {
+        Some("clean".to_string())
+    } else {
+        Some(groups.join(", "))
+    }
+}
+
 /// The TOML card text for one session. `host` (the ssh host of a
 /// remote session, set by the local binary through `HOST_ENV`)
 /// renders a `host` key right under `repo`. `branch` (the git
 /// branch of the session's recorded working dir, or None) renders
-/// a `branch` key under the host line. `workdir` (the recorded
-/// working dir, or None) is the project dir of the usage line's
-/// `rushi config` probe (decision 88).
+/// a `branch` key under the host line. `worktree` (the one-line
+/// git status brief of that worktree, or None) renders a
+/// `worktree` key under the branch line, or under the host slot.
+/// `workdir` (the recorded working dir, or None) is the project
+/// dir of the usage line's `rushi config` probe (decision 88).
 pub(crate) fn render_card(
     status: &str,
     name: &str,
     repo: &str,
     host: Option<&str>,
     branch: Option<&str>,
+    worktree: Option<&str>,
     pid: &str,
     phase: &str,
     think: &str,
@@ -246,6 +320,9 @@ pub(crate) fn render_card(
     }
     if let Some(b) = branch {
         out.push(format!("branch  = {}", json_str(b)));
+    }
+    if let Some(wt) = worktree {
+        out.push(format!("worktree = {}", json_str(wt)));
     }
     out.push(format!("status  = {}", json_str(status)));
     out.push(format!("pid     = {}", json_str(pid)));
@@ -317,6 +394,7 @@ mod tests {
             "repoR",
             Some("host"),
             None,
+            None,
             "123",
             "tools",
             "",
@@ -340,6 +418,7 @@ mod tests {
             "IDLE",
             "foo",
             "repoR",
+            None,
             None,
             None,
             "123",
@@ -404,6 +483,7 @@ mod tests {
             "repoR",
             None,
             None,
+            None,
             "",
             "tools",
             "",
@@ -441,6 +521,7 @@ mod tests {
             "repoR",
             Some("host"),
             Some("main"),
+            Some("clean"),
             "123",
             "tools",
             "",
@@ -456,6 +537,60 @@ mod tests {
             .position(|l| l.starts_with("host    = "))
             .expect("host line");
         assert_eq!(lines[i + 1], "branch  = \"main\"");
+        assert_eq!(lines[i + 2], "worktree = \"clean\"");
+    }
+
+    #[test]
+    fn card_worktree_line_sits_under_repo_when_no_branch() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            Some("clean"),
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            EMPTY_EVENTS,
+            None,
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| l.starts_with("repo    = "))
+            .expect("repo line");
+        assert_eq!(lines[i + 1], "worktree = \"clean\"");
+        // The worktree line is followed straight by the status line.
+        let j = lines
+            .iter()
+            .position(|l| l.starts_with("worktree = "))
+            .expect("worktree line");
+        assert!(lines[j + 1].starts_with("status  = "));
+    }
+
+    #[test]
+    fn card_without_worktree_has_no_worktree_line() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            Some("dev"),
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            EMPTY_EVENTS,
+            None,
+        );
+        assert!(!card.lines().any(|l| l.starts_with("worktree = ")));
     }
 
     #[test]
@@ -466,6 +601,7 @@ mod tests {
             "repoR",
             None,
             Some("dev"),
+            None,
             "123",
             "tools",
             "",
@@ -495,6 +631,7 @@ mod tests {
             "IDLE",
             "foo",
             "repoR",
+            None,
             None,
             None,
             "123",
@@ -563,6 +700,93 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         assert_eq!(git_branch(&d), None);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Run one git command in `dir` and return its stdout.
+    fn git_run(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git ran");
+        String::from_utf8_lossy(&out.stdout).to_string()
+    }
+
+    /// A fixture git repo in a temp dir: `init -b main`, a local
+    /// user identity, and one committed file (`f1`).
+    fn git_fixture(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("rushi-gitstatus-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        git_run(&d, &["init", "-q", "-b", "main", "."]);
+        git_run(&d, &["config", "user.email", "t@example.com"]);
+        git_run(&d, &["config", "user.name", "t"]);
+        std::fs::write(d.join("f1"), "one").unwrap();
+        git_run(&d, &["add", "f1"]);
+        git_run(&d, &["commit", "-q", "-m", "one"]);
+        d
+    }
+
+    fn skip_if_no_git() -> bool {
+        if std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("skipping: git is not on PATH");
+            true
+        } else {
+            false
+        }
+    }
+
+    #[test]
+    fn git_status_brief_clean_repo_reports_clean() {
+        if skip_if_no_git() {
+            return;
+        }
+        let d = git_fixture("clean");
+        assert_eq!(git_status_brief(&d), Some("clean".to_string()));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn git_status_brief_counts_each_status() {
+        if skip_if_no_git() {
+            return;
+        }
+        let d = git_fixture("counts");
+        // f3 joins the tracked set, then gets a worktree delete.
+        std::fs::write(d.join("f3"), "three").unwrap();
+        git_run(&d, &["add", "f3"]);
+        git_run(&d, &["commit", "-q", "-m", "three"]);
+        std::fs::remove_file(d.join("f3")).unwrap();
+        // f1 gets a worktree change.
+        std::fs::write(d.join("f1"), "one changed").unwrap();
+        // f2 is a staged new file with a worktree change (`AM`: it
+        // counts in both the added and the changed buckets).
+        std::fs::write(d.join("f2"), "new").unwrap();
+        git_run(&d, &["add", "f2"]);
+        std::fs::write(d.join("f2"), "newer").unwrap();
+        // u1 is untracked.
+        std::fs::write(d.join("u1"), "u").unwrap();
+        assert_eq!(
+            git_status_brief(&d),
+            Some("1 added, 2 modified, 1 deleted, 1 untracked".to_string())
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn git_status_brief_none_outside_a_repo() {
+        if skip_if_no_git() {
+            return;
+        }
+        let d = std::env::temp_dir().join(format!("rushi-gitsb-norepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        assert_eq!(git_status_brief(&d), None);
         let _ = std::fs::remove_dir_all(&d);
     }
 
