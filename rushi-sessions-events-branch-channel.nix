@@ -234,7 +234,6 @@ in
     orientation= "portrait";
     preview_panel = {
       size = 62;
-      word_wrap = true;
     };
   };
 

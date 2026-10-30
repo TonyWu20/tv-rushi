@@ -177,7 +177,6 @@ orientation = "portrait"
 
 [ui.preview_panel]
 size = 62
-word_wrap = true
 
 [keybindings]
 ctrl-e = "actions:open"
