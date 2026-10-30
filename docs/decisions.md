@@ -1,3 +1,72 @@
+## 104. The run_loop action pokes the loop with a messageless `rushi run` (2026-10-30)
+
+The channel's send actions always log a message. An empty
+`send_message` cancels. A blank `new_session` message creates the
+session idle. There was no action that drove the loop without
+adding a message. The user wanted one. `rushi run <session>`
+without a task is the kernel's messageless poke.
+
+The kernel branches on the session lock itself. A live loop holds
+the lock. It appends nothing and exits. An idle session starts the
+loop. Its `run.idle` pipeline decides the stop. No message is
+logged by the action.
+
+Decision:
+
+- The binary gains a `run-loop` subcommand in `src/prompt.rs`. It
+  is one fork stage with no editor and no prompt file. It resolves
+  the row, the working dir, and the devShell gate. Then it spawns
+  the detached `rushi run <row>` step. The spawn keeps the
+  decision 102 form: `setsid`, stdio to /dev/null.
+
+- The local step is one argv: `rushi run <session-dir>` from the
+  recorded working dir. A remote row runs the step over `ssh -T`.
+  The `remote_run_command` with a `None` message builds
+  `cd '<w>' && rushi run '<rp>'`. It has no `--` escape and no
+  task.
+
+- The devShell gate logic moves to one helper, `devshell_gate`. It
+  is shared by `prompt_action` and `run_loop`. The step runs in
+  the dir's `.envrc` devShell only when that devShell resolves
+  `rushi`. That is the decisions 87/88, 90, 95 rule. A remote row
+  checks the gate on the remote host and loads that host's cwd
+  flake.
+
+- The channel TOML gains `[actions.run_loop]`. It is one binary
+  call: `rushi-sessions run-loop '{split:\t:6}'` in fork mode. It
+  carries no keybinding entry. The user asked for no keybind.
+  Television's action picker (ctrl-x) lists the action. A user
+  config may bind a key of its own.
+
+- The Nix mirror tracks the action. The README and the
+  integration doc name it.
+
+Verification: `cargo test -p rushi-sessions` is green. The new
+`devshell_gate_off_shapes` unit test keeps the gate's off shapes.
+The channel test locks the command shape, the fork mode, and the
+absent keybinding. A fake-`rushi` smoke test of `run-loop` on a
+scratch session dir shows one detached call. The call is
+`run <session-dir>`, no task, from the recorded working dir.
+
+The leaf-for-leaf `nix eval` comparison of the Nix attrset
+against the repo TOML passes for all 71 leaves. The comparison
+also found a pre-existing break in the same file. The `open` and
+`open_v` commands carry `$HOME/${ref:2}` in their `.envrc`
+flake-ref branch. In the Nix multiline string, a bare `${ref:2}`
+interpolates. It parses as the lambda `ref:2` and serializes to
+the text `ref:2`.
+
+That text would break the `~/` flake ref in the home-manager
+deployment. The flake channel package ships the repo TOML
+verbatim. So only the home-manager path was affected. The fix
+escapes the leading `$` with the Nix multiline literal-dollar
+sequence, `''${ref:2}`. It adds a guard comment. After the fix,
+the attrset decodes to the same value as the repo TOML, leaf for
+leaf.
+
+Out of scope: a `run_loop` action on the events channel is a
+possible follow-up. Its `send_message` acts on the CWD session.
+
 ## 103. The kill action sends SIGKILL (2026-10-30)
 
 The `kill` action of the `rushi-sessions` channel sent SIGTERM to the

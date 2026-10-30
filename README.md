@@ -27,6 +27,13 @@ action (enter) launches it from the session list.
   the loop starts detached. Live: `rushi run` appends (the kernel
   branches on the session lock).
 - Stop the session loop with alt-k (SIGKILL).
+- Drive the session's loop without a message with the `run_loop`
+  action: one detached `rushi run <session>` call, no task. The
+  kernel branches on the session lock. A live loop appends nothing
+  and exits. An idle session starts the loop, and its `run.idle`
+  pipeline decides the stop. No message is logged. The action has
+  no keybinding: reach it from the action picker (ctrl-x), or bind
+  a key of your own.
  - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
   selected one. The default view lists the user and assistant
@@ -196,6 +203,9 @@ Keybindings:
 | alt-k          | Kill the session loop (SIGKILL)                     |
 | enter          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
 | alt-e          | Open the events channel below the newest pane (-v) |
+
+The `run_loop` action carries no keybinding. Television's action
+picker (ctrl-x) lists it, and a user config may bind a key.
 
 The events channel binds the same `ctrl-t` to its own `send_message`.
 It binds enter to `view_message`, which forks a viewer chosen from

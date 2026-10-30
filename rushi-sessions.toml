@@ -50,6 +50,14 @@
 # the entry's project dir: detached `rushi run NAME MSG --sessions-root
 # <project>/sessions` (rushi 0.1.1+; the working dir is the sessions
 # root's parent). An empty message creates the session idle.
+# run_loop (no keybinding) pokes the session with one detached
+# `rushi run` call, no task (decision 104): the kernel branches on
+# the session lock itself, so a live loop appends nothing and
+# exits, an idle session starts the loop (its `run.idle` pipeline
+# decides the stop). No message is logged. The step runs in the
+# session's recorded working dir, in the project's devShell when
+# the `.envrc` gate holds (decision 95), detached in its own session
+# (decision 102).
 #
 # Requirements: `fd` (hard, the binary's walk) and `rushi-sessions`
 # (the backend binary, built by this repo's flake). `bat` is optional:
@@ -441,3 +449,22 @@ description = "Create a new session next to the selected entry. The action opens
 shell = "bash"
 mode = "fork"
 command = "rushi-sessions new-session '{split:\t:6}'"
+
+# Drive the session's loop with one detached `rushi run <row>` call,
+# no task (decision 104): the kernel branches on the session lock
+# itself, so a live loop holds the lock, the call appends nothing
+# and exits, and an idle session starts the loop (its `run.idle`
+# pipeline decides the stop). No message is logged. The step runs in
+# the session's recorded working dir (the `cwd` file, the path rule
+# is the fallback), in the project's devShell when the `.envrc`
+# gate holds (decision 95), detached in its own session (the binary
+# calls `setsid`, decision 102), with stdio to /dev/null. The
+# action logic runs in the rushi-sessions binary: one fork stage,
+# no editor, no prompt file. No value crosses a shell. The action
+# carries no keybinding: television's action picker (ctrl-x) lists
+# it, and a user config may bind a key.
+[actions.run_loop]
+description = "Drive the session's loop with one detached `rushi run <session>` call, no task. The kernel branches on the session lock itself: a live loop holds the lock, so the call appends nothing and exits; an idle session starts the loop, and its `run.idle` pipeline decides the stop. No message is logged. The call runs in the session's recorded working dir, detached in its own session (the binary calls `setsid`, decision 102), with stdio to /dev/null. When the project dir's `.envrc` (or the first one up the parent chain) names a flake and nix is on PATH, the detached call runs in that flake's devShell (`nix develop <flake> -c rushi run ...`, decision 95); with no `.envrc` found the global PATH `rushi` is used. Remote rows run the same check on the remote host. The `nix develop` inherits the environment, so the devShell packages shadow the inherited PATH, and a binary the devShell does not ship falls back to the PATH `rushi`. The action logic runs in the rushi-sessions binary: no value crosses a shell."
+shell = "bash"
+mode = "fork"
+command = "rushi-sessions run-loop '{split:\t:6}'"

@@ -248,6 +248,41 @@ fn session_channel_toml_parses() {
     let kb = v["keybindings"]["alt-n"].as_str().unwrap();
     assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
 
+    // Decision 104: run_loop pokes the loop with one detached
+    // `rushi run <row>` call, no task. One binary call, no shell
+    // sequencing, fork mode. It carries no keybinding: no binding
+    // names the action, and the binding table is unchanged in
+    // shape (the existing nine bindings).
+    let rl = v["actions"]["run_loop"].clone();
+    let c = rl["command"].as_str().unwrap();
+    assert!(
+        c.contains("rushi-sessions run-loop"),
+        "binary call: {c}"
+    );
+    assert!(c.contains("'{split:\t:6}'"), "tab token: {c}");
+    assert!(!c.contains(";"), "no shell sequencing: {c}");
+    assert!(
+        !c.contains("setsid rushi run"),
+        "no detached run in the command: {c}"
+    );
+    assert!(!c.contains("loop.pid"), "no loop pid probe: {c}");
+    assert!(!c.contains("kill -0"), "no pid liveness check: {c}");
+    assert_eq!(rl["mode"].as_str().unwrap(), "fork", "fork mode");
+    assert!(rl["shell"].as_str().unwrap().contains("bash"), "bash shell");
+    let rld = rl["description"].as_str().unwrap();
+    assert!(rld.contains("rushi run"), "description names the call: {rld}");
+    assert!(
+        rld.contains("no task"),
+        "description says no task is logged: {rld}"
+    );
+    for (k, val) in v["keybindings"].as_table().unwrap() {
+        assert_ne!(
+            val.as_str().unwrap(),
+            "actions:run_loop",
+            "no keybinding names run_loop: {k}"
+        );
+    }
+
     // Decision 103: the kill action kills the loop process
     // immediately: SIGKILL, not SIGTERM. Both the local branch and
     // the remote branch send the uncatchable signal. The stale-pid

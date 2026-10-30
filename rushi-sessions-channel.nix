@@ -244,6 +244,14 @@ in
     # the tmux binary is missing, keep the original behavior: it runs
     # `cd` to the working dir, then rushi-tui in this fork.
     #
+    # The `.envrc` flake ref renders `$HOME/${ref:2}` in the shell
+    # body. In this Nix multiline string a bare `${ref:2}` would
+    # interpolate: it parses as the lambda `ref:2` and serializes to
+    # the text `ref:2`, which would break the `~/` flake ref. The
+    # leading `''` (the Nix literal-dollar escape of the multiline
+    # string) keeps the `${` literal, so the decoded value matches
+    # the repo TOML.
+    #
     # A remote row (host: prefix) also opens a pane in the LOCAL tmux
     # server, never on the remote one. The pane runs
     # `ssh -t HOST "cd WORKDIR && rushi-tui SESSION_DIR"`: the
@@ -275,7 +283,7 @@ in
     shell = "bash";
     mode = "fork";
     command = untab ''
-sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; fd=""; d=$r; while :; do if [ -f "$d/.envrc" ]; then ref=$(sed -n "s/^use flake[[:blank:]]*//p" "$d/.envrc" | head -n1); if [ -z "$ref" ] || [ "$ref" = "." ]; then fd=$d; else case $ref in "~/"*) fd="$HOME/${ref:2}";; "~") fd=$HOME;; /*) fd=$ref;; *) fd=$d/$ref;; esac; fi; break; fi; [ "$d" = "/" ] && break; d=$(dirname "$d"); done; [ -n "$fd" ] && command -v nix >/dev/null 2>&1 && tu="nix develop $fd -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -h -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; fd=""; d=$r; while :; do if [ -f "$d/.envrc" ]; then ref=$(sed -n "s/^use flake[[:blank:]]*//p" "$d/.envrc" | head -n1); if [ -z "$ref" ] || [ "$ref" = "." ]; then fd=$d; else case $ref in "~/"*) fd="$HOME/''${ref:2}";; "~") fd=$HOME;; /*) fd=$ref;; *) fd=$d/$ref;; esac; fi; break; fi; [ "$d" = "/" ] && break; d=$(dirname "$d"); done; [ -n "$fd" ] && command -v nix >/dev/null 2>&1 && tu="nix develop $fd -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -h -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -292,7 +300,7 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
     shell = "bash";
     mode = "fork";
     command = untab ''
-sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; fd=""; d=$r; while :; do if [ -f "$d/.envrc" ]; then ref=$(sed -n "s/^use flake[[:blank:]]*//p" "$d/.envrc" | head -n1); if [ -z "$ref" ] || [ "$ref" = "." ]; then fd=$d; else case $ref in "~/"*) fd="$HOME/${ref:2}";; "~") fd=$HOME;; /*) fd=$ref;; *) fd=$d/$ref;; esac; fi; break; fi; [ "$d" = "/" ] && break; d=$(dirname "$d"); done; [ -n "$fd" ] && command -v nix >/dev/null 2>&1 && tu="nix develop $fd -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
+sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then r=$(ssh -T "$host" "w=\$(cat \"$rp/cwd\" 2>/dev/null); [ -d \"\$w\" ] || w=\$(dirname \"\$(dirname \"$rp\")\"); printf \"%s\" \"\$w\""); rt=rushi-tui; rf=$(ssh -T "$host" "test -f \"$r/flake.nix\" && command -v nix >/dev/null 2>&1 && echo yes" 2>/dev/null); [ -n "$rf" ] && rt="nix develop -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -t "%$pn" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; else tmux split-window -v -l "62%" "ssh -t $host \"cd $r && $rt \\\"$rp\\\"\""; fi; else ssh -t "$host" "cd $r && $rt \"$rp\""; fi; else r=$(dirname "$(dirname "$rp")"); w=$(cat "$rp/cwd" 2>/dev/null); [ -d "$w" ] && r=$w; tu=rushi-tui; fd=""; d=$r; while :; do if [ -f "$d/.envrc" ]; then ref=$(sed -n "s/^use flake[[:blank:]]*//p" "$d/.envrc" | head -n1); if [ -z "$ref" ] || [ "$ref" = "." ]; then fd=$d; else case $ref in "~/"*) fd="$HOME/''${ref:2}";; "~") fd=$HOME;; /*) fd=$ref;; *) fd=$d/$ref;; esac; fi; break; fi; [ "$d" = "/" ] && break; d=$(dirname "$d"); done; [ -n "$fd" ] && command -v nix >/dev/null 2>&1 && tu="nix develop $fd -c rushi-tui"; t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$r" -t "%$pn" "cd \"$r\" && $tu \"$rp\""; else tmux split-window -v -l "62%" -c "$r" "cd \"$r\" && $tu \"$rp\""; fi; else cd "$r" && $tu "$rp"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
@@ -516,5 +524,26 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
     shell = "bash";
     mode = "fork";
         command = "rushi-sessions new-session '{split:	:6}'";
+  };
+
+  # Drive the session's loop with one detached `rushi run <row>`
+  # call, no task (decision 104): the kernel branches on the
+  # session lock itself, so a live loop holds the lock, the call
+  # appends nothing and exits, and an idle session starts the loop
+  # (its `run.idle` pipeline decides the stop). No message is
+  # logged. The step runs in the session's recorded working dir,
+  # in the project's devShell when the `.envrc` gate holds
+  # (decision 95), detached in its own session (decision 102). The
+  # action logic runs in the rushi-sessions binary: one fork stage,
+  # no editor, no prompt file. No value crosses a shell. The
+  # action carries no keybinding: television's action picker lists
+  # it, and a user config may bind a key.
+  actions.run_loop = {
+    # Single-line form: the repo TOML holds a single-line basic string,
+    # whose value carries no trailing newline.
+    description = "Drive the session's loop with one detached `rushi run <session>` call, no task. The kernel branches on the session lock itself: a live loop holds the lock, so the call appends nothing and exits; an idle session starts the loop, and its `run.idle` pipeline decides the stop. No message is logged. The call runs in the session's recorded working dir, detached in its own session (the binary calls `setsid`, decision 102), with stdio to /dev/null. When the project dir's `.envrc` (or the first one up the parent chain) names a flake and nix is on PATH, the detached call runs in that flake's devShell (`nix develop <flake> -c rushi run ...`, decision 95); with no `.envrc` found the global PATH `rushi` is used. Remote rows run the same check on the remote host. The `nix develop` inherits the environment, so the devShell packages shadow the inherited PATH, and a binary the devShell does not ship falls back to the PATH `rushi`. The action logic runs in the rushi-sessions binary: no value crosses a shell.";
+    shell = "bash";
+    mode = "fork";
+        command = "rushi-sessions run-loop '{split:	:6}'";
   };
 }

@@ -88,6 +88,17 @@
 //!   when one is on PATH. Without either route the command exits
 //!   1 with a stderr line.
 //!
+//! - `rushi-sessions run-loop ROW`
+//!   Poke the session's loop with one detached `rushi run ROW`
+//!   call, no task (decision 104): the kernel branches on the
+//!   session lock itself, so a live loop holds the lock, the call
+//!   appends nothing and exits, and an idle session starts the
+//!   loop (its `run.idle` pipeline decides the stop). No message
+//!   is logged. ROW is the session path, or host:path for a remote
+//!   row (the step runs over `ssh -T`). The step runs in the
+//!   session's recorded working dir, in the project's devShell
+//!   when the `.envrc` gate holds (decisions 87/88, 95).
+//!
 //! `source` calls `fd` for the directory walk (a hard dependency of the
 //! channel) and replaces the channel's previous `python3` reader.
 //! The phase column probes the log tail (decision 84, the P8
@@ -213,6 +224,19 @@ enum Command {
         #[arg(long)]
         events: bool,
     },
+    /// Poke the session's loop with one detached `rushi run <row>`
+    /// call, no task (decision 104): the kernel branches on the
+    /// session lock itself, so a live loop holds the lock, the call
+    /// appends nothing and exits, and an idle session starts the
+    /// loop (its `run.idle` pipeline decides the stop). No message
+    /// is logged. The step runs in the session's recorded working
+    /// dir (the `cwd` file, the path rule is the fallback), in the
+    /// project's devShell when the `.envrc` gate holds (decisions
+    /// 87/88, 95); remote rows run the step over `ssh -T`.
+    RunLoop {
+        /// The session row: the path, or host:path for a remote row.
+        row: String,
+    },
     /// Append a `rewind` marker to the session (the tree view's
     /// "Rewind without summary"). SEQ is the picked entry's 1-based
     /// log seq: a user-message target rewinds `before` it (the
@@ -317,6 +341,7 @@ fn main() {
         Command::SendMessage { row, events } => {
             std::process::exit(prompt::send_message(row.as_deref(), events))
         }
+        Command::RunLoop { row } => std::process::exit(prompt::run_loop(&row)),
         Command::Rewind { dir, seq } => std::process::exit(branch::rewind(dir, seq)),
         Command::Summarize { dir, seq, prompt } => {
             std::process::exit(branch::summarize(dir, seq, prompt))

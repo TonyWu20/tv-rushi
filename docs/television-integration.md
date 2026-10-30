@@ -410,6 +410,17 @@ Decisions (user, 2026-10-04):
     signal. Prints "no live loop" when the pid is stale. A killed loop
     restarts with one `rushi run` poke. State stays in the session
     log.
+  - `run_loop` (no keybinding): one detached `rushi run
+    <abs-session-dir>` call, no task (decision 104). The kernel
+    branches on the session lock itself. A live loop holds the
+    lock. It appends nothing and exits. An idle session starts the
+    loop.
+  - The `run_loop` step runs in the session's recorded working
+    dir. It detaches in its own session (the binary's `setsid`,
+    decision 102). Its `run.idle` pipeline decides the stop on an
+    idle start. No message is logged. The action carries no
+    keybinding entry. Television's action picker (ctrl-x) lists
+    it.
   - `alt-e` browse_events: launch a nested `tv` (the
     `rushi-sessions-events` channel). The nested tv starts in the
     selected session dir, so its source reads the CWD's
@@ -1342,3 +1353,19 @@ probe.
     pane-close HUP. Verified on tmux 3.8 macOS: the devShell-gated
     `new_session` and `send_message` now create or start the
     session after the floating pane closes.
+
+72. The new `run_loop` action pokes the loop with a messageless
+    `rushi run` call (decision 104 in `docs/decisions.md`). One
+    detached `rushi run <row>` step, no task, no editor. The
+    kernel branches on the session lock. A live loop appends
+    nothing and exits. An idle session starts the loop, and its
+    `run.idle` pipeline decides the stop.
+
+    The action carries no keybinding. Television's action picker
+    lists it, and a user config may bind a key. The same
+    verification found a Nix mirror break. The `open` and
+    `open_v` commands carry `$HOME/${ref:2}` in a Nix multiline
+    string, where a bare `${ref:2}` interpolates as the lambda
+    `ref:2` and serializes to the text `ref:2`. The fix escapes
+    the leading `$` with the `''${` sequence. The attrset now
+    decodes to the same value as the repo TOML, leaf for leaf.

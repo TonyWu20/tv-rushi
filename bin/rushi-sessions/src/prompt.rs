@@ -696,6 +696,30 @@ pub(crate) fn new_session(row: &str) -> i32 {
     prompt_action("new", Some(row))
 }
 
+/// The shared devShell gate of the `rushi run` steps (decisions
+/// 87/88, re-gated on the `.envrc` devShell by decision 95): the
+/// step runs in the dir's `.envrc` devShell only when that
+/// devShell resolves `rushi` (the decision 90 rule). A local dir
+/// walks the `.envrc` chain from the dir up; a remote row checks
+/// the gate on the remote host and loads the remote cwd's flake.
+/// An empty or missing dir, no `.envrc`, or a devShell without
+/// `rushi` all keep the global PATH `rushi`.
+fn devshell_gate(host: &Option<String>, dir: Option<&str>) -> (bool, Option<String>) {
+    let Some(d) = dir.filter(|d| !d.is_empty()) else {
+        return (false, None);
+    };
+    let nix_flake_dir: Option<String> = match host.as_deref() {
+        None => local_nix_flake_dir(d).map(|p| p.to_string_lossy().into_owned()),
+        Some(_) => None,
+    };
+    let nix_dev = match (host.as_deref(), nix_flake_dir.as_ref()) {
+        (Some(h), _) => remote_nix_dev(h, d),
+        (None, Some(_)) => true,
+        (None, None) => false,
+    };
+    (nix_dev, nix_flake_dir)
+}
+
 /// The stage 1 entry: send_message. With `events`, the session dir is
 /// the CWD (the events channel runs in it); else the row.
 pub(crate) fn send_message(row: Option<&str>, events: bool) -> i32 {
@@ -710,6 +734,79 @@ pub(crate) fn send_message(row: Option<&str>, events: bool) -> i32 {
         }
     } else {
         prompt_action("message", row)
+    }
+}
+
+/// The stage 1 entry: run_loop (decision 104). It pokes the
+/// session's loop with one detached `rushi run <row>` call, no
+/// task. The kernel branches on the session lock itself: a live
+/// loop holds the lock, so the call appends nothing and exits;
+/// an idle session starts the loop, and its `run.idle` pipeline
+/// decides the stop. No message is logged. There is no editor and
+/// no prompt: the single fork stage resolves the row, the working
+/// dir and the devShell gate, then spawns the detached step
+/// (decision 102: `setsid`, stdio to /dev/null).
+pub(crate) fn run_loop(row: &str) -> i32 {
+    let (host, rp) = split_row(row);
+    let w = resolve_workdir(&host, &rp);
+    let (nix_dev, nix_flake_dir) = devshell_gate(&host, Some(w.as_str()));
+    let cfg = PromptCfg {
+        kind: "message",
+        rp: rp.clone(),
+        host: host.clone(),
+        w: Some(w.clone()),
+        r_root: None,
+        file: String::new(),
+        editor: String::new(),
+        hint: None,
+        rushi: which("rushi")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "rushi".into()),
+        ssh: which("ssh")
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "ssh".into()),
+        nix_dev,
+        nix_flake_dir,
+        pane: false,
+    };
+    let ok = match &cfg.host {
+        Some(h) => {
+            let cmd = remote_run_command(
+                &cfg.w.clone().unwrap_or_default(),
+                &cfg.rp,
+                None,
+                None,
+                cfg.nix_dev,
+            );
+            let s = detached_ssh(&cfg, h, &cmd);
+            if s {
+                println!("loop poked for {} on {}", cfg.rp, h);
+            } else {
+                eprintln!(
+                    "rushi-sessions: nothing poked for {} on {} (the run call did not start).",
+                    cfg.rp, h
+                );
+            }
+            s
+        }
+        None => {
+            let w = cfg.w.clone().unwrap_or_default();
+            let s = detached_rushi(&cfg, &[&cfg.rp], &w);
+            if s {
+                println!("loop poked for {}", cfg.rp);
+            } else {
+                eprintln!(
+                    "rushi-sessions: nothing poked for {} (the run call did not start).",
+                    cfg.rp
+                );
+            }
+            s
+        }
+    };
+    if ok {
+        0
+    } else {
+        1
     }
 }
 
@@ -741,20 +838,12 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     // devShell without `rushi`) keeps the global PATH `rushi`. A
     // remote row checks the gate on the remote host (the remote
     // flake) and loads the remote cwd's flake.
-    let nix_dir = match (kind, w.as_deref(), r_root.as_deref()) {
-        ("message", Some(d), _) if !d.is_empty() => Some(d),
-        ("new", _, Some(d)) if !d.is_empty() => Some(d),
+    let gate_dir = match kind {
+        "message" => w.as_deref(),
+        "new" => r_root.as_deref(),
         _ => None,
     };
-    let nix_flake_dir: Option<String> = match (host.as_deref(), nix_dir) {
-        (None, Some(d)) => local_nix_flake_dir(d).map(|p| p.to_string_lossy().into_owned()),
-        _ => None,
-    };
-    let nix_dev = match (host.as_deref(), nix_dir) {
-        (Some(h), Some(d)) => remote_nix_dev(h, d),
-        (None, Some(_)) => nix_flake_dir.is_some(),
-        _ => false,
-    };
+    let (nix_dev, nix_flake_dir) = devshell_gate(&host, gate_dir);
     let prompt_dir = match kind {
         "message" if host.is_none() => w.as_deref(),
         "new" if host.is_none() => r_root.as_deref(),
@@ -1109,6 +1198,27 @@ mod tests {
             local_nix_flake_dir(proj.to_str().unwrap()),
             Some(other.canonicalize().unwrap())
         );
+    }
+
+    /// The shared devShell gate: an empty dir, no `.envrc` on the
+    /// chain, or a devShell without `rushi` all keep the global
+    /// PATH `rushi` (`nix_dev` false, no flake dir). A remote row
+    /// carries no local flake dir: the remote step loads the
+    /// remote cwd's flake.
+    #[test]
+    fn devshell_gate_off_shapes() {
+        assert_eq!(devshell_gate(&None, Some("")), (false, None));
+        assert_eq!(devshell_gate(&None, None), (false, None));
+        let base = std::env::temp_dir().join(format!("rsrs-gateoff-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&base);
+        let bare = base.join("bare");
+        std::fs::create_dir_all(&bare).unwrap();
+        assert_eq!(
+            devshell_gate(&None, Some(bare.to_str().unwrap())),
+            (false, None)
+        );
+        let host = Some("build".to_string());
+        assert_eq!(devshell_gate(&host, None), (false, None));
     }
 
     /// A cfg fixture for the args-file and tail tests.
