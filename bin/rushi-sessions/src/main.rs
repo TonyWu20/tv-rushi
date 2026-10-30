@@ -21,18 +21,21 @@
 //!   cycling source command.
 //!
 //! - `rushi-sessions preview <status> <name> <repo> <phase> <last> <mtime> <path>`
-//!   Render the markdown preview card for one session: the git branch
-//!   and the one-line worktree status brief of the session's
-//!   recorded working dir, the full last user message, the last
-//!   on-idle assistant message, the context window usage, and the
-//!   most recent events as a markdown table. When
-//!   `bat` is on PATH the card is
-//!   colored with it ($RUSHI_PREVIEW_THEME selects the theme, default
-//!   "Catppuccin Macchiato"); otherwise plain markdown is printed.
+//!   Render the markdown preview document for one session: the git
+//!   branch and the one-line worktree status brief of the session's
+//!   recorded working dir, and the two truncated message rows of the
+//!   key table (the last user message, the last on-idle assistant
+//!   message, each clipped to 400 chars, decision 101). The
+//!   `--events` flag renders the recent-events view: the card
+//!   header plus the `recent-events` table (the last 20 meaningful
+//!   events, newest first, decisions 99 and 100). When
+//!   `bat` is on PATH the document is
+//!   colored with it ($RUSHI_PREVIEW_THEME selects the theme,
+//!   default "Catppuccin Macchiato"); otherwise plain markdown is
+//!   printed.
 //!   `--plain` skips the bat pass, for a channel-side renderer that
-//!   reads the plain card from stdin (a non-bat `sessionPreviewer`).
-//!   `--events` renders the recent-events view instead: the card
-//!   header plus the `recent-events` table (decision 99).
+//!   reads the plain document from stdin (a non-bat
+//!   `sessionPreviewer`).
 //! - `rushi-sessions events [DIR] [--chat] [--branch SEQ]`
 //!   Print the collapsed branch view of the session's events.jsonl,
 //!   newest first: the active branch plus the history before the
@@ -137,7 +140,7 @@ enum Command {
         #[arg(value_name = "ROOT")]
         roots: Vec<PathBuf>,
     },
-    /// Render the markdown preview card for one session.
+    /// Render the markdown preview document for one session.
     Preview {
         status: String,
         name: String,
@@ -156,7 +159,7 @@ enum Command {
         plain: bool,
         /// Render the `--events` view instead of the card: the card
         /// header plus the `recent-events` table (the last 20
-        /// meaningful events, decision 99).
+        /// meaningful events, newest first, decisions 99 and 100).
         #[arg(long)]
         events: bool,
     },

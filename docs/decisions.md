@@ -1,3 +1,32 @@
+## 101. The card shows truncated message rows instead of full-message sections (2026-10-29)
+
+The full-text message sections of decision 97 cost panel space.
+With `--watch`, the preview panel's scroll state resets on every
+refresh, so the user never sees below the key table. The user
+reverts the full-text display. The card keeps the messages as
+truncated table rows.
+
+Decision:
+
+- The key table closes with two new rows: `last-user-message`
+  and `last-assistant-message`. The values are the full last user
+  message and the last on-idle assistant message. The decision 97
+  semantics stay. Each value is clipped to 400 chars on one
+  line. An empty message omits its row.
+- The two `## last-user-message` and `## last-assistant-message`
+  sections are gone from both preview documents. The `--events`
+  view inherits the rows through the shared header.
+- The clip size is 400 chars, the clip of decision 96. The clip
+  flattens newlines to spaces. The row stays one line in the
+  markdown table.
+
+Verification: the unit tests pin the row shape, the clip, the
+newline flattening, the empty-row omission, and the table-end
+row order. 131 unit tests green, plus the 32 integration tests.
+
+Out of scope: a configurable clip size, and a no-clip variant of
+the card.
+
 ## 100. The recent-events table lists its rows newest first (2026-10-29)
 
 The recent-events table of decision 99 listed its rows in log

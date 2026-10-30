@@ -22,10 +22,12 @@ It hands off to `rushi-tui` for full interaction.
    loop pid). Full interaction stays in rushi-tui. This channel is a peek.
 5. Design notes live in this repo's `docs/`.
 6. Preview: two structured markdown documents, cycled with
-   Ctrl+F (decision 99). The card shows the last user message and
-   the last on-idle assistant message in full. The recent-events
-   view shows the last 20 meaningful events. `bat` is optional,
-   and both documents print plain without it.
+   Ctrl+F (decision 99). The card key table closes with two
+   truncated message rows, each clipped to 400 chars. They hold
+   the last user message and the last on-idle assistant message
+   (decision 101). The recent-events view shows the last 20
+   meaningful events, newest first. `bat` is optional, and both
+   documents print plain without it.
 
 ## Decisions (user, 2026-10-01)
 
@@ -277,12 +279,14 @@ Decisions (user, 2026-10-04):
   television runs every command string through its template engine. The
   `{split:\t:N}` tokens carry a real tab. The binary output supplies the
   seven tab-separated fields they split on.
-- Preview output: two structured markdown documents. They are
-  cycled with the `cycle_previews` action (Ctrl+F by default,
-  decision 99). Both open a `# rushi-session` two-column key
-  table. The keys: name, repo, host, branch, worktree, status,
-  pid, phase, think, updated, usage. An empty section or table
-  omits itself.
+- Preview output: two structured markdown documents, cycled with
+  the `cycle_previews` action (Ctrl+F by default, decision 99).
+  Both open a `# rushi-session` two-column key table. The keys:
+  name, repo, host, branch, worktree, status, pid, phase, think,
+  updated, usage. The table closes with the two truncated message
+  rows, each clipped to 400 chars (decision 101). They hold the
+  last user message and the last on-idle assistant message. An
+  empty section or table omits itself.
 
   The `host` row shows for remote rows. The `branch` row shows
   when the working dir resolves to a git repo. The `worktree`
@@ -290,9 +294,8 @@ Decisions (user, 2026-10-04):
   `clean`, or the `<N> <status>` file counts joined with a
   comma. It shows when the probe succeeds.
 
-  The card view has a `last-user-message` section with the full
-  message text. It has a `last-assistant-message` section: the
-  last on-idle assistant message (decision 97), in full.
+  The card view carries no message sections. The messages ride
+  the header's table rows (decision 101).
 
   The recent-events view has a `recent-events` table with `ts`,
   `type` and `brief` columns. The table lists the last 20

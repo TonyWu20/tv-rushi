@@ -4,11 +4,11 @@
 channel for the rushi Unix agent harness. It gives a quick-peek window over
 rushi sessions. Each entry shows the session status, repo, last loop phase,
 and last activity. The preview panel shows two markdown documents,
-cycled with Ctrl+F (decision 99). The card lists the git branch of
-the session's working dir (when one resolves), the full last user
-message, and the last on-idle assistant message. The recent-events
-view shows the last 20 meaningful events, newest first (decision
-100). A second channel,
+cycled with Ctrl+F (decision 99). The card is one key table,
+closing with the last user and last on-idle assistant messages,
+each clipped to 400 chars (decision 101). The recent-events view
+shows the last 20 meaningful events, newest first (decision 100).
+A second channel,
 `rushi-sessions-events`, fuzzy-searches one session's `events.jsonl` entries
 and previews each entry as a markdown or toml document. The `browse_events`
 action (enter) launches it from the session list.

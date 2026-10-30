@@ -157,11 +157,13 @@ cached = true
 # recent-events table view. Both are structured markdown documents,
 # syntax-highlighted by bat when it is on PATH (theme override:
 # RUSHI_PREVIEW_THEME, default "Catppuccin Macchiato" to match the
-# catppuccin tv theme). The card shows the session key table, the
-# full last user message, and the last on-idle assistant message.
-# The events view shows the key table plus the recent-events table
-# (the last 20 meaningful events). Both fall back to plain markdown
-# when bat is absent. Home-manager users pick another renderer with
+# catppuccin tv theme). The card key table closes with two
+# truncated message rows: the last user message and the last
+# on-idle assistant message, each clipped to 400 chars (decision
+# 101). The events view shows the key table plus the recent-events
+# table (the last 20 meaningful events, newest first). Both fall
+# back to plain markdown when bat is absent. Home-manager users
+# pick another renderer with
 # programs."rushi-sessions".sessionPreviewer: the channel then pipes
 # the plain document (--plain) into that command line. This repo
 # copy is the bat baseline.

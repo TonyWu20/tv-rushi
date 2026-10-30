@@ -5,10 +5,10 @@
 //! the card: the session key table with a `branch` row (the git
 //! branch of the session's recorded working dir, probed with git at
 //! render time) and a `worktree` row (the one-line `git status`
-//! brief of that worktree, probed the same way). The card shows the
-//! full last user message and the last on-idle assistant message
-//! (the last assistant message with text, the in-flight turn
-//! excluded while the loop is live). The `--events` view is the
+//! brief of that worktree, probed the same way). The table closes
+//! with two truncated message rows (decision 101): the full last
+//! user message and the last on-idle assistant message, each
+//! clipped to 400 chars on one line. The `--events` view is the
 //! recent-events table: the card header plus the last 20 meaningful
 //! events of the active path (decision 99).
 use serde_json::Value;
@@ -107,6 +107,8 @@ pub fn preview(
             phase,
             &think,
             last,
+            &last_user,
+            &last_assistant,
             &events,
             usage.as_deref(),
         )
@@ -339,6 +341,12 @@ fn git_status_brief(dir: &Path) -> Option<String> {
     }
 }
 
+/// The clip size of the card's two message rows in characters
+/// (decision 101): the 400-char clip of decision 96. The clip
+/// flattens newlines to spaces, so the row stays one line in the
+/// table cell.
+const MESSAGE_ROW_CLIP: usize = 400;
+
 /// The card header block: the `# rushi-session` title and the
 /// two-column key table, as document lines. `host` (the ssh host of
 /// a remote session, set by the local binary through `HOST_ENV`)
@@ -348,6 +356,11 @@ fn git_status_brief(dir: &Path) -> Option<String> {
 /// status brief of that worktree, or None) renders a `worktree`
 /// row under the branch row, or under the host slot. `usage` is the
 /// pre-rendered `in+out / context` line (decision 88), or None.
+/// `last_user` and `last_assistant` render the two truncated
+/// message rows at the table end (decision 101): the full last
+/// user message, and the last on-idle assistant message, each
+/// clipped to `MESSAGE_ROW_CLIP` chars on one line. An empty
+/// message omits its row.
 fn card_header_lines(
     status: &str,
     name: &str,
@@ -359,6 +372,8 @@ fn card_header_lines(
     phase: &str,
     think: &str,
     last: &str,
+    last_user: &str,
+    last_assistant: &str,
     usage: Option<&str>,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -387,6 +402,20 @@ fn card_header_lines(
     if let Some(u) = usage {
         keys.push(("usage", md_cell(u)));
     }
+    // The two truncated message rows close the table (decision
+    // 101). The clip keeps each on one line.
+    if !last_user.is_empty() {
+        keys.push((
+            "last-user-message",
+            md_cell(&clip(last_user, MESSAGE_ROW_CLIP)),
+        ));
+    }
+    if !last_assistant.is_empty() {
+        keys.push((
+            "last-assistant-message",
+            md_cell(&clip(last_assistant, MESSAGE_ROW_CLIP)),
+        ));
+    }
     out.push("| key | value |".into());
     out.push("| --- | --- |".into());
     for (k, v) in &keys {
@@ -396,11 +425,11 @@ fn card_header_lines(
 }
 
 /// The markdown card text for one session (the default preview
-/// view): the card header, the `last-user-message` section, and the
-/// `last-assistant-message` section (the last on-idle message,
-/// un-clipped). An empty section omits itself. The card carries no
-/// `recent-events` table: that table is the `--events` view
-/// (`render_events_view`, decision 99).
+/// view): the card header. The two message rows of the key table
+/// carry the truncated last user message and the last on-idle
+/// assistant message (decision 101). The card carries no message
+/// sections and no `recent-events` table: the table is the
+/// `--events` view (`render_events_view`, decision 99).
 pub(crate) fn render_card(
     status: &str,
     name: &str,
@@ -416,7 +445,7 @@ pub(crate) fn render_card(
     last_assistant: &str,
     usage: Option<&str>,
 ) -> String {
-    let mut out = card_header_lines(
+    let out = card_header_lines(
         status,
         name,
         repo,
@@ -427,20 +456,10 @@ pub(crate) fn render_card(
         phase,
         think,
         last,
+        last_user,
+        last_assistant,
         usage,
     );
-    if !last_user.is_empty() {
-        out.push(String::new());
-        out.push("## last-user-message".into());
-        out.push(String::new());
-        out.push(last_user.trim_end().to_string());
-    }
-    if !last_assistant.is_empty() {
-        out.push(String::new());
-        out.push("## last-assistant-message".into());
-        out.push(String::new());
-        out.push(last_assistant.trim_end().to_string());
-    }
     out.join("\n") + "\n"
 }
 
@@ -452,10 +471,9 @@ const EVENTS_VIEW_ROWS: usize = 20;
 /// The `--events` preview view for one session (decision 99): the
 /// card header plus the `recent-events` table. The table holds the
 /// last 20 meaningful events of the active path, newest first
-/// (decision 100). The
-/// view carries no message sections. An empty path renders the
-/// section with a note, so the cycled view never shows a blank
-/// panel.
+/// (decision 100). The header carries the two truncated message
+/// rows (decision 101). An empty path renders the section with a
+/// note, so the cycled view never shows a blank panel.
 pub(crate) fn render_events_view(
     status: &str,
     name: &str,
@@ -467,6 +485,8 @@ pub(crate) fn render_events_view(
     phase: &str,
     think: &str,
     last: &str,
+    last_user: &str,
+    last_assistant: &str,
     events: &[Value],
     usage: Option<&str>,
 ) -> String {
@@ -481,6 +501,8 @@ pub(crate) fn render_events_view(
         phase,
         think,
         last,
+        last_user,
+        last_assistant,
         usage,
     );
     // The last 40 events, reduced to (ts, type, brief), then the
@@ -630,6 +652,8 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &evts,
             None,
         );
@@ -657,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn card_messages_print_full_text_unclipped() {
+    fn card_message_rows_are_clipped_single_lines() {
         let long = "w".repeat(5000);
         let card = render_card(
             "IDLE",
@@ -674,15 +698,25 @@ mod tests {
             &long,
             None,
         );
-        // The user section keeps the newline. The 400-char clip is
-        // gone: the 5000-char assistant text prints in full.
-        assert!(card.contains("## last-user-message\n\nline one\nline two"), "{card}");
-        assert!(card.contains(&long));
-        assert!(!card.contains(" ..."));
+        // Decision 101: the messages are the truncated table rows.
+        // The user row keeps the newline flattened to a space. The
+        // 5000-char assistant text is the 400-char clip with the
+        // " ..." marker. The full text is not printed.
+        let line = card
+            .lines()
+            .find(|l| l.starts_with("| last-user-message |"))
+            .expect("user row");
+        assert!(line.contains("line one line two"), "{line}");
+        let a = card
+            .lines()
+            .find(|l| l.starts_with("| last-assistant-message |"))
+            .expect("assistant row");
+        assert!(a.contains(" ..."), "{a}");
+        assert!(!card.contains(&long), "the full text is gone");
     }
 
     #[test]
-    fn card_omits_empty_message_sections() {
+    fn card_omits_empty_message_rows() {
         let card = render_card(
             "IDLE",
             "foo",
@@ -698,10 +732,11 @@ mod tests {
             "",
             None,
         );
+        // Decision 101: an empty message omits its table row.
+        assert!(!card.contains("| last-user-message |"));
+        assert!(!card.contains("| last-assistant-message |"));
+        // No message sections, no recent-events table.
         assert!(!card.contains("## last-user-message"));
-        assert!(!card.contains("## last-assistant-message"));
-        // The card carries no recent-events table: the table is the
-        // `--events` view (decision 99).
         assert!(!card.contains("## recent-events"));
     }
 
@@ -722,6 +757,8 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &evts,
             None,
         );
@@ -756,6 +793,8 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &evts,
             None,
         );
@@ -1092,7 +1131,7 @@ mod tests {
     }
 
     #[test]
-    fn card_never_renders_recent_events() {
+    fn card_message_rows_carry_no_sections_and_no_events() {
         let card = render_card(
             "IDLE",
             "foo",
@@ -1108,11 +1147,43 @@ mod tests {
             "a",
             None,
         );
-        // Decision 99: the table moved to the `--events` view. The
-        // card shows the header and the two message sections only.
-        assert!(card.contains("## last-user-message"), "{card}");
-        assert!(card.contains("## last-assistant-message"), "{card}");
+        // Decision 101: the messages ride the key table rows. The
+        // message sections of decision 97 are gone. Decision 99:
+        // the recent-events table is the `--events` view.
+        assert!(card.contains("| last-user-message |"), "{card}");
+        assert!(card.contains("| last-assistant-message |"), "{card}");
+        assert!(!card.contains("## last-user-message"), "{card}");
+        assert!(!card.contains("## last-assistant-message"), "{card}");
         assert!(!card.contains("## recent-events"), "{card}");
+    }
+
+    #[test]
+    fn card_message_rows_sit_at_the_table_end() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            None,
+        );
+        // The message rows close the key table: the last data rows,
+        // the user row before the assistant row.
+        let rows: Vec<&str> = card.lines().filter(|l| l.starts_with('|')).collect();
+        let keys: Vec<&str> = rows
+            .iter()
+            .filter(|l| !l.starts_with("| key") && !l.starts_with("| ---"))
+            .map(|l| l.trim_start_matches('|').split('|').next().unwrap().trim())
+            .collect();
+        assert_eq!(keys.last(), Some(&"last-assistant-message"), "{rows:?}");
+        assert_eq!(keys[keys.len() - 2], "last-user-message", "{rows:?}");
     }
 
     #[test]
@@ -1135,6 +1206,8 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &evts,
             None,
         );
@@ -1165,10 +1238,14 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &evts,
             None,
         );
         assert!(card.contains("## recent-events"), "{card}");
+        // The message sections of decision 97 are gone. The
+        // messages ride the header's table rows (decision 101).
         assert!(!card.contains("## last-user-message"), "{card}");
         assert!(!card.contains("## last-assistant-message"), "{card}");
     }
@@ -1186,6 +1263,8 @@ mod tests {
             "tools",
             "",
             "10-02 14:11",
+            "",
+            "",
             &[],
             None,
         );
