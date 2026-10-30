@@ -1323,3 +1323,20 @@ probe.
     `sessions` tree. The remote tiers pass the remote session dir
     the same way, and the remote working dir keeps the one
     read-only `ssh -T` read of the remote `cwd` file.
+
+## Decisions (user, 2026-10-30)
+
+71. The detached prompt step now enters a new session inside
+    the binary (decision 102 in `docs/decisions.md`). The
+    binary spawns the step with `setsid(2)` in the fork child
+    and stdio to /dev/null, on every platform. It replaces the
+    PATH lookups of the `setsid`/`nohup` tools. On macOS, the
+    base has no `setsid` tool, so the old path used `nohup`.
+    `nohup` sets the SIGHUP-ignore on its own process only. The
+    nix CLI resets it. The closing floating pane's SIGHUP then
+    killed the running `nix develop` step, so `send_message`
+    and `new_session` sent nothing when the decision 95
+    devShell gate held. The new session is immune to the
+    pane-close HUP. Verified on tmux 3.8 macOS: the devShell-gated
+    `new_session` and `send_message` now create or start the
+    session after the floating pane closes.

@@ -70,8 +70,10 @@ action (enter) launches it from the session list.
   once per flake generation and execs it directly (decision 89),
   so a repeated preview fetch does not re-run the heavy
   `nix develop`.
-- `setsid` and `stty`, which `send_message` uses to detach the loop and
-  to restore the terminal. Both ship in the standard Unix base.
+- `stty`, which `send_message` uses to restore the terminal on the
+  fork-fallback path. The detached loop start enters its own session
+  inside the binary (`setsid`, decision 102), with stdio to /dev/null.
+  No detach tool is needed on PATH.
 - `$EDITOR` (fallback `nvim`) plus `mktemp` and `tr`, which `send_message`
   uses for the editor, temp file, and empty check. These resolve on PATH.
 - `ssh`, only for remote source roots. Each remote host also needs

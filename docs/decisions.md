@@ -1,3 +1,45 @@
+## 102. The detached prompt step enters a new session inside the binary (2026-10-30)
+
+On this Mac, `send_message` and `new_session` did nothing when the
+devShell gate was active. The macOS base has no `setsid` tool, so
+the detached step ran under `nohup`. The gate (decision 95) made
+the step argv `nix develop <flake> -c rushi run ...`. `nohup`
+sets the SIGHUP-ignore on its own process only. The nix CLI
+installs its own signal handlers and resets that ignore.
+
+The floating prompt pane closes about 2 s after the step spawn.
+tmux sends SIGHUP to the pane process group on close. The
+running `nix develop` died, and `rushi run` never ran. The
+stdio went to /dev/null, so the failure stayed silent. Linux
+stayed unaffected: the `setsid` tool puts the step in a new
+session, immune to the HUP.
+
+Decision:
+
+- The binary spawns the detached step in a new session:
+  `setsid(2)` in the fork child (`Command::pre_exec`), stdio
+  to /dev/null.
+- It runs on every platform and replaces the PATH lookups of
+  the `setsid`/`nohup` tools. It matches the `setsid` tool
+  behavior, so Linux behavior stays the same in kind.
+- The step now survives a closing floating pane, a quitting tv,
+  and a closing terminal.
+- No detach tool is needed on PATH. `stty` still restores the
+  terminal on the fork-fallback path.
+
+Verification: a new unit test probes the child session id
+(`spawn_detached_child_gets_its_own_session`). It skips without
+python3. On tmux 3.8 macOS, an end-to-end run of a devShell-gated
+project (a `.envrc` `use flake` on the project parent) shows
+`new_session` creating the sibling session. `send_message`
+starts the idle loop after the floating pane closes. Both flows
+failed before the fix. The events channel `send-message --events`
+drains a live loop without issue. The plain-rushi step (no
+devShell) still works.
+
+Out of scope: a `nohup`-based tool fallback for non-Unix
+platforms. The crate targets Unix.
+
 ## 101. The card shows truncated message rows instead of full-message sections (2026-10-29)
 
 The full-text message sections of decision 97 cost panel space.

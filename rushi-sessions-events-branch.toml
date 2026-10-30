@@ -76,9 +76,9 @@
 # The action that launches this channel needs `tv` on PATH, resolved
 # like the other interactive actions. The `send_message` action needs
 # `rushi`, `stty`, `mv` and `$EDITOR` (fallback `nvim`), resolved on PATH,
-# like the main channel's copy. The detached loop start uses `setsid`
-# when it is on PATH and falls back to `nohup` otherwise (the macOS
-# base has no setsid).
+# like the main channel's copy. The detached loop start enters its
+# own session inside the binary (`setsid`, decision 102), with
+# stdio to /dev/null. No detach tool is needed on PATH.
 # The `view_message` action needs its viewers on PATH (`mdfried`
 # and `bat` in this baseline copy). The `branch_view` action needs
 # `tv` on PATH, resolved like the main channel's `browse_events`.

@@ -82,9 +82,10 @@
 # (`nix develop -c rushi run ...`, decision 87/88). The devShell
 # shadows the inherited PATH, so a binary the devShell does not
 # ship falls back to the PATH `rushi`. It needs `rushi`, `stty`, `mv` and
-# `$EDITOR` (fallback `nvim`) on PATH. The detach uses `setsid`
-# when it is on PATH and falls back to `nohup` otherwise (the
-# macOS base has no setsid). The body resolves the
+# `$EDITOR` (fallback `nvim`) on PATH. The detached loop start
+# enters its own session inside the binary (`setsid`, decision
+# 102), with stdio to /dev/null. No detach tool is needed on PATH.
+# The body resolves the
 # session dir with `pwd` and guards it: when the channel's CWD is
 # gone (a deleted dir, or a tmux pane on a server whose own cwd was
 # deleted) `pwd` prints nothing, and the action aborts with a message

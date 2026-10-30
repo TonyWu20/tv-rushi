@@ -19,7 +19,12 @@
 //! 87/88). The remote rows run the same check on the remote
 //! host. The devShell shadows the inherited PATH, so a binary the
 //! devShell does not ship falls back to the inherited PATH
-//! entry.
+//! entry. The step spawns in a new session (`setsid(2)` in the
+//! fork child, decision 102). A closing tmux pane or a quitting
+//! tv cannot reach it with SIGHUP. The `nohup` tool fallback is
+//! gone. It set the SIGHUP-ignore on its own process only. A
+//! step that installs signal handlers (the nix CLI) resets it.
+//! The pane-close HUP then killed the step mid-evaluation.
 //!
 //! Stage 2 receives its inputs from a JSON args file (the pane
 //! command is one path, so no value ever crosses a shell). The
@@ -29,6 +34,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use serde_json::Value;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 /// The resolved inputs of one prompt action, shared by both stages.
 #[derive(Debug, Clone)]
@@ -53,8 +61,6 @@ pub(crate) struct PromptCfg {
     pub rushi: String,
     /// The ssh binary (absolute, resolved in stage 1).
     pub ssh: String,
-    /// The detach tool: "setsid" or "nohup".
-    pub detach: String,
     /// True when the create/send step runs in the project's devShell
     /// (`nix develop -c rushi run ...`), not the PATH `rushi`
     /// (decision 87, re-gated on the `.envrc` devShell by decision
@@ -88,7 +94,6 @@ impl PromptCfg {
             ("hint".into(), j(&self.hint.clone().unwrap_or_default())),
             ("rushi".into(), j(&self.rushi)),
             ("ssh".into(), j(&self.ssh)),
-            ("detach".into(), j(&self.detach)),
             ("nix_dev".into(), j(&self.nix_dev.to_string())),
             ("nix_flake_dir".into(), j(&self.nix_flake_dir.clone().unwrap_or_default())),
         ]));
@@ -129,7 +134,6 @@ impl PromptCfg {
             },
             rushi: g("rushi"),
             ssh: g("ssh"),
-            detach: g("detach"),
             nix_dev: g("nix_dev") == "true",
             nix_flake_dir: if g("nix_flake_dir").is_empty() {
                 None
@@ -244,7 +248,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         let sent = if host.is_some() {
             let m64 = b64_encode(m.as_bytes());
             let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None, cfg.nix_dev);
-            detached(&cfg.ssh, &cfg.detach, &["-T", host.unwrap(), &cmd])
+            detached_ssh(cfg, host.unwrap(), &cmd)
         } else {
             // The `--` escape keeps a hyphen-leading message (a
             // bullet list, a dash) as the task positional: kernels
@@ -287,7 +291,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
                 None
             };
             let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r), cfg.nix_dev);
-            let ok = detached(&cfg.ssh, &cfg.detach, &["-T", host, &cmd]);
+            let ok = detached_ssh(cfg, host, &cmd);
             if !ok {
                 eprintln!("rushi-sessions: nothing created for {n} on {host} (the remote call did not start).");
                 return false;
@@ -398,52 +402,69 @@ pub(crate) fn remote_nix_dev_command(dir: &str) -> String {
     )
 }
 
-/// Run `detach cmd args...` detached (new session when setsid is
-/// available), stdio to /dev/null. The caller does not wait.
+/// The detached step spawn (decision 102): the step argv with stdio
+/// to /dev/null, the child in its own session (`setsid(2)` in the
+/// fork child, `Command::pre_exec`). The new session keeps a
+/// closing tmux pane, a quitting tv, or a closing terminal from
+/// reaching the step with SIGHUP. The caller does not wait.
 /// Returns whether the spawn succeeded (the caller must not report
 /// a send on a failed spawn: the caller cannot observe the
 /// detached failure any other way).
-fn detached(tool: &str, detach: &str, args: &[&str]) -> bool {
-    let mut c = Command::new(detach);
-    c.arg(tool);
-    for a in args {
+fn spawn_detached(argv: &[String], cwd: Option<&str>, label: &str) -> bool {
+    let mut c = Command::new(&argv[0]);
+    for a in &argv[1..] {
         c.arg(a);
+    }
+    if let Some(d) = cwd {
+        c.current_dir(d);
     }
     c.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
+    #[cfg(unix)]
+    unsafe {
+        c.pre_exec(|| {
+            // The child is not a process-group leader (its pid is
+            // new, its group is the parent's), so setsid()
+            // succeeds. Ignore the EPERM edge: the step must still
+            // start, with the inherited session.
+            libc::setsid();
+            Ok(())
+        });
+    }
     match c.spawn() {
         Ok(_) => true,
         Err(e) => {
-            eprintln!("rushi-sessions: cannot start {detach} {tool}: {e}");
+            eprintln!("rushi-sessions: cannot start {label}: {e}");
             false
         }
     }
 }
 
 /// The detached local `rushi run` from the working dir.
-/// Returns whether the spawn succeeded. The step's argv after the
-/// detach tool is the PATH `rushi` binary, or the nix devShell
-/// launch when the project flake ships its own build (decision 87).
+/// Returns whether the spawn succeeded. The step argv is the PATH
+/// `rushi` binary, or the nix devShell launch when the project
+/// flake ships its own build (decision 87, re-gated on the
+/// `.envrc` devShell by decision 95).
 fn detached_rushi(cfg: &PromptCfg, args: &[&str], workdir: &str) -> bool {
-    let mut c = Command::new(&cfg.detach);
-    for t in rushi_run_tail(cfg) {
-        c.arg(&t);
-    }
+    let mut argv: Vec<String> = rushi_run_tail(cfg);
     for a in args {
-        c.arg(a);
+        argv.push((*a).to_string());
     }
-    c.current_dir(workdir)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    match c.spawn() {
-        Ok(_) => true,
-        Err(e) => {
-            eprintln!("rushi-sessions: cannot start {}: {e}", rushi_run_label(cfg));
-            false
-        }
-    }
+    spawn_detached(&argv, Some(workdir), &rushi_run_label(cfg))
+}
+
+/// The detached remote step: `ssh -T` with the remote command
+/// string. The message crosses the boundary as a base64 blob,
+/// decoded on the remote side.
+fn detached_ssh(cfg: &PromptCfg, host: &str, cmd: &str) -> bool {
+    let argv = vec![
+        cfg.ssh.clone(),
+        "-T".to_string(),
+        host.to_string(),
+        cmd.to_string(),
+    ];
+    spawn_detached(&argv, None, &format!("ssh -T {host}"))
 }
 
 /// Save the terminal state (`stty -g`), empty on failure.
@@ -760,11 +781,6 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
     let ssh = which("ssh")
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|| "ssh".into());
-    let detach = if which("setsid").is_some() {
-        "setsid"
-    } else {
-        "nohup"
-    };
     let cfg = PromptCfg {
         kind,
         rp: rp.clone(),
@@ -780,7 +796,6 @@ fn prompt_action(kind: &'static str, row: Option<&str>) -> i32 {
         },
         rushi,
         ssh,
-        detach: detach.to_string(),
         nix_dev,
         nix_flake_dir,
         pane: false,
@@ -1109,7 +1124,6 @@ mod tests {
             hint: None,
             rushi: "/store/bin/rushi".to_string(),
             ssh: "ssh".to_string(),
-            detach: "setsid".to_string(),
             nix_dev,
             nix_flake_dir: None,
             pane: false,
@@ -1181,6 +1195,52 @@ mod tests {
         assert!(is_blank(" \t\n\r"));
         assert!(!is_blank("x"));
     }
+
+    /// Decision 102: the detached step child must sit in its own
+    /// session, so a closing tmux pane or a quitting tv cannot
+    /// reach it with SIGHUP. The probe child writes its own
+    /// session id (a `python3` one-liner) to a file the parent
+    /// reads back. Without `python3` the probe writes nothing and
+    /// the test skips (the base64 test pattern).
+    #[test]
+    fn spawn_detached_child_gets_its_own_session() {
+        let f = std::env::temp_dir().join(format!("rsrs-sid-{}", std::process::id()));
+        let _ = std::fs::remove_file(&f);
+        let py = format!(
+            "import os; open({:?}, 'w').write(str(os.getsid(0)))",
+            f.display()
+        );
+        let argv = vec![
+            "python3".to_string(),
+            "-c".to_string(),
+            py,
+            "ignore".to_string(),
+        ];
+        // A missing python3 exits 127 and writes nothing: the file
+        // stays absent and the test skips.
+        assert!(spawn_detached(&argv, None, "the sid probe"));
+        let mut got = String::new();
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            match std::fs::read_to_string(&f) {
+                Ok(t) => {
+                    got = t;
+                    break;
+                }
+                Err(_) => {}
+            }
+        }
+        let _ = std::fs::remove_file(&f);
+        if got.is_empty() {
+            return;
+        }
+        let child_sid: i32 = got.trim().parse().unwrap_or(0);
+        let parent_sid = unsafe { libc::getsid(0) };
+        assert_ne!(
+            child_sid, parent_sid,
+            "the step child must sit in its own session (child {child_sid}, parent {parent_sid})"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1200,7 +1260,6 @@ mod roundtrip_tests {
             hint: Some("hint".into()),
             rushi: "rushi".into(),
             ssh: "ssh".into(),
-            detach: "setsid".into(),
             nix_dev: false,
             nix_flake_dir: None,
             pane: true,
