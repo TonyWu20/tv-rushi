@@ -1,3 +1,30 @@
+## 103. The kill action sends SIGKILL (2026-10-30)
+
+The `kill` action of the `rushi-sessions` channel sent SIGTERM to the
+loop pid. The user found it too gentle: the loop process did not die
+on the spot, so the action did not kill the loop immediately.
+
+Decision:
+
+- The `kill` action sends SIGKILL to the loop pid, in both the local
+  branch and the remote branch (`ssh -T "$host" kill -KILL`). The
+  echo prints "sent SIGKILL to $p" on success. The stale-pid lines
+  ("no live loop") are unchanged.
+- The liveness guard stays: `kill -0` (remote rows via ssh) still
+  filters a stale pid before the signal goes out. A reused pid would
+  still hit the wrong process, and SIGKILL makes that worse, so the
+  ACTIVE/IDLE preview row stays the confirm-before-press guard.
+- The action description, the README lines and the
+  `television-integration.md` kill notes follow.
+
+Verification: the guard test locks the signal: `rushi-sessions.toml`
+must carry `kill -KILL` in both branches, name SIGKILL in the echo
+and the description, and carry no `kill -TERM`. The Nix mirror keeps
+the same command body (the `@TAB@` token). The repo TOML parses.
+
+Out of scope: the loop's own SIGTERM handling in the rushi kernel.
+Other callers keep the graceful SIGTERM shutdown.
+
 ## 102. The detached prompt step enters a new session inside the binary (2026-10-30)
 
 On this Mac, `send_message` and `new_session` did nothing when the

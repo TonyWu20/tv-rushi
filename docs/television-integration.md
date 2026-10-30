@@ -18,7 +18,7 @@ It hands off to `rushi-tui` for full interaction.
    `cp rushi-sessions.toml ~/.config/television/cable/`, or let
    nixos-config install it from this repo's flake (see Install).
 3. The list shows the last `loop_phase` (wait/tools/...) per session.
-4. Actions: `open` (rushi-tui), `tail` (follow events), `kill` (SIGTERM the
+4. Actions: `open` (rushi-tui), `tail` (follow events), `kill` (SIGKILL the
    loop pid). Full interaction stays in rushi-tui. This channel is a peek.
 5. Design notes live in this repo's `docs/`.
 6. Preview: two structured markdown documents, cycled with
@@ -405,9 +405,11 @@ Decisions (user, 2026-10-04):
     name (line 1 empty after the strip, or it holds `/`, `.` or `..`)
     cancels. Remote rows prompt locally and create the session over
     `ssh -T` (decision 55).
-  - `alt-k` kill: SIGTERM the `loop.pid`. Prints "no live loop"
-    when the pid is stale. A SIGTERMed loop restarts. State stays in the
-    session log.
+  - `alt-k` kill: SIGKILL the `loop.pid` (decision 103). SIGKILL
+    kills the loop process immediately: the loop cannot catch the
+    signal. Prints "no live loop" when the pid is stale. A killed loop
+    restarts with one `rushi run` poke. State stays in the session
+    log.
   - `alt-e` browse_events: launch a nested `tv` (the
     `rushi-sessions-events` channel). The nested tv starts in the
     selected session dir, so its source reads the CWD's
@@ -680,7 +682,7 @@ replaces the manual `cp`. The channel stays pure data in the store.
   in a new pane to the right of tv. Outside tmux, it does so in the
   fork. The TUI resolves a bare name against a relative `sessions_root`,
   so the CWD must be that base dir.
-- `kill` sends SIGTERM to the pid in `loop.pid`. A reused pid would hit
+- `kill` sends SIGKILL to the pid in `loop.pid` (decision 103). A reused pid would hit
   the wrong process. The preview shows ACTIVE/IDLE first. The user
   confirms before pressing alt-k.
 - `send_message` on an idle session starts the loop detached, so tv

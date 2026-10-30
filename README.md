@@ -26,7 +26,7 @@ action (enter) launches it from the session list.
   file, so a git worktree session stays in the worktree). Idle:
   the loop starts detached. Live: `rushi run` appends (the kernel
   branches on the session lock).
-- Stop the session loop with alt-k (SIGTERM).
+- Stop the session loop with alt-k (SIGKILL).
  - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
   selected one. The default view lists the user and assistant
@@ -193,7 +193,7 @@ Keybindings:
 | -------------- | --------------------------------------------------- |
 | ctrl-e         | Open the session in `rushi-tui`                     |
 | ctrl-t         | Edit a message in `$EDITOR` (fallback `nvim`), then send it |
-| alt-k          | Send SIGTERM to the session loop                    |
+| alt-k          | Kill the session loop (SIGKILL)                     |
 | enter          | Fuzzy-search the session's `events.jsonl` in a nested `tv` |
 | alt-e          | Open the events channel below the newest pane (-v) |
 

@@ -247,6 +247,29 @@ fn session_channel_toml_parses() {
     assert!(!ns.contains("loop.pid"), "no loop pid probe: {ns}");
     let kb = v["keybindings"]["alt-n"].as_str().unwrap();
     assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
+
+    // Decision 103: the kill action kills the loop process
+    // immediately: SIGKILL, not SIGTERM. Both the local branch and
+    // the remote branch send the uncatchable signal. The stale-pid
+    // guard (`kill -0`) stays.
+    let kill = v["actions"]["kill"]["command"].as_str().unwrap();
+    assert!(
+        kill.contains(r#"ssh -T "$host" kill -KILL "$p""#),
+        "the remote branch sends SIGKILL: {kill}"
+    );
+    assert!(
+        kill.contains(r#"then kill -KILL "$p";"#),
+        "the local branch sends SIGKILL: {kill}"
+    );
+    assert!(
+        kill.contains("sent SIGKILL to $p"),
+        "the echo names SIGKILL: {kill}"
+    );
+    assert!(!kill.contains("kill -TERM"), "no SIGTERM: {kill}");
+    let kdesc = v["actions"]["kill"]["description"].as_str().unwrap();
+    assert!(kdesc.contains("SIGKILL"), "description names SIGKILL: {kdesc}");
+    let kk = v["keybindings"]["alt-k"].as_str().unwrap();
+    assert_eq!(kk, "actions:kill", "alt-k binds kill: {kk}");
 }
 
 #[test]

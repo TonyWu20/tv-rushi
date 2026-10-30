@@ -478,11 +478,11 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
   };
 
   actions.kill = {
-    description = "Stop the session loop (SIGTERM to the loop pid)";
+    description = "Kill the session loop (SIGKILL to the loop pid)";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then p=$(ssh -T "$host" cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && ssh -T "$host" kill -0 "$p" 2>/dev/null; then ssh -T "$host" kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$rp")") on $host"; else echo "no live loop for "$(basename "$rp")" on $host (stale or absent pid)"; fi; else p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -TERM "$p"; echo "sent SIGTERM to $p ("$(basename "$rp")")"; else echo "no live loop for "$(basename "$rp")" (stale or absent pid)"; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then p=$(ssh -T "$host" cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && ssh -T "$host" kill -0 "$p" 2>/dev/null; then ssh -T "$host" kill -KILL "$p"; echo "sent SIGKILL to $p ("$(basename "$rp")") on $host"; else echo "no live loop for "$(basename "$rp")" on $host (stale or absent pid)"; fi; else p=$(cat "$rp/loop.pid" 2>/dev/null); p=$(printf "%s" "$p" | tr -d "[:space:]"); if [ -n "$p" ] && kill -0 "$p" 2>/dev/null; then kill -KILL "$p"; echo "sent SIGKILL to $p ("$(basename "$rp")")"; else echo "no live loop for "$(basename "$rp")" (stale or absent pid)"; fi; fi' sh '{split:@TAB@:6}'
     '';
   };
 
