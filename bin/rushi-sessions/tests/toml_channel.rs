@@ -248,11 +248,11 @@ fn session_channel_toml_parses() {
     let kb = v["keybindings"]["alt-n"].as_str().unwrap();
     assert_eq!(kb, "actions:new_session", "alt-n binds new_session: {kb}");
 
-    // Decision 104: run_loop pokes the loop with one detached
-    // `rushi run <row>` call, no task. One binary call, no shell
-    // sequencing, fork mode. It carries no keybinding: no binding
-    // names the action, and the binding table is unchanged in
-    // shape (the existing nine bindings).
+    // Decision 104 (trimmed by 105): run_loop drives an idle
+    // session with one detached `rushi run <row>` call, no task.
+    // One binary call, no shell sequencing, fork mode. It carries
+    // no keybinding: no binding names the action, and the binding
+    // table is unchanged in shape (the existing nine bindings).
     let rl = v["actions"]["run_loop"].clone();
     let c = rl["command"].as_str().unwrap();
     assert!(
@@ -275,6 +275,10 @@ fn session_channel_toml_parses() {
         rld.contains("no task"),
         "description says no task is logged: {rld}"
     );
+    // The 105 trim: the description carries no devShell gate and no
+    // liveness mechanism.
+    assert!(!rld.contains("devShell"), "no devShell gate: {rld}");
+    assert!(!rld.contains("run.idle"), "no liveness mechanism: {rld}");
     for (k, val) in v["keybindings"].as_table().unwrap() {
         assert_ne!(
             val.as_str().unwrap(),

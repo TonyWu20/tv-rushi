@@ -411,16 +411,15 @@ Decisions (user, 2026-10-04):
     restarts with one `rushi run` poke. State stays in the session
     log.
   - `run_loop` (no keybinding): one detached `rushi run
-    <abs-session-dir>` call, no task (decision 104). The kernel
-    branches on the session lock itself. A live loop holds the
-    lock. It appends nothing and exits. An idle session starts the
-    loop.
+    <abs-session-dir>` call, no task (decisions 104, 105). The
+    action drives an idle session: it starts the loop, and no
+    message is logged. `rushi` resolves on PATH.
   - The `run_loop` step runs in the session's recorded working
-    dir. It detaches in its own session (the binary's `setsid`,
-    decision 102). Its `run.idle` pipeline decides the stop on an
-    idle start. No message is logged. The action carries no
-    keybinding entry. Television's action picker (ctrl-x) lists
-    it.
+    dir. It detaches in its own session (the binary's `setsid(2)`
+    spawn, decision 102, not the macOS-missing `setsid` tool). On
+    a live loop the call exits at once and appends nothing. The
+    action carries no keybinding entry. Television's action picker
+    (ctrl-x) lists it.
   - `alt-e` browse_events: launch a nested `tv` (the
     `rushi-sessions-events` channel). The nested tv starts in the
     selected session dir, so its source reads the CWD's
@@ -1354,12 +1353,11 @@ probe.
     `new_session` and `send_message` now create or start the
     session after the floating pane closes.
 
-72. The new `run_loop` action pokes the loop with a messageless
-    `rushi run` call (decision 104 in `docs/decisions.md`). One
-    detached `rushi run <row>` step, no task, no editor. The
-    kernel branches on the session lock. A live loop appends
-    nothing and exits. An idle session starts the loop, and its
-    `run.idle` pipeline decides the stop.
+72. The new `run_loop` action drives an idle session with a
+    messageless `rushi run` call (decisions 104, 105 in
+    `docs/decisions.md`). One detached `rushi run <row>` step, no
+    task, no editor. No message is logged. `rushi` resolves on
+    PATH. No devShell gate (105 trims it).
 
     The action carries no keybinding. Television's action picker
     lists it, and a user config may bind a key. The same

@@ -89,15 +89,12 @@
 //!   1 with a stderr line.
 //!
 //! - `rushi-sessions run-loop ROW`
-//!   Poke the session's loop with one detached `rushi run ROW`
-//!   call, no task (decision 104): the kernel branches on the
-//!   session lock itself, so a live loop holds the lock, the call
-//!   appends nothing and exits, and an idle session starts the
-//!   loop (its `run.idle` pipeline decides the stop). No message
-//!   is logged. ROW is the session path, or host:path for a remote
-//!   row (the step runs over `ssh -T`). The step runs in the
-//!   session's recorded working dir, in the project's devShell
-//!   when the `.envrc` gate holds (decisions 87/88, 95).
+//!   Drive an idle session: one detached `rushi run ROW` call, no
+//!   task (decisions 104, 105). No message is logged. ROW is the
+//!   session path, or host:path for a remote row (the step runs
+//!   over `ssh -T`). The step runs in the session's recorded
+//!   working dir, detached in its own session (the decision 102
+//!   `setsid(2)` spawn). `rushi` resolves on PATH.
 //!
 //! `source` calls `fd` for the directory walk (a hard dependency of the
 //! channel) and replaces the channel's previous `python3` reader.
@@ -224,15 +221,12 @@ enum Command {
         #[arg(long)]
         events: bool,
     },
-    /// Poke the session's loop with one detached `rushi run <row>`
-    /// call, no task (decision 104): the kernel branches on the
-    /// session lock itself, so a live loop holds the lock, the call
-    /// appends nothing and exits, and an idle session starts the
-    /// loop (its `run.idle` pipeline decides the stop). No message
-    /// is logged. The step runs in the session's recorded working
-    /// dir (the `cwd` file, the path rule is the fallback), in the
-    /// project's devShell when the `.envrc` gate holds (decisions
-    /// 87/88, 95); remote rows run the step over `ssh -T`.
+    /// Drive an idle session: one detached `rushi run <row>` call,
+    /// no task (decisions 104, 105). No message is logged. The
+    /// step runs in the session's recorded working dir, detached in
+    /// its own session (the decision 102 `setsid(2)` spawn).
+    /// `rushi` resolves on PATH. Remote rows run the step over
+    /// `ssh -T`.
     RunLoop {
         /// The session row: the path, or host:path for a remote row.
         row: String,
