@@ -1,27 +1,54 @@
+## 106. The run_loop action restores the `.envrc` devShell gate (2026-10-30)
+
+Decision 105 removed the devShell gate from `run_loop`. The user
+rejected that removal. A different `rushi` binary carries
+different configs. Starting the loop with the wrong binary is a
+silent disaster. The gate returns. It matches `send_message` and
+`new_session` (decisions 87/88, 90, 95).
+
+Revisions:
+
+- `run_loop` consults `devshell_gate` again. The local step runs
+  in the project's `.envrc` devShell when the gate holds
+  (`nix develop <flake> -c rushi run ...`). Else it uses the
+  global PATH `rushi`. A remote row checks the gate on the remote
+  host. It runs `nix develop -c rushi run` there when it holds.
+- The descriptions restore the gate wording. The 105 intent
+  wording stays: drive an idle session. The 105 channel-test
+  lock inverts. The description carries the gate wording again.
+  It still carries no `run.idle` or liveness-mechanism wording.
+
+Verification: `cargo test -p rushi-sessions` is green. A
+fake-`nix` smoke test proves the argv selection end to end. A
+seeded project takes the step `nix develop <flake> -c rushi run
+<row>`. A bare project takes the PATH `rushi run <row>`. No real
+nix runs, and no loop starts. The Nix attrset decodes to the
+same value as the repo TOML, leaf for leaf.
+
+Out of scope: nothing. The gate machinery is shared with
+`send_message` and `new_session`.
+
 ## 105. The run_loop action trims to the idle-drive intent (2026-10-30)
 
 The user revised the intent of the `run_loop` action (decision
 104). The action drives an idle session only: it starts a stopped
 loop. It is not a general poke. The user called the
-liveness-mechanism commentary and the devShell-gate apparatus a
-waste of effort. The user also flagged the macOS compatibility of
-the detached step.
+liveness-mechanism commentary a waste of effort. The user also
+flagged the macOS compatibility of the detached step.
 
 Revisions:
 
-- `run_loop` no longer consults the devShell gate. `rushi`
-  resolves on PATH. The local step is `[rushi, run, <row>]` from
-  the recorded working dir. A remote row runs
-  `ssh -T host "cd '<w>' && rushi run '<rp>'"`. The
-  `devshell_gate` helper stays: `send_message` and `new_session`
-  still use it.
+- `run_loop` no longer consulted the devShell gate. `rushi`
+  resolved on PATH. The local step was `[rushi, run, <row>]`
+  from the recorded working dir. That removal was my
+  over-interpretation of the user's words. The user did not ask
+  for it. Decision 106 restores the gate.
 - The descriptions and header comments drop the kernel-branch
   semantics (`run.idle`, the lock branch). The text states the
   intent: drive an idle session. On a live loop, the kernel call
   exits at once and appends nothing.
-- No liveness probe. The channel test locks the trim: the
-  description carries no `devShell` wording and no `run.idle`
-  wording.
+- No liveness probe. The channel test locks that trim: the
+  description carries no `run.idle` wording.
 
 The macOS point: the detached step is the decision 102 spawn. It
 is the `setsid(2)` syscall in the fork child
@@ -31,7 +58,7 @@ works on macOS, and decision 102 verified the spawn there. The
 descriptions now name the distinction.
 
 Verification: `cargo test -p rushi-sessions` is green. The
-channel test locks the trimmed description. The Nix attrset
+channel test locked the trimmed description. The Nix attrset
 decodes to the same value as the repo TOML, leaf for leaf, after
 the description change.
 

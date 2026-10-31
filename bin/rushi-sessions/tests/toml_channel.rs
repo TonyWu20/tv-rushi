@@ -275,9 +275,12 @@ fn session_channel_toml_parses() {
         rld.contains("no task"),
         "description says no task is logged: {rld}"
     );
-    // The 105 trim: the description carries no devShell gate and no
-    // liveness mechanism.
-    assert!(!rld.contains("devShell"), "no devShell gate: {rld}");
+    // The 106 restore: the gate wording is back. The 105 trim of
+    // the liveness-mechanism wording stays.
+    assert!(
+        rld.contains("devShell"),
+        "the 106 restore: the gate wording is back: {rld}"
+    );
     assert!(!rld.contains("run.idle"), "no liveness mechanism: {rld}");
     for (k, val) in v["keybindings"].as_table().unwrap() {
         assert_ne!(

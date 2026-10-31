@@ -411,15 +411,17 @@ Decisions (user, 2026-10-04):
     restarts with one `rushi run` poke. State stays in the session
     log.
   - `run_loop` (no keybinding): one detached `rushi run
-    <abs-session-dir>` call, no task (decisions 104, 105). The
-    action drives an idle session: it starts the loop, and no
-    message is logged. `rushi` resolves on PATH.
+    <abs-session-dir>` call, no task (decisions 104, 105, 106).
+    The action drives an idle session: it starts the loop, and no
+    message is logged.
   - The `run_loop` step runs in the session's recorded working
-    dir. It detaches in its own session (the binary's `setsid(2)`
-    spawn, decision 102, not the macOS-missing `setsid` tool). On
-    a live loop the call exits at once and appends nothing. The
-    action carries no keybinding entry. Television's action picker
-    (ctrl-x) lists it.
+    dir. When the `.envrc` gate holds, it runs in the project's
+    devShell (decisions 87/88, 95, 106). Else the PATH `rushi`
+    runs it. It detaches in its own session (the binary's
+    `setsid(2)` spawn, decision 102, not the macOS-missing
+    `setsid` tool). On a live loop the call exits at once and
+    appends nothing. The action carries no keybinding entry:
+    television's action picker (ctrl-x) lists it.
   - `alt-e` browse_events: launch a nested `tv` (the
     `rushi-sessions-events` channel). The nested tv starts in the
     selected session dir, so its source reads the CWD's
@@ -1354,10 +1356,11 @@ probe.
     session after the floating pane closes.
 
 72. The new `run_loop` action drives an idle session with a
-    messageless `rushi run` call (decisions 104, 105 in
+    messageless `rushi run` call (decisions 104, 105, 106 in
     `docs/decisions.md`). One detached `rushi run <row>` step, no
-    task, no editor. No message is logged. `rushi` resolves on
-    PATH. No devShell gate (105 trims it).
+    task, no editor. No message is logged. The step keeps the
+    `.envrc` devShell gate (decisions 87/88, 95): a different
+    `rushi` carries different configs.
 
     The action carries no keybinding. Television's action picker
     lists it, and a user config may bind a key. The same

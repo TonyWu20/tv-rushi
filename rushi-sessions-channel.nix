@@ -527,22 +527,25 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
   };
 
   # Drive an idle session: one detached `rushi run <row>` call, no
-  # task (decisions 104, 105): no message is logged. The step runs
-  # in the session's recorded working dir (the `cwd` file, the path
-  # rule is the fallback), detached in its own session (the binary's
-  # `setsid(2)` spawn, decision 102, not the macOS-missing `setsid`
-  # tool), with stdio to /dev/null. `rushi` resolves on PATH. No
-  # devShell gate (decision 105 trims it). Remote rows run the step
-  # over `ssh -T`. On a live loop the call exits at once and
-  # appends nothing. The action logic runs in the rushi-sessions
-  # binary: one fork stage, no editor, no prompt file. No value
-  # crosses a shell. The action carries no keybinding: television's
-  # action picker (ctrl-x) lists it, and a user config may bind a
-  # key.
+  # task (decisions 104, 105, 106): no message is logged. The step
+  # runs in the session's recorded working dir (the `cwd` file, the
+  # path rule is the fallback), detached in its own session (the
+  # binary's `setsid(2)` spawn, decision 102, not the macOS-missing
+  # `setsid` tool), with stdio to /dev/null. When the project dir's
+  # `.envrc` (or the first one up the parent chain) names a flake
+  # and nix is on PATH, the step runs in that flake's devShell
+  # (`nix develop <flake> -c rushi run ...`, decision 95); with no
+  # `.envrc` found the global PATH `rushi` is used. Remote rows run
+  # the same check on the remote host. A different `rushi` carries
+  # different configs, so the gate stays (decision 106). The
+  # action logic runs in the rushi-sessions binary: one fork stage,
+  # no editor, no prompt file. No value crosses a shell. The
+  # action carries no keybinding: television's action picker
+  # (ctrl-x) lists it, and a user config may bind a key.
   actions.run_loop = {
     # Single-line form: the repo TOML holds a single-line basic string,
     # whose value carries no trailing newline.
-    description = "Drive an idle session: start the loop with one detached `rushi run <session>` call, no task. No message is logged. The call runs in the session's recorded working dir, detached in its own session (the binary's `setsid(2)` spawn, decision 102, not the macOS-missing `setsid` tool). `rushi` resolves on PATH. Remote rows run the call over `ssh -T`. On a live loop the call exits at once and appends nothing.";
+    description = "Drive an idle session: start the loop with one detached `rushi run <session>` call, no task. No message is logged. The call runs in the session's recorded working dir, detached in its own session (the binary's `setsid(2)` spawn, decision 102, not the macOS-missing `setsid` tool), with stdio to /dev/null. When the project dir's `.envrc` (or the first one up the parent chain) names a flake and nix is on PATH, the call runs in that flake's devShell (`nix develop <flake> -c rushi run ...`, decision 95); with no `.envrc` found the global PATH `rushi` is used. Remote rows run the same check on the remote host. The gate stays because a different `rushi` carries different configs (decision 106). On a live loop the call exits at once and appends nothing.";
     shell = "bash";
     mode = "fork";
         command = "rushi-sessions run-loop '{split:	:6}'";

@@ -737,17 +737,21 @@ pub(crate) fn send_message(row: Option<&str>, events: bool) -> i32 {
     }
 }
 
-/// The stage 1 entry: run_loop (decision 104, trimmed by 105).
-/// Drives an idle session: one detached `rushi run <row>` call, no
-/// task. No message is logged. No editor, no prompt file, no
-/// devShell gate: `rushi` resolves on PATH. The step runs in the
-/// session's recorded working dir, detached in its own session
-/// (the decision 102 spawn: the `setsid(2)` syscall in the fork
-/// child, not the macOS-missing `setsid` tool; stdio to /dev/null).
-/// Remote rows run the step over `ssh -T`.
+/// The stage 1 entry: run_loop (decision 104, trimmed by 105,
+/// gate restored by 106). Drives an idle session: one detached
+/// `rushi run <row>` call, no task. No message is logged. No
+/// editor, no prompt file. The step runs in the session's
+/// recorded working dir, in the project's `.envrc` devShell when
+/// the gate holds (decisions 87/88, 90, 95), else the PATH
+/// `rushi`. A different `rushi` carries different configs, so
+/// the gate stays (decision 106). The step detaches in its own
+/// session (the decision 102 spawn: the `setsid(2)` syscall in
+/// the fork child, not the macOS-missing `setsid` tool; stdio to
+/// /dev/null). Remote rows run the step over `ssh -T`.
 pub(crate) fn run_loop(row: &str) -> i32 {
     let (host, rp) = split_row(row);
     let w = resolve_workdir(&host, &rp);
+    let (nix_dev, nix_flake_dir) = devshell_gate(&host, Some(w.as_str()));
     let cfg = PromptCfg {
         kind: "message",
         rp: rp.clone(),
@@ -763,13 +767,19 @@ pub(crate) fn run_loop(row: &str) -> i32 {
         ssh: which("ssh")
             .map(|p| p.to_string_lossy().into_owned())
             .unwrap_or_else(|| "ssh".into()),
-        nix_dev: false,
-        nix_flake_dir: None,
+        nix_dev,
+        nix_flake_dir,
         pane: false,
     };
     let ok = match &cfg.host {
         Some(h) => {
-            let cmd = remote_run_command(&cfg.w.clone().unwrap_or_default(), &cfg.rp, None, None, false);
+            let cmd = remote_run_command(
+                &cfg.w.clone().unwrap_or_default(),
+                &cfg.rp,
+                None,
+                None,
+                cfg.nix_dev,
+            );
             let s = detached_ssh(&cfg, h, &cmd);
             if s {
                 println!("loop poked for {} on {}", cfg.rp, h);

@@ -29,9 +29,11 @@ action (enter) launches it from the session list.
 - Stop the session loop with alt-k (SIGKILL).
 - Drive an idle session without a message with the `run_loop`
   action: one detached `rushi run <session>` call, no task, no
-  message. `rushi` resolves on PATH. The action has no keybinding:
-  reach it from the action picker (ctrl-x), or bind a key of your
-  own.
+  message. The step runs in the project's devShell when the
+  `.envrc` gate holds (decision 95). Else the PATH `rushi` runs
+  it. A different `rushi` carries different configs, so the gate
+  stays (decision 106). The action has no keybinding: reach it
+  from the action picker (ctrl-x), or bind a key of your own.
  - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
   selected one. The default view lists the user and assistant

@@ -90,11 +90,13 @@
 //!
 //! - `rushi-sessions run-loop ROW`
 //!   Drive an idle session: one detached `rushi run ROW` call, no
-//!   task (decisions 104, 105). No message is logged. ROW is the
-//!   session path, or host:path for a remote row (the step runs
-//!   over `ssh -T`). The step runs in the session's recorded
-//!   working dir, detached in its own session (the decision 102
-//!   `setsid(2)` spawn). `rushi` resolves on PATH.
+//!   task (decisions 104, 105, 106). No message is logged. ROW is
+//!   the session path, or host:path for a remote row (the step
+//!   runs over `ssh -T`). The step runs in the session's recorded
+//!   working dir, in the project's `.envrc` devShell when the
+//!   gate holds (decisions 87/88, 95), else the PATH `rushi`. It
+//!   detaches in its own session (the decision 102 `setsid(2)`
+//!   spawn).
 //!
 //! `source` calls `fd` for the directory walk (a hard dependency of the
 //! channel) and replaces the channel's previous `python3` reader.
@@ -222,11 +224,12 @@ enum Command {
         events: bool,
     },
     /// Drive an idle session: one detached `rushi run <row>` call,
-    /// no task (decisions 104, 105). No message is logged. The
-    /// step runs in the session's recorded working dir, detached in
-    /// its own session (the decision 102 `setsid(2)` spawn).
-    /// `rushi` resolves on PATH. Remote rows run the step over
-    /// `ssh -T`.
+    /// no task (decisions 104, 105, 106). No message is logged.
+    /// The step runs in the session's recorded working dir, in the
+    /// project's `.envrc` devShell when the gate holds (decisions
+    /// 87/88, 95), else the PATH `rushi`. It detaches in its own
+    /// session (the decision 102 `setsid(2)` spawn). Remote rows
+    /// run the step over `ssh -T`.
     RunLoop {
         /// The session row: the path, or host:path for a remote row.
         row: String,
