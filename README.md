@@ -34,6 +34,10 @@ action (enter) launches it from the session list.
   it. A different `rushi` carries different configs, so the gate
   stays (decision 106). The action has no keybinding: reach it
   from the action picker (ctrl-x), or bind a key of your own.
+- The `run_loop` step pins its own targets (decision 107):
+  `--sessions-root` is the sessions tree the row came from.
+  `--cwd` is the recorded working dir. A worktree working dir
+  with the tree in the main repo stays in the right tree and dir.
  - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
   selected one. The default view lists the user and assistant

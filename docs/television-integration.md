@@ -1356,11 +1356,15 @@ probe.
     session after the floating pane closes.
 
 72. The new `run_loop` action drives an idle session with a
-    messageless `rushi run` call (decisions 104, 105, 106 in
+    messageless `rushi run` call (decisions 104, 105, 106, 107 in
     `docs/decisions.md`). One detached `rushi run <row>` step, no
     task, no editor. No message is logged. The step keeps the
     `.envrc` devShell gate (decisions 87/88, 95): a different
-    `rushi` carries different configs.
+    `rushi` carries different configs. The step pins
+    `--sessions-root` to the row's sessions tree and `--cwd` to
+    the recorded working dir (decision 107). A worktree working
+    dir with the tree in the main repo stays in the right tree
+    and dir.
 
     The action carries no keybinding. Television's action picker
     lists it, and a user config may bind a key. The same

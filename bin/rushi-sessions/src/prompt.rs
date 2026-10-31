@@ -247,7 +247,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
         let w = cfg.w.clone().unwrap_or_default();
         let sent = if host.is_some() {
             let m64 = b64_encode(m.as_bytes());
-            let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None, cfg.nix_dev);
+            let cmd = remote_run_command(&w, &cfg.rp, Some(&m64), None, None, cfg.nix_dev);
             detached_ssh(cfg, host.unwrap(), &cmd)
         } else {
             // The `--` escape keeps a hyphen-leading message (a
@@ -290,7 +290,7 @@ fn dispatch(cfg: &PromptCfg, name: Option<&str>, m: &str) -> bool {
             } else {
                 None
             };
-            let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r), cfg.nix_dev);
+            let cmd = remote_run_command(&r, n, msg64.as_deref(), Some(&r), None, cfg.nix_dev);
             let ok = detached_ssh(cfg, host, &cmd);
             if !ok {
                 eprintln!("rushi-sessions: nothing created for {n} on {host} (the remote call did not start).");
@@ -339,6 +339,7 @@ pub(crate) fn remote_run_command(
     target: &str,
     msg64: Option<&str>,
     sessions_root: Option<&str>,
+    cwd: Option<&str>,
     nix_dev: bool,
 ) -> String {
     let mut parts = vec![format!("cd {}", remote_quote(workdir))];
@@ -375,6 +376,10 @@ pub(crate) fn remote_run_command(
     if let Some(sr) = sessions_root {
         run.push("--sessions-root".to_string());
         run.push(remote_quote(sr));
+    }
+    if let Some(c) = cwd {
+        run.push("--cwd".to_string());
+        run.push(remote_quote(c));
     }
     parts.push(run.join(" "));
     parts.join(" && ")
@@ -738,16 +743,20 @@ pub(crate) fn send_message(row: Option<&str>, events: bool) -> i32 {
 }
 
 /// The stage 1 entry: run_loop (decision 104, trimmed by 105,
-/// gate restored by 106). Drives an idle session: one detached
-/// `rushi run <row>` call, no task. No message is logged. No
-/// editor, no prompt file. The step runs in the session's
-/// recorded working dir, in the project's `.envrc` devShell when
-/// the gate holds (decisions 87/88, 90, 95), else the PATH
-/// `rushi`. A different `rushi` carries different configs, so
-/// the gate stays (decision 106). The step detaches in its own
-/// session (the decision 102 spawn: the `setsid(2)` syscall in
-/// the fork child, not the macOS-missing `setsid` tool; stdio to
-/// /dev/null). Remote rows run the step over `ssh -T`.
+/// gate restored by 106, pinned by 107). Drives an idle session:
+/// one detached `rushi run <row>` call, no task. No message is
+/// logged. No editor, no prompt file. The step runs in the
+/// session's recorded working dir, in the project's `.envrc`
+/// devShell when the gate holds (decisions 87/88, 90, 95), else
+/// the PATH `rushi`. A different `rushi` carries different configs,
+/// so the gate stays (decision 106). The step pins its own targets
+/// (decision 107): `--sessions-root` is the sessions tree the row
+/// came from, `--cwd` is the recorded working dir. A worktree
+/// working dir with the tree in the main repo stays in the right
+/// tree and dir. The step detaches in its own session (the
+/// decision 102 spawn: the `setsid(2)` syscall in the fork child,
+/// not the macOS-missing `setsid` tool; stdio to /dev/null).
+/// Remote rows run the step over `ssh -T`.
 pub(crate) fn run_loop(row: &str) -> i32 {
     let (host, rp) = split_row(row);
     let w = resolve_workdir(&host, &rp);
@@ -773,11 +782,14 @@ pub(crate) fn run_loop(row: &str) -> i32 {
     };
     let ok = match &cfg.host {
         Some(h) => {
+            let w = cfg.w.clone().unwrap_or_default();
+            let sr = sessions_tree(&cfg.rp);
             let cmd = remote_run_command(
-                &cfg.w.clone().unwrap_or_default(),
+                &w,
                 &cfg.rp,
                 None,
-                None,
+                non_empty(sr.as_str()),
+                non_empty(w.as_str()),
                 cfg.nix_dev,
             );
             let s = detached_ssh(&cfg, h, &cmd);
@@ -793,7 +805,8 @@ pub(crate) fn run_loop(row: &str) -> i32 {
         }
         None => {
             let w = cfg.w.clone().unwrap_or_default();
-            let s = detached_rushi(&cfg, &[&cfg.rp], &w);
+            let args = run_loop_args(&cfg.rp, &w);
+            let s = detached_rushi(&cfg, &args.iter().map(String::as_str).collect::<Vec<_>>(), &w);
             if s {
                 println!("loop poked for {}", cfg.rp);
             } else {
@@ -1014,6 +1027,48 @@ fn parent_dir(rp: &str) -> String {
         .unwrap_or_default()
 }
 
+/// A `Some(s)` when the dir is non-empty, else `None` (the kernel
+/// pin flags are skipped on empty values: a bare session name, a
+/// failed remote resolution).
+fn non_empty(s: &str) -> Option<&str> {
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
+}
+
+/// The sessions tree a row's session dir sits in (decision 107):
+/// `dirname(rp)`, the same tree the local `new_session` step passes
+/// as `--sessions-root` (`<project>/sessions`). Empty when `rp`
+/// carries no dir part (a bare session name).
+fn sessions_tree(rp: &str) -> String {
+    Path::new(rp)
+        .parent()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+/// The kernel pin flags of the `run_loop` step (decision 107): the
+/// row, then `--sessions-root` for the tree the row came from,
+/// then `--cwd` for the recorded working dir. The two go together:
+/// the kernel's default working dir when `--sessions-root` is set
+/// is that flag's parent (the project root, not a worktree working
+/// dir). Empty values are skipped.
+fn run_loop_args(rp: &str, w: &str) -> Vec<String> {
+    let mut args = vec![rp.to_string()];
+    let sr = sessions_tree(rp);
+    if !sr.is_empty() {
+        args.push("--sessions-root".to_string());
+        args.push(sr);
+    }
+    if !w.is_empty() {
+        args.push("--cwd".to_string());
+        args.push(w.to_string());
+    }
+    args
+}
+
 /// Run a remote shell command, return its trimmed stdout (empty on
 /// failure). Uses the same ssh flags as the channel's remote reader.
 fn remote_stdout(host: &str, cmd: &str) -> String {
@@ -1099,10 +1154,11 @@ mod tests {
             "my session",
             Some("QQ=="),
             Some("/r"),
+            None,
             false,
         );
         assert_eq!(c, "cd '/w/with space' && rushi run 'my session' \"$(printf %s QQ== | base64 -d)\" --sessions-root '/r'");
-        let c2 = remote_run_command("/w", "s", None, None, false);
+        let c2 = remote_run_command("/w", "s", None, None, None, false);
         assert_eq!(c2, "cd '/w' && rushi run 's'");
     }
 
@@ -1115,11 +1171,55 @@ mod tests {
             "my session",
             Some("QQ=="),
             Some("/r"),
+            None,
             true,
         );
         assert_eq!(c, "cd '/w/with space' && nix develop -c rushi run 'my session' \"$(printf %s QQ== | base64 -d)\" --sessions-root '/r'");
-        let c2 = remote_run_command("/w", "s", None, None, true);
+        let c2 = remote_run_command("/w", "s", None, None, None, true);
         assert_eq!(c2, "cd '/w' && nix develop -c rushi run 's'");
+    }
+
+    /// The pinned remote `run_loop` step (decision 107): the
+    /// `--sessions-root` and `--cwd` flags follow the target.
+    #[test]
+    fn remote_command_pinned_run_loop_shape() {
+        let c = remote_run_command("/wt/f", "/m/sessions/s", None, Some("/m/sessions"), Some("/wt/f"), false);
+        assert_eq!(
+            c,
+            "cd '/wt/f' && rushi run '/m/sessions/s' --sessions-root '/m/sessions' --cwd '/wt/f'"
+        );
+        let c2 = remote_run_command("/wt/f", "/m/sessions/s", None, Some("/m/sessions"), Some("/wt/f"), true);
+        assert_eq!(
+            c2,
+            "cd '/wt/f' && nix develop -c rushi run '/m/sessions/s' --sessions-root '/m/sessions' --cwd '/wt/f'"
+        );
+    }
+
+    /// The session dir's tree is its parent (the `<project>/sessions`
+    /// dir of the local new_session step).
+    #[test]
+    fn sessions_tree_shapes() {
+        assert_eq!(sessions_tree("/m/sessions/s"), "/m/sessions");
+        assert_eq!(sessions_tree("s"), "");
+    }
+
+    /// The pin flags go together: the row, the tree, the working dir.
+    /// A bare name and an empty working dir carry no flags.
+    #[test]
+    fn run_loop_args_pin_the_tree_and_dir() {
+        let a = run_loop_args("/m/sessions/s", "/wt/f");
+        let want = vec![
+            "/m/sessions/s",
+            "--sessions-root",
+            "/m/sessions",
+            "--cwd",
+            "/wt/f",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert_eq!(a, want);
+        assert_eq!(run_loop_args("s", ""), vec![String::from("s")]);
     }
 
     /// Message mode (no --sessions-root) escapes the task with
@@ -1127,7 +1227,7 @@ mod tests {
     /// positional on kernels without allow_hyphen_values.
     #[test]
     fn remote_command_message_mode_escapes_the_task() {
-        let c = remote_run_command("/w", "s", Some("QQ=="), None, false);
+        let c = remote_run_command("/w", "s", Some("QQ=="), None, None, false);
         assert_eq!(
             c,
             "cd '/w' && rushi run 's' -- \"$(printf %s QQ== | base64 -d)\""

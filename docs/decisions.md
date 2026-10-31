@@ -1,3 +1,42 @@
+## 107. The run_loop step pins its own `--sessions-root` and `--cwd` (2026-10-30)
+
+The `run_loop` step ran `rushi run <row>` bare from the recorded
+working dir. The kernel's `rushi run` carries `--sessions-root`
+and `--cwd` overrides. Without them, the step leans on the
+kernel's config discovery at the call site. A worktree working
+dir with the session tree in the main repo is where that leans
+wrong. The tree and the dir the loop works in are decided by the
+config, not by the row.
+
+Revisions:
+
+- The local step becomes `rushi run <row> --sessions-root
+  <tree> --cwd <w>`. The tree is `dirname(row)`: the sessions
+  tree the row came from. It is the same value the local
+  `new_session` step passes. The working dir is the session's
+  recorded `cwd` value. The flags are skipped when a value is
+  empty (a bare session name, a failed remote resolution).
+- The two flags go together. The kernel's default working dir
+  when `--sessions-root` is set is that flag's parent (the
+  project root, not a worktree working dir). Passing the tree
+  without the dir moves the loop to the wrong dir, in silence.
+- The remote step carries both flags too: `cd '<w>' && rushi
+  run '<row>' --sessions-root '<tree>' --cwd '<w>'`. The
+  devShell launch passes them through its arg list.
+- The channel test locks the pin wording. The Nix attrset and
+  the repo TOML carry the same description, leaf for leaf.
+
+Verification: `cargo test -p rushi-sessions` is green, with the
+new shape tests for the local arg list and the remote command.
+The Nix attrset decodes to the same value as the repo TOML,
+leaf for leaf.
+
+Out of scope: the same gap in `send_message` (its step also
+runs `rushi run <row>` bare, and the kernel's default-cwd rule
+applies there too). The remote `new_session` step passes the
+project root as its `--sessions-root`. The local one passes
+`<root>/sessions`. That mismatch needs a look on its own.
+
 ## 106. The run_loop action restores the `.envrc` devShell gate (2026-10-30)
 
 Decision 105 removed the devShell gate from `run_loop`. The user

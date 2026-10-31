@@ -282,6 +282,13 @@ fn session_channel_toml_parses() {
         "the 106 restore: the gate wording is back: {rld}"
     );
     assert!(!rld.contains("run.idle"), "no liveness mechanism: {rld}");
+    // The 107 pin: the call carries its own `--sessions-root` and
+    // `--cwd` targets (the worktree working dir case).
+    assert!(
+        rld.contains("sessions-root"),
+        "the 107 pin names the sessions root: {rld}"
+    );
+    assert!(rld.contains("--cwd"), "the 107 pin names the cwd: {rld}");
     for (k, val) in v["keybindings"].as_table().unwrap() {
         assert_ne!(
             val.as_str().unwrap(),
