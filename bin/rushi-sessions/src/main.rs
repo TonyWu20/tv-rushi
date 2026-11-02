@@ -26,9 +26,9 @@
 //!   recorded working dir, and the two truncated message rows of the
 //!   key table (the last user message, the last on-idle assistant
 //!   message, each clipped to 400 chars, decision 101). The
-//!   `--events` flag renders the recent-events view: the card
-//!   header plus the `recent-events` table (the last 20 meaningful
-//!   events, newest first, decisions 99 and 100). When
+//!   `--events` flag renders the recent-events view: the bare
+//!   `recent-events` table, the last 20 meaningful events, newest
+//!   first (decisions 99, 100, 102). When
 //!   `bat` is on PATH the document is
 //!   colored with it ($RUSHI_PREVIEW_THEME selects the theme,
 //!   default "Catppuccin Macchiato"); otherwise plain markdown is
@@ -168,9 +168,9 @@ enum Command {
         /// card from stdin.
         #[arg(long)]
         plain: bool,
-        /// Render the `--events` view instead of the card: the card
-        /// header plus the `recent-events` table (the last 20
-        /// meaningful events, newest first, decisions 99 and 100).
+        /// Render the `--events` view instead of the card: the bare
+        /// `recent-events` table, the last 20 meaningful events,
+        /// newest first (decisions 99, 100, 102).
         #[arg(long)]
         events: bool,
     },

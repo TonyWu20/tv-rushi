@@ -173,9 +173,10 @@ cached = true
 # catppuccin tv theme). The card key table closes with two
 # truncated message rows: the last user message and the last
 # on-idle assistant message, each clipped to 400 chars (decision
-# 101). The events view shows the key table plus the recent-events
-# table (the last 20 meaningful events, newest first). Both fall
-# back to plain markdown when bat is absent. Home-manager users
+# 101). The events view is the bare recent-events table: the last
+# 20 meaningful events, newest first, with no card header
+# (decisions 100, 102). Both fall back to plain markdown
+# when bat is absent. Home-manager users
 # pick another renderer with
 # programs."rushi-sessions".sessionPreviewer: the channel then pipes
 # the plain document (--plain) into that command line. This repo

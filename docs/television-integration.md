@@ -297,10 +297,11 @@ Decisions (user, 2026-10-04):
   The card view carries no message sections. The messages ride
   the header's table rows (decision 101).
 
-  The recent-events view has a `recent-events` table with `ts`,
-  `type` and `brief` columns. The table lists the last 20
-  meaningful events, newest first (decision 100). An empty
-  path renders the section with a note.
+  The recent-events view is the bare `recent-events` table
+  (decision 102): no card title, no key table, no message rows.
+  The table has `ts`, `type` and `brief` columns. It lists the
+  last 20 meaningful events, newest first (decision 100). An
+  empty path renders the section with a note.
 
   The document renderer is configurable (decision 98). The
   option `programs."rushi-sessions".sessionPreviewer` picks it,

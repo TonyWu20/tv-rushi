@@ -242,6 +242,27 @@ devShell) still works.
 Out of scope: a `nohup`-based tool fallback for non-Unix
 platforms. The crate targets Unix.
 
+## 102. The recent-events view is the bare table (2026-10-29)
+
+The `--events` view of decisions 99 and 101 rendered the card
+header and key table above the recent-events table. The header
+duplicated the panel header and filled the preview panel. The
+user drops it from the view.
+
+Decision:
+
+- The `--events` view is now just the `## recent-events` table.
+  The table holds the last 20 meaningful events, newest first
+  (decision 100). No card title, no key table, no message rows.
+- The view skips the message scans, the git probes and the usage
+  probe. Only the active-path event scan runs.
+- The card view is unchanged (decision 101). The remote ssh call
+  is unchanged.
+
+Verification: the unit test `events_view_has_no_card_header`
+pins the headerless shape. 136 unit tests green, plus the 32
+integration tests.
+
 ## 101. The card shows truncated message rows instead of full-message sections (2026-10-29)
 
 The full-text message sections of decision 97 cost panel space.

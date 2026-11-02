@@ -9,8 +9,9 @@
 //! with two truncated message rows (decision 101): the full last
 //! user message and the last on-idle assistant message, each
 //! clipped to 400 chars on one line. The `--events` view is the
-//! recent-events table: the card header plus the last 20 meaningful
-//! events of the active path (decision 99).
+//! bare recent-events table (decision 102): the last 20 meaningful
+//! events of the active path, newest first, with no card header
+//! (decisions 99, 100).
 use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -77,6 +78,15 @@ pub fn preview(
         .map(|(_, v)| v)
         .collect();
 
+    // The `--events` view is the bare recent-events table
+    // (decision 102): no card header, no key table. It skips the
+    // message scans and the git and usage probes.
+    if events_view {
+        let card = render_events_view(&events);
+        print_document(&card, plain);
+        return;
+    }
+
     let (think, last_user) = card_scans(&events);
     let last_assistant = last_idle_assistant(&events, status);
 
@@ -95,45 +105,33 @@ pub fn preview(
         let used = in_tok.saturating_add(out_tok);
         usage_line(used, context_window(workdir.as_deref()))
     });
-    let card = if events_view {
-        render_events_view(
-            status,
-            name,
-            repo,
-            host.as_deref(),
-            branch.as_deref(),
-            worktree.as_deref(),
-            &pid,
-            phase,
-            &think,
-            last,
-            &last_user,
-            &last_assistant,
-            &events,
-            usage.as_deref(),
-        )
-    } else {
-        render_card(
-            status,
-            name,
-            repo,
-            host.as_deref(),
-            branch.as_deref(),
-            worktree.as_deref(),
-            &pid,
-            phase,
-            &think,
-            last,
-            &last_user,
-            &last_assistant,
-            usage.as_deref(),
-        )
-    };
+    let card = render_card(
+        status,
+        name,
+        repo,
+        host.as_deref(),
+        branch.as_deref(),
+        worktree.as_deref(),
+        &pid,
+        phase,
+        &think,
+        last,
+        &last_user,
+        &last_assistant,
+        usage.as_deref(),
+    );
+    print_document(&card, plain);
+}
 
-    // The plain card for a channel-side renderer (the `--plain`
-    // flag): no bat pass, the pipe owns the colors.
+/// The document's output step: the `--plain` flag prints the
+/// document as is (a channel-side renderer owns the colors).
+/// Otherwise the optional `bat` pass colors the document, with the
+/// plain print as the fallback.
+fn print_document(document: &str, plain: bool) {
+    // The plain document for a channel-side renderer (the
+    // `--plain` flag): no bat pass, the pipe owns the colors.
     if plain {
-        print!("{}", card);
+        print!("{}", document);
         return;
     }
 
@@ -154,7 +152,7 @@ pub fn preview(
             if let Some(mut c) = child.take() {
                 use std::io::Write;
                 if let Some(mut stdin) = c.stdin.take() {
-                    let _ = stdin.write_all(card.as_bytes());
+                    let _ = stdin.write_all(document.as_bytes());
                 }
                 match c.wait_with_output() {
                     Ok(o) if o.status.success() && !o.stdout.is_empty() => {
@@ -164,9 +162,9 @@ pub fn preview(
                     _ => {}
                 }
             }
-            print!("{}", card);
+            print!("{}", document);
         }
-        None => print!("{}", card),
+        None => print!("{}", document),
     }
 }
 
@@ -468,43 +466,16 @@ pub(crate) fn render_card(
 /// first (the newest on the panel's top edge, decision 100).
 const EVENTS_VIEW_ROWS: usize = 20;
 
-/// The `--events` preview view for one session (decision 99): the
-/// card header plus the `recent-events` table. The table holds the
-/// last 20 meaningful events of the active path, newest first
-/// (decision 100). The header carries the two truncated message
-/// rows (decision 101). An empty path renders the section with a
-/// note, so the cycled view never shows a blank panel.
-pub(crate) fn render_events_view(
-    status: &str,
-    name: &str,
-    repo: &str,
-    host: Option<&str>,
-    branch: Option<&str>,
-    worktree: Option<&str>,
-    pid: &str,
-    phase: &str,
-    think: &str,
-    last: &str,
-    last_user: &str,
-    last_assistant: &str,
-    events: &[Value],
-    usage: Option<&str>,
-) -> String {
-    let mut out = card_header_lines(
-        status,
-        name,
-        repo,
-        host,
-        branch,
-        worktree,
-        pid,
-        phase,
-        think,
-        last,
-        last_user,
-        last_assistant,
-        usage,
-    );
+/// The `--events` preview view (decisions 99, 102): the bare
+/// `recent-events` table, with no card header and no key table.
+/// The table holds the last 20 meaningful events of the active
+/// path, newest first (decision 100). An empty path renders the
+/// section with a note, so the cycled view never shows a blank
+/// panel.
+pub(crate) fn render_events_view(events: &[Value]) -> String {
+    let mut out: Vec<String> = Vec::new();
+    out.push("## recent-events".into());
+    out.push(String::new());
     // The last 40 events, reduced to (ts, type, brief), then the
     // last 20. The rows print newest first (decision 100); a ts
     // tie keeps the reverse log order within the tie.
@@ -527,9 +498,6 @@ pub(crate) fn render_events_view(
         .collect();
     let recent: Vec<&(String, String, String)> =
         tuples.iter().skip(tuples.len().saturating_sub(EVENTS_VIEW_ROWS)).collect();
-    out.push(String::new());
-    out.push("## recent-events".into());
-    out.push(String::new());
     if recent.is_empty() {
         out.push("(no meaningful events)".into());
     } else {
@@ -641,22 +609,7 @@ mod tests {
             "ts": "2026-10-01T01:30:59Z",
             "content": "hi"
         })];
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &evts,
-            None,
-        );
+        let card = render_events_view(&evts);
         let lines: Vec<&str> = card.lines().collect();
         let h = lines
             .iter()
@@ -746,22 +699,7 @@ mod tests {
             serde_json::json!({"type": "ext_status", "id": "loop_phase", "value": "wait"}),
             serde_json::json!({"type": "user_message", "content": "hi"}),
         ];
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &evts,
-            None,
-        );
+        let card = render_events_view(&evts);
         let lines: Vec<&str> = card.lines().collect();
         let h = lines
             .iter()
@@ -782,22 +720,7 @@ mod tests {
             "name": "bash",
             "arguments": {"command": "echo a|b"}
         })];
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &evts,
-            None,
-        );
+        let card = render_events_view(&evts);
         assert!(card.contains(r"| bash echo a\|b |"), "{card}");
     }
 
@@ -1195,22 +1118,7 @@ mod tests {
                 serde_json::json!({"type": "user_message", "content": format!("m{i}")})
             })
             .collect();
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "123",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &evts,
-            None,
-        );
+        let card = render_events_view(&evts);
         let lines: Vec<&str> = card.lines().collect();
         let h = lines
             .iter()
@@ -1224,50 +1132,21 @@ mod tests {
     }
 
     #[test]
-    fn events_view_carries_no_message_sections() {
+    fn events_view_has_no_card_header() {
         let evts: Vec<Value> =
             vec![serde_json::json!({"type": "user_message", "content": "hi"})];
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "123",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &evts,
-            None,
-        );
+        let card = render_events_view(&evts);
+        // Decision 102: the view is the bare table. The card
+        // title, key table and message rows are gone.
         assert!(card.contains("## recent-events"), "{card}");
-        // The message sections of decision 97 are gone. The
-        // messages ride the header's table rows (decision 101).
-        assert!(!card.contains("## last-user-message"), "{card}");
-        assert!(!card.contains("## last-assistant-message"), "{card}");
+        assert!(card.contains("| ts | type | brief |"), "{card}");
+        assert!(!card.contains("# rushi-session"), "{card}");
+        assert!(!card.contains("| key | value |"), "{card}");
     }
 
     #[test]
     fn events_view_empty_path_renders_the_note() {
-        let card = render_events_view(
-            "IDLE",
-            "foo",
-            "repoR",
-            None,
-            None,
-            None,
-            "123",
-            "tools",
-            "",
-            "10-02 14:11",
-            "",
-            "",
-            &[],
-            None,
-        );
+        let card = render_events_view(&[]);
         let lines: Vec<&str> = card.lines().collect();
         let h = lines
             .iter()
