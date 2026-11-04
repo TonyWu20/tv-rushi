@@ -5,7 +5,10 @@
 //! the card: the session key table with a `branch` row (the git
 //! branch of the session's recorded working dir, probed with git at
 //! render time) and a `worktree` row (the one-line `git status`
-//! brief of that worktree, probed the same way). The table closes
+//! brief of that worktree, probed the same way). The table carries
+//! a `compact count` row (the number of the session's compact
+//! generations, the `v<N>.md` files of the session's `handoff`
+//! dir) when the dir holds a generation file. The table closes
 //! with two truncated message rows (decision 101): the full last
 //! user message and the last on-idle assistant message, each
 //! clipped to 400 chars on one line. The `--events` view is the
@@ -105,6 +108,10 @@ pub fn preview(
         let used = in_tok.saturating_add(out_tok);
         usage_line(used, context_window(workdir.as_deref()))
     });
+    // The compact generations of the session's handoff dir
+    // (decision 108). The remote binary runs this same probe on the
+    // remote session dir, over ssh.
+    let compacts = compact_count(Path::new(path));
     let card = render_card(
         status,
         name,
@@ -119,6 +126,7 @@ pub fn preview(
         &last_user,
         &last_assistant,
         usage.as_deref(),
+        compacts,
     );
     print_document(&card, plain);
 }
@@ -339,6 +347,35 @@ fn git_status_brief(dir: &Path) -> Option<String> {
     }
 }
 
+/// The session's compact generations: the count of the `v<N>.md`
+/// files in the session's `handoff` dir. The kernel writes one
+/// generation file per compact. The card's `compact count` key
+/// carries this count (decision 108). None when the dir is missing
+/// or unreadable, or holds no generation file.
+fn compact_count(path: &Path) -> Option<usize> {
+    let dir = fs::read_dir(Path::new(path).join("handoff")).ok()?;
+    let n = dir
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && is_handoff_gen(&e.file_name()))
+        .count();
+    if n > 0 {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+/// Whether `name` is a generation file of the handoff dir: `v` plus
+/// one or more digits plus `.md` (the kernel's `v<N>.md` shape).
+fn is_handoff_gen(name: &std::ffi::OsStr) -> bool {
+    let n = name.to_str().unwrap_or("");
+    let inner = n
+        .strip_prefix('v')
+        .and_then(|s| s.strip_suffix(".md"))
+        .unwrap_or("");
+    !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit())
+}
+
 /// The clip size of the card's two message rows in characters
 /// (decision 101): the 400-char clip of decision 96. The clip
 /// flattens newlines to spaces, so the row stays one line in the
@@ -354,7 +391,11 @@ const MESSAGE_ROW_CLIP: usize = 400;
 /// status brief of that worktree, or None) renders a `worktree`
 /// row under the branch row, or under the host slot. `usage` is the
 /// pre-rendered `in+out / context` line (decision 88), or None.
-/// `last_user` and `last_assistant` render the two truncated
+/// `compact_count` (the number of the session's compact generations,
+/// the `v<N>.md` files of the session's `handoff` dir, decision
+/// 108) renders a `compact count` row under the usage row, or under
+/// the updated row when usage is absent. An absent count omits the
+/// row. `last_user` and `last_assistant` render the two truncated
 /// message rows at the table end (decision 101): the full last
 /// user message, and the last on-idle assistant message, each
 /// clipped to `MESSAGE_ROW_CLIP` chars on one line. An empty
@@ -373,6 +414,7 @@ fn card_header_lines(
     last_user: &str,
     last_assistant: &str,
     usage: Option<&str>,
+    compact_count: Option<usize>,
 ) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     out.push("# rushi-session".into());
@@ -399,6 +441,12 @@ fn card_header_lines(
     keys.push(("updated", md_cell(last)));
     if let Some(u) = usage {
         keys.push(("usage", md_cell(u)));
+    }
+    // The compact generations of the session's handoff dir
+    // (decision 108). The count is 0 or a missing dir when absent:
+    // the row omits itself.
+    if let Some(n) = compact_count {
+        keys.push(("compact count", md_cell(&n.to_string())));
     }
     // The two truncated message rows close the table (decision
     // 101). The clip keeps each on one line.
@@ -442,6 +490,7 @@ pub(crate) fn render_card(
     last_user: &str,
     last_assistant: &str,
     usage: Option<&str>,
+    compact_count: Option<usize>,
 ) -> String {
     let out = card_header_lines(
         status,
@@ -457,6 +506,7 @@ pub(crate) fn render_card(
         last_user,
         last_assistant,
         usage,
+        compact_count,
     );
     out.join("\n") + "\n"
 }
@@ -536,6 +586,7 @@ mod tests {
             "u",
             "a",
             None,
+            None,
         );
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
@@ -560,6 +611,7 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
+            None,
             None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| host |")));
@@ -650,6 +702,7 @@ mod tests {
             "line one\nline two",
             &long,
             None,
+            None,
         );
         // Decision 101: the messages are the truncated table rows.
         // The user row keeps the newline flattened to a space. The
@@ -683,6 +736,7 @@ mod tests {
             "10-02 14:11",
             "",
             "",
+            None,
             None,
         );
         // Decision 101: an empty message omits its table row.
@@ -776,6 +830,7 @@ mod tests {
             "u",
             "a",
             None,
+            None,
         );
         let lines: Vec<&str> = card.lines().collect();
         let i = lines
@@ -801,6 +856,7 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
+            None,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -833,8 +889,124 @@ mod tests {
             "u",
             "a",
             None,
+            None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| worktree |")));
+    }
+
+    /// One session dir in a temp dir, keyed against the sibling
+    /// tests of this binary (same pid, parallel threads).
+    fn sess_dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("rushi-compact-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn compact_count_probe_counts_the_generation_files() {
+        let d = sess_dir("probe");
+        let handoff = d.join("handoff");
+        std::fs::create_dir_all(&handoff).unwrap();
+        std::fs::write(handoff.join("v1.md"), "one").unwrap();
+        std::fs::write(handoff.join("v2.md"), "two").unwrap();
+        std::fs::write(handoff.join("v3.md"), "three").unwrap();
+        assert_eq!(compact_count(&d), Some(3));
+        // The non-generation files stay out of the count.
+        std::fs::write(handoff.join("notes.md"), "x").unwrap();
+        std::fs::write(handoff.join("v1.md.bak"), "x").unwrap();
+        std::fs::write(handoff.join("v.md"), "x").unwrap();
+        std::fs::write(handoff.join("v1x.md"), "x").unwrap();
+        std::fs::write(handoff.join("xv2.md"), "x").unwrap();
+        assert_eq!(compact_count(&d), Some(3));
+        // An empty handoff dir and a missing dir both omit the row.
+        let e = sess_dir("empty");
+        std::fs::create_dir_all(e.join("handoff")).unwrap();
+        assert_eq!(compact_count(&e), None);
+        let m = sess_dir("missing");
+        assert_eq!(compact_count(&m), None);
+        let _ = std::fs::remove_dir_all(&d);
+        let _ = std::fs::remove_dir_all(&e);
+        let _ = std::fs::remove_dir_all(&m);
+    }
+
+    #[test]
+    fn card_compact_count_row_sits_under_usage() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            Some("50k / 200k"),
+            Some(3),
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| *l == "| usage | 50k / 200k |")
+            .expect("usage row");
+        assert_eq!(lines[i + 1], "| compact count | 3 |");
+    }
+
+    #[test]
+    fn card_compact_count_row_sits_under_updated_when_no_usage() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            None,
+            Some(1),
+        );
+        let lines: Vec<&str> = card.lines().collect();
+        let i = lines
+            .iter()
+            .position(|l| *l == "| updated | 10-02 14:11 |")
+            .expect("updated row");
+        assert_eq!(lines[i + 1], "| compact count | 1 |");
+        // The row stays above the message rows.
+        let j = lines
+            .iter()
+            .position(|l| *l == "| compact count | 1 |")
+            .expect("compact count row");
+        assert_eq!(lines[j + 1], "| last-user-message | u |");
+    }
+
+    #[test]
+    fn card_without_compact_count_has_no_row() {
+        let card = render_card(
+            "IDLE",
+            "foo",
+            "repoR",
+            None,
+            None,
+            None,
+            "123",
+            "tools",
+            "",
+            "10-02 14:11",
+            "u",
+            "a",
+            None,
+            None,
+        );
+        assert!(!card.lines().any(|l| l.starts_with("| compact count |")));
     }
 
     #[test]
@@ -852,6 +1024,7 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
+            None,
             None,
         );
         let lines: Vec<&str> = card.lines().collect();
@@ -883,6 +1056,7 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
+            None,
             None,
         );
         assert!(!card.lines().any(|l| l.starts_with("| branch |")));
@@ -1069,6 +1243,7 @@ mod tests {
             "u",
             "a",
             None,
+            None,
         );
         // Decision 101: the messages ride the key table rows. The
         // message sections of decision 97 are gone. Decision 99:
@@ -1095,6 +1270,7 @@ mod tests {
             "10-02 14:11",
             "u",
             "a",
+            None,
             None,
         );
         // The message rows close the key table: the last data rows,

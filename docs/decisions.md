@@ -1,3 +1,37 @@
+## 108. The card carries a `compact count` key (2026-11-03)
+
+The kernel writes one compact summary generation per compaction
+to `<session dir>/handoff/v<N>.md`. The card key table showed
+none of it. The user wanted the compact generation count on the
+card.
+
+Revisions:
+
+- The preview probes the session's `handoff` dir and counts the
+  `v<N>.md` generation files. The `compact count` key carries the
+  count. It renders under the `usage` row, or under `updated`
+  when the card omits usage.
+- A missing `handoff` dir, or a dir with no generation file,
+  omits the row. The rule matches the other optional keys
+  (`host`, `branch`, `worktree`, `think`, `usage`).
+- The count is the file count, not the highest `N`. The kernel
+  numbers the generations densely, so the two agree. The count
+  also survives a deleted or missing middle file.
+- The probe lives in the card render (`preview.rs`). The remote
+  binary runs the same probe on the remote session dir, over
+  ssh.
+
+Verification: `cargo test -p rushi-sessions` is green. The new
+probe test covers the `v<N>.md` shape, the non-matching files,
+and the empty and missing dirs. The card test fixes the row
+position under `usage` and under `updated`, and the omission.
+A binary run on the live tree prints the right count on every
+session that holds handoffs. It omits the row on the sessions
+without handoffs.
+
+Out of scope: the events channel and the events-branch channel
+render no card key table, so they carry no such key.
+
 ## 107. The run_loop step pins its own `--sessions-root` and `--cwd` (2026-10-30)
 
 The `run_loop` step ran `rushi run <row>` bare from the recorded
