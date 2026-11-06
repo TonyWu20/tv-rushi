@@ -40,7 +40,10 @@ action (enter) launches it from the session list.
   with the tree in the main repo stays in the right tree and dir.
  - Fuzzy-search a session's `events.jsonl` with enter. The `browse_events_v` action (alt-e) opens it below the newest pane instead (a -v split, a horizontal divider). A nested
   `tv rushi-sessions-events` lists the entries and previews the
-  selected one. The default view lists the user and assistant
+  selected one. The nested tv titles its input box with the row's
+  `repo/session-name` (the `--input-header` flag). The pane then
+  shows which session it lists. Remote rows keep the host prefix in
+  the title. The default view lists the user and assistant
   messages, newest first. Ctrl+S cycles to the `All` view (every
   entry). Inside tmux, a pane to the right of tv runs it.
   Outside tmux, it runs in this terminal. Remote rows run it over

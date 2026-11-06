@@ -429,7 +429,11 @@ Decisions (user, 2026-10-04):
     `events.jsonl`. Inside tmux a pane split to the right of tv runs
     it (`-h`, like `open`). Outside tmux the fork cds to the session
     dir and runs the nested tv; the outer tv pauses and resumes on
-    exit. Remote rows run it over `ssh -t` on the remote host.
+    exit. Remote rows run it over `ssh -t` on the remote host. The
+    nested tv carries `--input-header` with the row's repo and
+    session name (`repo/session-name`, the host prefix kept for
+    remote rows), so the pane shows which session it lists
+    (decision 109).
   - The events channel source is `rushi-sessions events`. It prints
     one TSV row per shown entry: seq (the 1-based line number of
     the entry in `events.jsonl`), type, ts (local wall-clock

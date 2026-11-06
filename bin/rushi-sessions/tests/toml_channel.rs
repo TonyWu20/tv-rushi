@@ -179,6 +179,57 @@ fn session_channel_toml_parses() {
         "open_dir project dir: {od}"
     );
 
+    // browse_events and browse_events_v title the nested events tv
+    // with `--input-header`: the row's repo and session name, so the
+    // pane shows which session it lists. The repo column (host-
+    // prefixed for remote rows) and the name column arrive as the
+    // shell $3 and $2 from the `{split:\t:2}` and `{split:\t:1}`
+    // tokens, and the body computes `hdr="$3/$2"`. The flag reaches
+    // the nested tv in every branch: the ssh remote command, both
+    // tmux pane commands, and the plain fork (four flag sites per
+    // action). The fork branch stays plain-quoted: the backslash-
+    // escaped quotes belong to the ssh and tmux double-quoted
+    // contexts only.
+    for a in ["browse_events", "browse_events_v"] {
+        let c = v["actions"][a]["command"].as_str().unwrap();
+        assert!(
+            c.contains("hdr=\"$3/$2\""),
+            "{a} computes the header from the repo and name columns: {c}"
+        );
+        assert!(
+            c.contains("'{split:\t:6}'"),
+            "{a} keeps the path token: {c}"
+        );
+        assert!(
+            c.contains("'{split:\t:1}'"),
+            "{a} takes the name token: {c}"
+        );
+        assert!(
+            c.contains("'{split:\t:2}'"),
+            "{a} takes the repo token: {c}"
+        );
+        assert!(
+            c.contains("'{split:\t:6}' '{split:\t:1}' '{split:\t:2}'"),
+            "{a} passes the tokens in order: {c}"
+        );
+        assert_eq!(
+            c.matches("--input-header").count(),
+            4,
+            "{a} flags the nested tv in every branch: {c}"
+        );
+        // The plain fork keeps the unescaped form (no backslashes):
+        // a stray one would make the shell cd into a quoted name.
+        assert!(
+            c.contains("cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""),
+            "{a} the fork branch stays plain-quoted: {c}"
+        );
+        let d = v["actions"][a]["description"].as_str().unwrap();
+        assert!(
+            d.contains("--input-header"),
+            "{a} description names the flag: {d}"
+        );
+    }
+
     // Decision 72: the send is one detached `rushi run` call for both
     // loop states. The kernel branches on the session lock itself, so
     // no action probes the loop pid and no action carries the dropped

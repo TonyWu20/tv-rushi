@@ -1,3 +1,45 @@
+## 109. The browse_events actions title the nested events tv with the session name (2026-11-06)
+
+The `browse_events` (enter) and `browse_events_v` (alt-e) actions
+launch the nested `rushi-sessions-events` tv from the session list.
+With two or more events panes open, the pane content is not enough
+to say which session the pane lists. The user wanted the session
+named in the pane.
+
+Revisions:
+
+- The two action commands take two more template tokens, beside the
+  existing `{split:\t:6}` (the path column). Token `{split:\t:1}`
+  is the name column. Token `{split:\t:2}` is the repo column
+  (host-prefixed for remote rows). The shell body computes
+  `hdr="$3/$2"` and passes `--input-header "$hdr"` to the nested
+  `tv rushi-sessions-events`. The flag titles the input box, so
+  the pane shows `repo/session-name`. Remote rows keep the host
+  prefix (`host:repo/name`).
+- The flag reaches the nested tv in every branch. It covers the ssh
+  remote command, both tmux pane commands, and the plain fork. The
+  pane and ssh commands keep their backslash-escaped quotes inside
+  the double-quoted contexts. The plain fork stays plain-quoted.
+- The `--input-header` value is a television MultiTemplate. The
+  repo and name text carries no template braces, so it renders
+  verbatim.
+
+Verification: `cargo test -p rushi-sessions` is green (172
+tests). The new channel-test lock pins the `hdr="$3/$2"`
+computation, the three tokens in order, the four flag sites per
+action, and the plain-quoted fork branch. Stub-argv runs of all
+three branches (ssh, tmux, fork) show the flag on the nested tv in
+each. A pty run of the real `tv 0.15.9` with the flag prints the
+title in the input box border:
+`╭── tv-rushi/<session> ──╮`. The Nix attrset decodes to the same
+value as the repo TOML, leaf for leaf (71 leaves).
+
+Out of scope: the events channel's `branch_view` action launches
+the nested `rushi-sessions-events-branch` tv the same way and
+carries no such title yet. The branch pane sits inside an events
+pane that already names its session, so the gap is smaller. It
+needs its own decision when the user wants it.
+
 ## 108. The card carries a `compact count` key (2026-11-03)
 
 The kernel writes one compact summary generation per compaction

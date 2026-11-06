@@ -456,11 +456,21 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
     # single-quote string does not interpolate them. The body stays
     # brace-free for the same reason as open: a stray {group} would
     # break the television template.
-    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
+    #
+    # The nested tv carries `--input-header` with the row's repo and
+    # name columns (the television flag that titles the input box):
+    # `repo/session-name`. The tokens `{split:@TAB@:2}` (the repo
+    # column, host-prefixed for remote rows) and `{split:@TAB@:1}`
+    # (the name column) feed the shell $3 and $2, so the header is
+    # `hdr="$3/$2"`. The flag reaches the nested tv in every branch:
+    # the ssh remote command, both tmux pane commands, and the plain
+    # fork. A remote row's header keeps the host prefix, so the pane
+    # names the host and the repo.
+    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). The nested tv carries --input-header with the row's repo and session name, so the pane shows which session it lists. Inside tmux, a new pane to the right of the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events"; else tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; fi; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; hdr="$3/$2"; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -h -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; else tmux split-window -h -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; fi; else cd "$rp" && tv rushi-sessions-events --input-header "$hdr"; fi; fi' sh '{split:@TAB@:6}' '{split:@TAB@:1}' '{split:@TAB@:2}'
     '';
   };
 
@@ -477,11 +487,21 @@ sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" 
     # single-quote string does not interpolate them. The body stays
     # brace-free for the same reason as open: a stray {group} would
     # break the television template.
-    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). Inside tmux, a new pane below the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
+    #
+    # The nested tv carries `--input-header` with the row's repo and
+    # name columns (the television flag that titles the input box):
+    # `repo/session-name`. The tokens `{split:@TAB@:2}` (the repo
+    # column, host-prefixed for remote rows) and `{split:@TAB@:1}`
+    # (the name column) feed the shell $3 and $2, so the header is
+    # `hdr="$3/$2"`. The flag reaches the nested tv in every branch:
+    # the ssh remote command, both tmux pane commands, and the plain
+    # fork. A remote row's header keeps the host prefix, so the pane
+    # names the host and the repo.
+    description = "Fuzzy-search this session's events.jsonl in a nested tv (the rushi-sessions-events channel). The nested tv carries --input-header with the row's repo and session name, so the pane shows which session it lists. Inside tmux, a new pane below the newest pane in the tv window runs it from the session dir. Outside tmux, it runs in this fork. Remote rows run it over ssh.";
     shell = "bash";
     mode = "fork";
     command = untab ''
-      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events"; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events"; else tmux split-window -v -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events"; fi; else cd "$rp" && tv rushi-sessions-events; fi; fi' sh '{split:@TAB@:6}'
+      sh -c 's="$1"; host=""; rp="$s"; h=$(printf "%s" "$s" | cut -d: -f1); if [ "$h" != "$s" ]; then case "$h" in */*) : ;; *) host="$h"; rp=$(printf "%s" "$s" | cut -d: -f2-);; esac; fi; hdr="$3/$2"; if [ -n "$host" ]; then ssh -t "$host" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; else t=$TMUX; if [ -n "$t" ] && command -v tmux >/dev/null; then ob=$(printf "\173"); cb=$(printf "\175"); F="#"$ob"pane_id"$cb" ""#"$ob"pane_floating_flag"$cb; pn=$(tmux list-panes -F "$F" | sed "/ 0\$/!d; s/ .*//; s/^%//" | sort -n | tail -1); if [ -n "$pn" ]; then tmux split-window -v -l "62%" -c "$rp" -t "%$pn" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; else tmux split-window -v -l "62%" -c "$rp" "cd \"$rp\" && tv rushi-sessions-events --input-header \"$hdr\""; fi; else cd "$rp" && tv rushi-sessions-events --input-header "$hdr"; fi; fi' sh '{split:@TAB@:6}' '{split:@TAB@:1}' '{split:@TAB@:2}'
     '';
   };
 
