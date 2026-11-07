@@ -1,3 +1,45 @@
+## 111. Session fork: the `fork_here` action and the kernel `rushi fork` entry point (2026-11-08)
+
+The user wants to fork a session from a picked events-channel
+entry. The new session is a copy of the parent. The copy is cut
+at the picked entry. The user settled the work split across the
+three layers:
+
+- The kernel owns the fork. The mechanism copies
+  `events.jsonl` and `tools.jsonl` into the new session dir. The
+  content stops at the picked entry. The log format is kernel
+  territory: zstd frames, the `.idx` sidecar, the tool-log
+  pairing. The consumer does not decode logs.
+- The kernel entry point is `rushi fork PARENT NEW --fork-at N`.
+  It keeps the `rushi run` flag rules. `--sessions-root` tells
+  the command where to find the parent and where to place the
+  new session. `--cwd` sets the new session's working dir. A
+  different target sessions root is out of scope for now.
+- The `rushi-sessions-events` channel adds a `fork_here` action on
+  the picked entry. It opens `$EDITOR` for the new session name.
+  That is the same prompt flow as the main channel's
+  `new_session` action (decision 69). The `rushi-sessions`
+  binary handles the create step. It calls `rushi fork` with the
+  picked seq, the row's sessions root, and the recorded working
+  dir. It then starts the new session through the existing
+  detached `rushi run` flow.
+
+The kernel request is filed as `TonyWu20/rushi` issue #67. The
+title is `[fork] rushi fork PARENT NEW --fork-at N: fork a
+session at a log entry`. The issue settles the semantics. It
+settles the 1-based seq numbering shared with the `rewind`
+`target_seq`. It settles the tool-log boundary at the last
+`tool_result` at or before the pick.
+
+It settles the `cwd` inheritance and the stranded-boundary
+refusal. The refusal mirrors the P8 write guard. The acceptance
+list covers both log formats and every guard case. The channel
+and binary work lands in this repo once the kernel feature
+merges.
+
+The user noted the local `TonyWu20/rushi` checkout. It is
+`~/programming/rust-unix-harness`, on `main` at 73efa28.
+
 ## 110. The rewind and summarize actions pick a P4-safe marker target (2026-11-07)
 
 A user report: after the `rewind` action, `send_message` did not
