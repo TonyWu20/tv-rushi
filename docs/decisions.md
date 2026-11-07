@@ -59,10 +59,35 @@ TOML values, leaf for leaf.
 
 Out of scope: the `rushi-tui` rewind and summarize paths append
 the marker at the picked node without this guard. They carry the
-same blind-append behavior. The TUI needs its own decision. Or
-the kernel refuses the marker at write time.
+same blind-append behavior. The TUI needs its own decision. The
+kernel's write-time refusal (P8) landed in kernel PR #66. The
+revisions above adapt the TV side to it.
+
+Revisions (kernel PR #66, the P8 write guard):
+
+- The kernel now refuses a stranded marker at the write boundary.
+  The guard is `rushi_common::rewind::guard_rewind` (P8, kernel
+  PR #66). The P4 read-side backstop in `assemble` now covers
+  hand-edited logs only.
+- The TV check is a mirror of the P8 guard, not the P4 backstop.
+  It runs the kernel's guard form: the projected context of the
+  target over the existing rewind chain, both sides. The helper is
+  `settled_target` in `bin/rushi-sessions/src/branch.rs`.
+- The settled-point move targets the step's last `tool_result`,
+  the design's finished-step target (section 1). The refusal
+  names the stranded pair, and it points to a settled event: a
+  `user_message`, a `tool_result`, or an `assistant_message` with
+  no outstanding tool calls.
+- The `summarize` one-shot refuses the unfixable pick up front. It
+  writes no marker and runs no branch summary. A refused or failed
+  marker write stops the one-shot, so the summary never reads the
+  wrong span.
+- When a P8 `rushi-common` publishes, replace the mirror with the
+  shared `guard_rewind` call. The `rushi-common` pin is `0.1.8`,
+  which predates the guard.
 
 
+## 109. The browse_events actions title the nested events tv with the session name (2026-11-06)
 
 The `browse_events` (enter) and `browse_events_v` (alt-e) actions
 launch the nested `rushi-sessions-events` tv from the session list.

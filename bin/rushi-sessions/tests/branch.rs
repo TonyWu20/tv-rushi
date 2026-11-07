@@ -44,13 +44,15 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
             r#"{"type":"assistant_message","ts":"2026-10-08T07:01:20Z","content":"branch B","v":1}"#,
         );
     }
-    fixture_lines(tag, lines)
+    fixture_lines(tag, lines, false)
 }
 
-/// One fixture session with a caller-chosen log (the P4 tests use
+/// One fixture session with a caller-chosen log (the P8 tests use
 /// the kernel's modern shape: the assistant step carries its tool
-/// call inline, the result follows).
-fn fixture_lines(tag: &str, lines: Vec<&str>) -> Fixture {
+/// call inline, the result follows). `reject` swaps the stub
+/// `rushi-log` for the P8 kernel's refusal: a named stderr error,
+/// exit 1, and the log untouched.
+fn fixture_lines(tag: &str, lines: Vec<&str>, reject: bool) -> Fixture {
     let d = std::env::temp_dir().join(format!("rushi-sessions-{tag}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     let session = d.join("sessions").join(tag);
@@ -65,20 +67,30 @@ fn fixture_lines(tag: &str, lines: Vec<&str>) -> Fixture {
     // rename, new name first in the channel's name list),
     // `compact` (the branch summary). The stubs record their
     // calls through the STUB_* env vars; the stub echo labels the
-    // name that won the resolve.
+    // name that won the resolve. When `reject` is set, the appender
+    // stubs mimic the P8 kernel's refusal: a named stderr error,
+    // exit 1, and the log untouched.
     let stubs = d.join("bin");
     std::fs::create_dir_all(&stubs).unwrap();
     std::fs::write(stubs.join("rushi"), "#!/bin/sh\nexit 0\n").unwrap();
-    std::fs::write(
-        stubs.join("rushi-log"),
-        "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-rushi-log $@\" >> \"$STUB_LOG_FILE\"\n",
-    )
-    .unwrap();
-    std::fs::write(
-        stubs.join("log"),
-        "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-log $@\" >> \"$STUB_LOG_FILE\"\n",
-    )
-    .unwrap();
+    if reject {
+        // The P8 refusal: drain the marker, name the stranded pair,
+        // exit 1, and touch no log file.
+        let refuse = "#!/bin/sh\ncat > /dev/null; echo \"rushi-log: refusing the append: the rewind to seq 2 (mode on) strands tool call c1: its tool_result would be masked out of the context\" >&2; echo \"rushi-log: the log is unchanged. Rewind to a settled point: a user_message, a tool_result, or an assistant_message with no outstanding tool calls.\" >&2; exit 1\n";
+        std::fs::write(stubs.join("rushi-log"), refuse).unwrap();
+        std::fs::write(stubs.join("log"), refuse).unwrap();
+    } else {
+        std::fs::write(
+            stubs.join("rushi-log"),
+            "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-rushi-log $@\" >> \"$STUB_LOG_FILE\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            stubs.join("log"),
+            "#!/bin/sh\ncat > \"$STUB_LOG_FILE\"; echo \"stub-log $@\" >> \"$STUB_LOG_FILE\"\n",
+        )
+        .unwrap();
+    }
     std::fs::write(
         stubs.join("compact"),
         "#!/bin/sh\necho \"$@\" > \"$STUB_COMPACT_FILE\"; echo \"$(pwd)\" >> \"$STUB_COMPACT_FILE\"\n",
@@ -412,10 +424,12 @@ fn events_channel_mode_uses_the_cwd() {
 }
 
 // ---------------------------------------------------------------------------
-// The P4-safe target (the kernel's rewind-fork-design.md P4): a pick
-// on a step whose tool result sits in the abandoned span lands on the
-// step's last result, so the kernel keeps the marker and the context
-// reads up to the step plus the new message.
+// The settled target (the kernel's P8 write guard, kernel PR #66): a
+// pick on a step whose tool result sits in the abandoned span lands
+// on the step's last result (the settled point), so the kernel keeps
+// the marker and the context reads up to the step plus the new
+// message. The unfixable pick is refused, the marker is never
+// written, and no branch summary lands.
 // ---------------------------------------------------------------------------
 
 /// The kernel's modern log shape: the assistant step carries its
@@ -432,10 +446,10 @@ fn embedded_lines() -> Vec<&'static str> {
 
 /// The pick at seq 4 (the branch's last step, with a tool call)
 /// strands the step's result; the marker lands on seq 5 (the
-/// result) and the command reports the move.
+/// result, the settled point) and the command reports the move.
 #[test]
 fn rewind_moves_the_target_to_the_step_last_result() {
-    let f = fixture_lines("br-p4", embedded_lines());
+    let f = fixture_lines("br-p4", embedded_lines(), false);
     let log_file = f.dir.join("log-calls.txt");
     let (code, out, err) = run(
         &f,
@@ -460,7 +474,7 @@ fn rewind_moves_the_target_to_the_step_last_result() {
 /// no move, no note.
 #[test]
 fn rewind_keeps_the_clean_pick() {
-    let f = fixture_lines("br-p4-clean", embedded_lines());
+    let f = fixture_lines("br-p4-clean", embedded_lines(), false);
     let log_file = f.dir.join("log-calls.txt");
     let (code, out, err) = run(
         &f,
@@ -478,8 +492,8 @@ fn rewind_keeps_the_clean_pick() {
 }
 
 /// The unfixable case: the stranded call has no result in the log.
-/// The marker would be ignored by the kernel, so the command refuses
-/// and writes nothing.
+/// The kernel's P8 guard would refuse the marker, so the command
+/// refuses up front, names the pair, and writes nothing.
 #[test]
 fn rewind_refuses_the_unfixable_strand() {
     let lines = vec![
@@ -487,7 +501,7 @@ fn rewind_refuses_the_unfixable_strand() {
         r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"","tool_calls":[{"id":"cX","name":"bash","arguments":{}}],"v":1}"#,
         r#"{"type":"user_message","ts":"2026-10-08T07:00:20Z","content":"branch B question","v":1}"#,
     ];
-    let f = fixture_lines("br-p4-bad", lines);
+    let f = fixture_lines("br-p4-bad", lines, false);
     let log_file = f.dir.join("log-calls.txt");
     let (code, out, err) = run(
         &f,
@@ -496,8 +510,12 @@ fn rewind_refuses_the_unfixable_strand() {
     );
     assert_eq!(code, 1, "stdout: {out} stderr: {err}");
     assert!(
-        err.contains("strands a tool pair"),
-        "the refusal names the case: {err}"
+        err.contains("would strand tool call cX"),
+        "the refusal names the pair: {err}"
+    );
+    assert!(
+        err.contains("settled event"),
+        "the refusal points to a settled pick: {err}"
     );
     assert!(
         !std::path::Path::new(&log_file).exists(),
@@ -507,10 +525,10 @@ fn rewind_refuses_the_unfixable_strand() {
 
 /// The one-shot `summarize` keeps the TUI's commit semantics: the
 /// target moves like the `rewind` command, and the branch summary
-/// still lands (the warning names the unfixable case).
+/// lands on the settled target.
 #[test]
 fn summarize_moves_the_target_to_the_step_last_result() {
-    let f = fixture_lines("br-p4-sum", embedded_lines());
+    let f = fixture_lines("br-p4-sum", embedded_lines(), false);
     let log_file = f.dir.join("log-calls.txt");
     let compact_file = f.dir.join("compact-calls.txt");
     let (code, out, err) = run(
@@ -530,4 +548,63 @@ fn summarize_moves_the_target_to_the_step_last_result() {
     // The compact ran on the session with the branch flag.
     let args = std::fs::read_to_string(&compact_file).unwrap();
     assert!(args.contains("--branch"), "{args}");
+}
+
+/// The unfixable pick refuses the one-shot up front: no marker is
+/// written and no branch summary lands (the P8 guard would refuse
+/// the marker, so the summary would read the wrong span).
+#[test]
+fn summarize_refuses_the_unfixable_pick() {
+    let lines = vec![
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:00Z","content":"Q1","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"","tool_calls":[{"id":"cX","name":"bash","arguments":{}}],"v":1}"#,
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:20Z","content":"branch B question","v":1}"#,
+    ];
+    let f = fixture_lines("br-p8-sum-bad", lines, false);
+    let log_file = f.dir.join("log-calls.txt");
+    let compact_file = f.dir.join("compact-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["summarize", "2", "--dir", &dir_arg(&f)],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, 1, "stdout: {out} stderr: {err}");
+    assert!(
+        err.contains("would strand tool call cX"),
+        "the refusal names the pair: {err}"
+    );
+    assert!(
+        !std::path::Path::new(&log_file).exists(),
+        "no marker was written"
+    );
+    assert!(
+        !std::path::Path::new(&compact_file).exists(),
+        "the branch summary did not run"
+    );
+}
+
+/// A clean pick with a P8 kernel that refuses the write: the
+/// one-shot stops at the refused marker and the branch summary does
+/// not run (it would read the wrong span).
+#[test]
+fn summarize_stops_the_compact_on_a_refused_write() {
+    let f = fixture_lines("br-p8-sum-refuse", embedded_lines(), true);
+    let log_file = f.dir.join("log-calls.txt");
+    let compact_file = f.dir.join("compact-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["summarize", "4", "--dir", &dir_arg(&f)],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, 1, "stdout: {out} stderr: {err}");
+    assert!(
+        !std::path::Path::new(&compact_file).exists(),
+        "the branch summary did not run: {err}"
+    );
 }

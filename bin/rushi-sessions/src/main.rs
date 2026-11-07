@@ -65,7 +65,7 @@
 //!   `log` of older kernels). A user-message target rewinds
 //!   `before` it, every other target rewinds `on` it. A pick that
 //!   would strand a tool pair moves the marker to the step's last
-//!   result, so the kernel keeps it (the P4 rule). Needs an idle
+//!   result, so the kernel's P8 write guard keeps it. Needs an idle
 //!   loop (the kernel's `.loop.lock` probe). With `--events` the CWD is
 //!   the session dir.
 //!
@@ -74,8 +74,8 @@
 //!   the kernel's `compact --branch` (the tree view's "Summarize the
 //!   branch"). The picked SEQ must sit on the active path; the loop must
 //!   be idle. A pick that would strand a tool pair moves the
-//!   marker to the step's last result, so the kernel keeps it (the
-//!   P4 rule). With `--prompt`, the instruction is typed in the editor on
+//!   marker to the step's last result, so the kernel's P8 write
+//!   guard keeps it. With `--prompt`, the instruction is typed in the editor on
 //!   a .md file first (a blank file cancels) and passed as `--prompt`.
 //!   With `--events` the CWD is the session dir.
 //!
@@ -246,8 +246,8 @@ enum Command {
     /// log seq: a user-message target rewinds `before` it (the
     /// message leaves the context), every other target rewinds `on`
     /// it. A pick that would strand a tool pair moves the marker to
-    /// the step's last result, so the kernel keeps it (the P4 rule).
-    /// Needs an idle loop. The marker is appended through the
+    /// the step's last result, so the kernel's P8 write guard keeps
+    /// it. Needs an idle loop. The marker is appended through the
     /// kernel's log appender (`rushi-log`, the legacy `log` of older
     /// kernels; the sibling of the resolved `rushi`). The session
     /// dir is the CWD (the events channel) or `--dir`.
@@ -264,8 +264,9 @@ enum Command {
     /// context), then run the kernel's `compact --branch` on the
     /// open span the marker abandons. No pre-existing marker is
     /// needed. A pick that would strand a tool pair moves the marker
-    /// to the step's last result, so the kernel keeps it (the P4
-    /// rule). The loop must be idle. With `--prompt`, the
+    /// to the step's last result, so the kernel's P8 write guard
+    /// keeps it. An unfixable pick is refused, and no summary lands.
+    /// The loop must be idle. With `--prompt`, the
     /// instruction is typed in the editor on a .md file first (a
     /// blank file cancels, no marker is appended) and passed as
     /// `--prompt`. The session dir is the CWD (the events channel)
