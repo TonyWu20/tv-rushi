@@ -22,12 +22,25 @@
 //! Both actions need the loop to be idle, the TUI's guard. The probe
 //! is the kernel's `.loop.lock` flock, the same authority `rushi
 //! run` branches on: a held lock means a live loop.
+//!
+//! The P4-safe target (the kernel's rewind-fork-design.md P4): the
+//! kernel ignores a `rewind` marker whose masked context strands a
+//! tool pair, so a pick on a step whose tool results sit in the
+//! abandoned span is adjusted: the marker lands on the step's last
+//! result (the step group's end) and the context keeps the step's
+//! pairs. The adjustment is visible on stdout; the unfixable case
+//! (a stranded pair the forward move cannot cover) is reported, and
+//! `rewind` refuses to write the ignored marker.
 
+use std::collections::HashSet;
 use std::fs;
 use std::io::Write;
 use std::os::unix::io::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+
+use rushi_common::rewind::{active_ranges, parse_rewind_event, seq_in_ranges, RewindRef};
+use serde_json::Value;
 
 use crate::events::numbered_events;
 use crate::prompt::{is_blank, new_prompt_file, stty_save, which};
@@ -72,13 +85,31 @@ pub(crate) fn rewind(dir: Option<PathBuf>, seq: u64) -> i32 {
     } else {
         "on"
     };
-    if let Err(e) = append_rewind_marker(&base, seq, mode) {
+    // The P4-safe target: a pick on a step whose tool results sit in
+    // the abandoned span would strand a pair, and the kernel ignores
+    // the marker (rewind-fork-design.md P4). The target moves to the
+    // step's last result so the kernel keeps the marker and the
+    // context reads up to the step plus the new message.
+    let p4 = p4_safe_target(&rows, seq, mode);
+    if p4.unfixable {
+        eprintln!(
+            "rushi-sessions: the rewind to seq {seq} strands a tool pair; the kernel ignores the marker (rewind-fork-design.md P4) and the branch stays in the context. Pick an event whose step keeps its tool pairs, or use summarize."
+        );
+        return 1;
+    }
+    if let Err(e) = append_rewind_marker(&base, p4.target, p4.mode) {
         eprintln!("rushi-sessions: {e}");
         return 1;
     }
-    println!("rewound to seq {seq} ({mode})");
-    if mode == "before" {
-        println!("the user message at seq {seq} left the context; send it again to re-ask");
+    if p4.adjusted {
+        println!(
+            "the pick at seq {seq} strands the step's tool result; the marker lands on seq {} so the kernel keeps it",
+            p4.target
+        );
+    }
+    println!("rewound to seq {} ({})", p4.target, p4.mode);
+    if p4.mode == "before" {
+        println!("the user message at seq {} left the context; send it again to re-ask", p4.target);
     }
     0
 }
@@ -128,11 +159,27 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     } else {
         None
     };
+    // The P4-safe target, like the `rewind` command. The one-shot
+    // keeps the TUI's commit semantics on the unfixable case: the
+    // marker is written and the branch summary still lands as the
+    // framing item, with a visible warning.
+    let p4 = p4_safe_target(&rows, seq, "on");
     // The marker must land in the log before the compact child reads
     // it, so the append comes first and blocks.
-    if let Err(e) = append_rewind_marker(&base, seq, "on") {
+    if let Err(e) = append_rewind_marker(&base, p4.target, p4.mode) {
         eprintln!("rushi-sessions: {e}");
         return 1;
+    }
+    if p4.adjusted {
+        println!(
+            "the pick at seq {seq} strands the step's tool result; the marker lands on seq {} so the kernel keeps it",
+            p4.target
+        );
+    }
+    if p4.unfixable {
+        println!(
+            "warning: the kernel ignores the marker at seq {seq} (a stranded tool pair, rewind-fork-design.md P4); the branch summary still lands as the framing item"
+        );
     }
     // One `compact --branch` call, the TUI outcome. It runs in the
     // session's recorded working dir so the config tier finds the
@@ -151,7 +198,7 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
     }
     match c.status() {
         Ok(s) if s.success() => {
-            println!("summarized the branch left of seq {seq}");
+            println!("summarized the branch left of seq {}", p4.target);
             0
         }
         Ok(s) => {
@@ -162,6 +209,172 @@ pub(crate) fn summarize(dir: Option<PathBuf>, seq: u64, prompt: bool) -> i32 {
             eprintln!("rushi-sessions: cannot start {label}: {e}");
             1
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The P4-safe target (the kernel's rewind-fork-design.md P4).
+// ---------------------------------------------------------------------------
+
+/// The marker fields of a pick after the P4 adjustment. `target` and
+/// `mode` are what the appended marker carries. `adjusted` is true
+/// when the pick moved forward to the step's last result.
+/// `unfixable` is true when the kernel ignores the marker whatever
+/// the target (a stranded pair the forward move cannot cover).
+struct P4Target<'a> {
+    target: u64,
+    mode: &'a str,
+    adjusted: bool,
+    unfixable: bool,
+}
+
+/// The P4-safe target of a pick: the kernel's P4 rule ignores a
+/// `rewind` marker whose masked context strands a tool pair, so a
+/// pick on a step whose tool results sit in the abandoned span lands
+/// on the step's last result instead (the step group's end). The
+/// check mirrors the kernel's assemble `mask_active_path` first
+/// iteration: the candidate marker is appended at the log's next seq,
+/// the projected events (the assistant steps with their embedded
+/// tool calls, and the tool results) are kept on the active path,
+/// and a stranded pair strands the call without its result, or the
+/// result without its call. When the stranded calls' results exist
+/// past the boundary, the boundary moves to the last of them and the
+/// check repeats. The move strictly increases the boundary, so the
+/// loop stops. The unfixable case is a stranded result whose call
+/// sits behind the boundary (or is masked by an earlier marker), or
+/// a stranded call with no result in the log.
+fn p4_safe_target<'a>(rows: &[(u64, Value)], pick: u64, mode: &'a str) -> P4Target<'a> {
+    let existing: Vec<RewindRef> = rows
+        .iter()
+        .filter_map(|(s, v)| parse_rewind_event(v, *s as usize))
+        .collect();
+    let last = rows.last().map(|(s, _)| *s).unwrap_or(0);
+    let marker_seq = last + 1;
+    let before = mode == "before";
+    let eff0 = if before { pick.saturating_sub(1) } else { pick };
+    let mut eff = eff0;
+    let mut unfixable = false;
+    loop {
+        // The candidate marker: at or before the original boundary,
+        // the original mode; past it, mode `on` (the moved boundary
+        // includes the step's results).
+        let candidate = RewindRef {
+            seq: marker_seq as usize,
+            target: if eff == eff0 { pick as usize } else { eff as usize },
+            before: eff == eff0 && before,
+        };
+        let strands = p4_strands(rows, &existing, &candidate, eff);
+        if strands.empty() {
+            break;
+        }
+        // The fixable strand: a stranded call whose result exists in
+        // the log past the boundary. The boundary moves to the last
+        // such result.
+        let fix: Option<u64> = strands
+            .stranded_calls
+            .iter()
+            .filter_map(|(_, r)| *r)
+            .filter(|r| *r > eff)
+            .max();
+        if strands.stranded_results.is_empty() {
+            if let Some(r) = fix {
+                eff = r;
+                continue;
+            }
+        }
+        unfixable = true;
+        break;
+    }
+    let adjusted = eff != eff0;
+    let (target, m) = if adjusted { (eff, "on") } else { (pick, mode) };
+    P4Target {
+        target,
+        mode: m,
+        adjusted,
+        unfixable,
+    }
+}
+
+/// The stranded facts of one candidate marker (the kernel's P4
+/// check): `stranded_calls` is the kept call without a kept result,
+/// with the first log result past `after` when one exists (the
+/// forward fix); `stranded_results` is the kept result without a
+/// kept call (the call sits behind the boundary, or is masked).
+struct P4Strands {
+    stranded_calls: Vec<(String, Option<u64>)>,
+    stranded_results: Vec<u64>,
+}
+
+impl P4Strands {
+    fn empty(&self) -> bool {
+        self.stranded_calls.is_empty() && self.stranded_results.is_empty()
+    }
+}
+
+fn p4_strands(
+    rows: &[(u64, Value)],
+    existing: &[RewindRef],
+    candidate: &RewindRef,
+    after: u64,
+) -> P4Strands {
+    let mut markers: Vec<RewindRef> = existing.to_vec();
+    markers.push(*candidate);
+    let ranges = active_ranges(candidate.seq, &markers);
+    let mut kept_calls: HashSet<String> = HashSet::new();
+    let mut kept_results: HashSet<String> = HashSet::new();
+    for (s, v) in rows {
+        if !seq_in_ranges(*s as usize, &ranges) {
+            continue;
+        }
+        match v.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "assistant_message" => {
+                if let Some(arr) = v.get("tool_calls").and_then(|t| t.as_array()) {
+                    for tc in arr {
+                        if let Some(id) = tc.get("id").and_then(|i| i.as_str()) {
+                            kept_calls.insert(id.to_string());
+                        }
+                    }
+                }
+            }
+            "tool_result" => {
+                if let Some(id) = v.get("id").and_then(|i| i.as_str()) {
+                    kept_results.insert(id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    let stranded_calls: Vec<(String, Option<u64>)> = kept_calls
+        .iter()
+        .filter(|id| !kept_results.contains(*id))
+        .map(|id| {
+            let fix = rows
+                .iter()
+                .filter(|(s, v)| {
+                    v.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                        && v.get("id").and_then(|i| i.as_str()) == Some(id.as_str())
+                        && *s > after
+                })
+                .map(|(s, _)| *s)
+                .min();
+            (id.clone(), fix)
+        })
+        .collect();
+    let stranded_results: Vec<u64> = rows
+        .iter()
+        .filter(|(s, v)| {
+            seq_in_ranges(*s as usize, &ranges)
+                && v.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                && v
+                    .get("id")
+                    .and_then(|i| i.as_str())
+                    .is_some_and(|id| !kept_calls.contains(id))
+        })
+        .map(|(s, _)| *s)
+        .collect();
+    P4Strands {
+        stranded_calls,
+        stranded_results,
     }
 }
 
@@ -493,5 +706,163 @@ mod tests {
         let (argv, cwd) = kernel_launch(LOG_BIN_NAMES, Some(flake.as_path()), Some(flake.clone()));
         assert_eq!(argv, vec![kernel_bin(LOG_BIN_NAMES)]);
         assert_eq!(cwd, Some(flake.clone()));
+    }
+
+    // ------------------------------------------------------------------
+    // The P4-safe target (the kernel's rewind-fork-design.md P4).
+    // ------------------------------------------------------------------
+
+    /// One numbered log line: a typed event at its 1-based seq.
+    fn line(seq: u64, json: &str) -> (u64, Value) {
+        (seq, serde_json::from_str(json).unwrap())
+    }
+
+    fn user(seq: u64, content: &str) -> (u64, Value) {
+        line(
+            seq,
+            &format!(r#"{{"type":"user_message","ts":"t","content":"{content}","v":1}}"#),
+        )
+    }
+
+    fn assistant(seq: u64, content: &str) -> (u64, Value) {
+        line(
+            seq,
+            &format!(r#"{{"type":"assistant_message","ts":"t","content":"{content}","v":1}}"#),
+        )
+    }
+
+    /// The kernel's modern shape: the step carries its tool call.
+    fn assistant_call(seq: u64, call_id: &str) -> (u64, Value) {
+        line(
+            seq,
+            &format!(
+                r#"{{"type":"assistant_message","ts":"t","content":"","tool_calls":[{{"id":"{call_id}","name":"bash","arguments":{{}}}}],"v":1}}"#
+            ),
+        )
+    }
+
+    fn tool_result(seq: u64, call_id: &str) -> (u64, Value) {
+        line(
+            seq,
+            &format!(
+                r#"{{"type":"tool_result","ts":"t","id":"{call_id}","value":{{"text":"out"}},"is_error":false,"v":1}}"#
+            ),
+        )
+    }
+
+    fn marker(seq: u64, target: u64, mode: &str) -> (u64, Value) {
+        line(
+            seq,
+            &format!(
+                r#"{{"type":"rewind","ts":"t","target_seq":{target},"mode":"{mode}","reason":"tui_pick","v":1}}"#
+            ),
+        )
+    }
+
+    /// The common case: the pick is a step whose result sits in the
+    /// abandoned span. The target moves to the step's last result,
+    /// and the marker keeps its mode `on`.
+    #[test]
+    fn p4_target_moves_to_the_step_last_result() {
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant(2, "A1"),
+            user(3, "branch B question"),
+            assistant_call(4, "c1"),
+            tool_result(5, "c1"),
+        ];
+        let p4 = p4_safe_target(&rows, 4, "on");
+        assert_eq!(p4.target, 5, "the target is the step's last result");
+        assert_eq!(p4.mode, "on");
+        assert!(p4.adjusted);
+        assert!(!p4.unfixable);
+    }
+
+    /// A clean pick (no tool pair in play) keeps the pick and the
+    /// original mode: the unadjusted behavior.
+    #[test]
+    fn p4_target_keeps_the_clean_pick() {
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant(2, "A1"),
+            user(3, "branch B question"),
+            assistant(4, "branch B answer"),
+        ];
+        let p4 = p4_safe_target(&rows, 4, "on");
+        assert_eq!(p4.target, 4);
+        assert_eq!(p4.mode, "on");
+        assert!(!p4.adjusted);
+        assert!(!p4.unfixable);
+
+        // The before-mode pick of a user message: the context ends at
+        // the step group's last result, which pairs its call.
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant_call(2, "c1"),
+            tool_result(3, "c1"),
+            user(4, "re-ask"),
+        ];
+        let p4 = p4_safe_target(&rows, 4, "before");
+        assert_eq!(p4.target, 4);
+        assert_eq!(p4.mode, "before");
+        assert!(!p4.adjusted);
+        assert!(!p4.unfixable);
+    }
+
+    /// The forward move re-enters an earlier branch: the stranded
+    /// result sits in the span of an earlier marker, and the move
+    /// lands past it.
+    #[test]
+    fn p4_target_move_reenters_the_branch() {
+        // 1 user, 2 step-call, 3 result, 4 marker to 1 (branch B
+        // forks at 5). The re-entry pick at 2 strands its result
+        // (seq 3, inside the abandoned span); the move lands on 3.
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant_call(2, "c1"),
+            tool_result(3, "c1"),
+            marker(4, 1, "on"),
+            user(5, "branch B question"),
+        ];
+        let p4 = p4_safe_target(&rows, 2, "on");
+        assert_eq!(p4.target, 3, "the boundary covers the result");
+        assert!(p4.adjusted);
+        assert!(!p4.unfixable);
+    }
+
+    /// The unfixable call: the stranded call has no result in the
+    /// log (a killed step). The kernel ignores the marker; the
+    /// resolver reports the case.
+    #[test]
+    fn p4_target_unfixable_missing_result() {
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant_call(2, "cX"),
+            user(3, "branch B question"),
+        ];
+        let p4 = p4_safe_target(&rows, 2, "on");
+        assert!(p4.unfixable, "the marker would be ignored");
+        assert_eq!(p4.target, 2, "the original pick stands");
+        assert!(!p4.adjusted);
+    }
+
+    /// The unfixable result: the kept result's call sits behind the
+    /// boundary (masked by an earlier marker), so no forward move
+    /// pairs it.
+    #[test]
+    fn p4_target_unfixable_result_without_call() {
+        // 1 user, 2 step-call c1, 3 result c1, 4 marker to 1 (the
+        // span 2..3 is abandoned), 5 a lone result c1 (the call is
+        // masked). The pick at 5 keeps the result; its call is out
+        // of the context; the move cannot cover it.
+        let rows: Vec<(u64, Value)> = vec![
+            user(1, "Q1"),
+            assistant_call(2, "c1"),
+            tool_result(3, "c1"),
+            marker(4, 1, "on"),
+            tool_result(5, "c1"),
+        ];
+        let p4 = p4_safe_target(&rows, 5, "on");
+        assert!(p4.unfixable, "the stranded result cannot be paired");
     }
 }

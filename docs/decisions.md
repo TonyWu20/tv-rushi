@@ -1,4 +1,68 @@
-## 109. The browse_events actions title the nested events tv with the session name (2026-11-06)
+## 110. The rewind and summarize actions pick a P4-safe marker target (2026-11-07)
+
+A user report: after the `rewind` action, `send_message` did not
+make `rushi` read the context as the old node, plus the new
+message. The kernel is the source of the truth. Its `assemble`
+step ignores a `rewind` marker that strands a tool pair. That is
+the P4 no-stranded-pair rule in `rewind-fork-design.md`. It
+prints one warning on stderr and projects the branch linear.
+
+A pick on an assistant step that carries `tool_calls` whose
+`tool_result` sits in the abandoned span trips the rule. The
+marker is ignored. The new message rides on the unmasked linear
+context. The `rushi-tui` rewind path has the same blind append.
+It writes the marker at the picked node and trusts the kernel.
+
+Decision:
+
+- The `rushi-sessions` binary computes the P4-safe target before
+  it appends the marker. The helper is `p4_safe_target` in
+  `bin/rushi-sessions/src/branch.rs`. It mirrors the kernel's
+  `assemble` `mask_active_path` first iteration. The candidate
+  marker sits at the log's next seq. A stranded pair is a call
+  without its result, or a result without its call.
+- When the stranded case is the step's own result, the marker
+  lands on the step's last `tool_result` (the step group's end).
+  The tool pair stays in the context. The boundary only moves
+  forward. The command prints one note: `the pick at seq N strands
+  the step's tool result. The marker lands on seq M so the kernel
+  keeps it`. The marker mode is `on` when the move happens.
+- The unfixable case is a stranded result without its call. The
+  call sits behind the boundary, or an earlier marker masks it.
+  A stranded call with no result in the log is unfixable too.
+  The kernel ignores the marker there whatever the target. The
+  binary refuses: it writes no marker, exits 1, and names the
+  case on stderr. It points to `summarize` as the escape.
+- The `summarize` action keeps the TUI commit semantics: the
+  marker plus the kernel `compact --branch` on the open span.
+  The target move applies to it too. The branch summary lands on
+  a boundary the kernel keeps.
+- The kernel bin resolution and the idle-loop guard stay as the
+  decisions 87/88/90/92 rule. Only the target selection changes.
+  The channel descriptions (the Nix attrset and the repo TOML)
+  carry the new behavior, mirrored leaf for leaf.
+
+Verification: five unit tests cover the move, the clean pick,
+the branch re-entry move, and both unfixable shapes. Four
+integration tests run the binary against the stub kernel bins.
+They cover the moved target, the clean pick, the refusal with no
+marker written, and the `summarize` move. An end-to-end run
+against the host kernel's `assemble` confirms the adjusted
+marker.
+
+No P4 warning shows on stderr. The context reads the trunk, the
+step with its call and result, then the new message. The
+abandoned tail of the branch stays masked. `cargo test
+-p rushi-sessions` is green (181 tests). Both Nix channel
+attrsets evaluate. Their action descriptions decode to the repo
+TOML values, leaf for leaf.
+
+Out of scope: the `rushi-tui` rewind and summarize paths append
+the marker at the picked node without this guard. They carry the
+same blind-append behavior. The TUI needs its own decision. Or
+the kernel refuses the marker at write time.
+
+
 
 The `browse_events` (enter) and `browse_events_v` (alt-e) actions
 launch the nested `rushi-sessions-events` tv from the session list.

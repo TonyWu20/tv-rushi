@@ -28,12 +28,6 @@ struct Fixture {
 /// stub kernel bins. The stubs record their calls through the
 /// `STUB_*` env vars the test sets.
 fn fixture(tag: &str, with_marker: bool) -> Fixture {
-    let d = std::env::temp_dir().join(format!("rushi-sessions-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&d);
-    let session = d.join("sessions").join(tag);
-    let project = d.join("project");
-    std::fs::create_dir_all(&session).unwrap();
-    std::fs::create_dir_all(&project).unwrap();
     let mut lines = vec![
         r#"{"type":"user_message","ts":"2026-10-08T07:00:00Z","content":"first user msg","v":1}"#,
         r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"first answer","v":1}"#,
@@ -50,6 +44,19 @@ fn fixture(tag: &str, with_marker: bool) -> Fixture {
             r#"{"type":"assistant_message","ts":"2026-10-08T07:01:20Z","content":"branch B","v":1}"#,
         );
     }
+    fixture_lines(tag, lines)
+}
+
+/// One fixture session with a caller-chosen log (the P4 tests use
+/// the kernel's modern shape: the assistant step carries its tool
+/// call inline, the result follows).
+fn fixture_lines(tag: &str, lines: Vec<&str>) -> Fixture {
+    let d = std::env::temp_dir().join(format!("rushi-sessions-{tag}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&d);
+    let session = d.join("sessions").join(tag);
+    let project = d.join("project");
+    std::fs::create_dir_all(&session).unwrap();
+    std::fs::create_dir_all(&project).unwrap();
     std::fs::write(session.join("events.jsonl"), lines.join("\n") + "\n").unwrap();
     let cwd = project.to_string_lossy().into_owned();
     std::fs::write(session.join("cwd"), cwd).unwrap();
@@ -402,4 +409,125 @@ fn events_channel_mode_uses_the_cwd() {
     assert_eq!(out.status.code().unwrap(), 0);
     let calls = std::fs::read_to_string(&log_file).unwrap();
     assert!(calls.contains("\"target_seq\":5"), "{calls}");
+}
+
+// ---------------------------------------------------------------------------
+// The P4-safe target (the kernel's rewind-fork-design.md P4): a pick
+// on a step whose tool result sits in the abandoned span lands on the
+// step's last result, so the kernel keeps the marker and the context
+// reads up to the step plus the new message.
+// ---------------------------------------------------------------------------
+
+/// The kernel's modern log shape: the assistant step carries its
+/// tool call inline, the result follows.
+fn embedded_lines() -> Vec<&'static str> {
+    vec![
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:00Z","content":"Q1","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"A1","v":1}"#,
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:20Z","content":"branch B question","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:00:30Z","content":"","tool_calls":[{"id":"c1","name":"bash","arguments":{"command":"false"}}],"v":1}"#,
+        r#"{"type":"tool_result","ts":"2026-10-08T07:00:40Z","id":"c1","value":{"text":"branch output"},"is_error":false,"v":1}"#,
+    ]
+}
+
+/// The pick at seq 4 (the branch's last step, with a tool call)
+/// strands the step's result; the marker lands on seq 5 (the
+/// result) and the command reports the move.
+#[test]
+fn rewind_moves_the_target_to_the_step_last_result() {
+    let f = fixture_lines("br-p4", embedded_lines());
+    let log_file = f.dir.join("log-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["rewind", "4", "--dir", &dir_arg(&f)],
+        &[("STUB_LOG_FILE", log_file.to_str().unwrap())],
+    );
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    assert!(
+        out.contains("strands the step's tool result"),
+        "the move is visible: {out}"
+    );
+    assert!(out.contains("rewound to seq 5 (on)"), "{out}");
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let v: serde_json::Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
+    assert_eq!(v["type"], "rewind");
+    assert_eq!(v["target_seq"], 5, "the marker lands on the result");
+    assert_eq!(v["mode"], "on");
+    assert_eq!(v["reason"], "tv_pick");
+}
+
+/// A clean pick (the result already in the context) keeps the pick:
+/// no move, no note.
+#[test]
+fn rewind_keeps_the_clean_pick() {
+    let f = fixture_lines("br-p4-clean", embedded_lines());
+    let log_file = f.dir.join("log-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["rewind", "5", "--dir", &dir_arg(&f)],
+        &[("STUB_LOG_FILE", log_file.to_str().unwrap())],
+    );
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    assert!(
+        !out.contains("strands the step's tool result"),
+        "no move note: {out}"
+    );
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let v: serde_json::Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
+    assert_eq!(v["target_seq"], 5, "the pick stands");
+}
+
+/// The unfixable case: the stranded call has no result in the log.
+/// The marker would be ignored by the kernel, so the command refuses
+/// and writes nothing.
+#[test]
+fn rewind_refuses_the_unfixable_strand() {
+    let lines = vec![
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:00Z","content":"Q1","v":1}"#,
+        r#"{"type":"assistant_message","ts":"2026-10-08T07:00:10Z","content":"","tool_calls":[{"id":"cX","name":"bash","arguments":{}}],"v":1}"#,
+        r#"{"type":"user_message","ts":"2026-10-08T07:00:20Z","content":"branch B question","v":1}"#,
+    ];
+    let f = fixture_lines("br-p4-bad", lines);
+    let log_file = f.dir.join("log-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["rewind", "2", "--dir", &dir_arg(&f)],
+        &[("STUB_LOG_FILE", log_file.to_str().unwrap())],
+    );
+    assert_eq!(code, 1, "stdout: {out} stderr: {err}");
+    assert!(
+        err.contains("strands a tool pair"),
+        "the refusal names the case: {err}"
+    );
+    assert!(
+        !std::path::Path::new(&log_file).exists(),
+        "no marker was written"
+    );
+}
+
+/// The one-shot `summarize` keeps the TUI's commit semantics: the
+/// target moves like the `rewind` command, and the branch summary
+/// still lands (the warning names the unfixable case).
+#[test]
+fn summarize_moves_the_target_to_the_step_last_result() {
+    let f = fixture_lines("br-p4-sum", embedded_lines());
+    let log_file = f.dir.join("log-calls.txt");
+    let compact_file = f.dir.join("compact-calls.txt");
+    let (code, out, err) = run(
+        &f,
+        &["summarize", "4", "--dir", &dir_arg(&f)],
+        &[
+            ("STUB_LOG_FILE", log_file.to_str().unwrap()),
+            ("STUB_COMPACT_FILE", compact_file.to_str().unwrap()),
+        ],
+    );
+    assert_eq!(code, 0, "stdout: {out} stderr: {err}");
+    assert!(out.contains("summarized the branch left of seq 5"), "{out}");
+    let calls = std::fs::read_to_string(&log_file).unwrap();
+    let v: serde_json::Value = serde_json::from_str(calls.lines().next().unwrap()).unwrap();
+    assert_eq!(v["target_seq"], 5, "the marker lands on the result");
+    assert_eq!(v["mode"], "on");
+    // The compact ran on the session with the branch flag.
+    let args = std::fs::read_to_string(&compact_file).unwrap();
+    assert!(args.contains("--branch"), "{args}");
 }

@@ -298,7 +298,7 @@ in
 
   actions.rewind = {
     description = ''
-      Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+      Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. A pick that would strand a tool pair moves the marker to the step's last result, so the kernel keeps it (the kernel's P4 rule ignores a marker that strands a pair). If the loop is live, the binary exits without writing.
     '';
     shell = "bash";
     mode = "fork";
@@ -307,7 +307,7 @@ in
 
   actions.summarize = {
     description = ''
-      One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. The loop applies the summary on its next step.
+      One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. A pick that would strand a tool pair moves the marker to the step's last result, so the kernel keeps it (the kernel's P4 rule).
     '';
     shell = "bash";
     mode = "fork";

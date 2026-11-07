@@ -231,11 +231,12 @@ command = "rushi-sessions copy-entry . '{split:\t:0}'"
 # view's `Rewind without summary` option. The fork runs the binary
 # with the selected seq: it validates the seq, probes the kernel's
 # `.loop.lock` flock, and appends the `rewind` marker through the
-# kernel's log appender (`rushi-log`, legacy `log`). The loop
-# applies it on its next step.
+# kernel's log appender (`rushi-log`, legacy `log`).
 # A user_message pick rewinds before it, every other type on it.
+# A pick that would strand a tool pair moves the marker to the
+# step's last result, so the kernel keeps it (the P4 rule).
 description = """
-Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. If the loop is live, the binary exits without writing; the loop applies the marker on its next step.
+Rewind the session to the selected event, without a summary (the tree view's `Rewind without summary` option). The binary validates the seq, checks that the loop is idle through the kernel's .loop.lock flock, and appends the rewind marker with the kernel's log appender (`rushi-log`, the legacy `log` of older kernels). A user_message pick rewinds before it; every other type rewinds on it. A pick that would strand a tool pair moves the marker to the step's last result, so the kernel keeps it (the kernel's P4 rule ignores a marker that strands a pair). If the loop is live, the binary exits without writing.
 """
 shell = "bash"
 mode = "fork"
@@ -248,8 +249,10 @@ command = "rushi-sessions rewind '{split:\t:0}'"
 # (mode `on`: the picked event stays in the context) and runs the
 # kernel's `compact` binary with `--branch` on the open span the
 # marker abandons. No pre-existing marker is needed.
+# A pick that would strand a tool pair moves the marker to the
+# step's last result, so the kernel keeps it (the P4 rule).
 description = """
-One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. The loop applies the summary on its next step.
+One-shot: append a rewind marker at the picked event (the picked event stays in the context), then summarize the abandoned branch with the kernel's compact binary (--branch) in the session's recorded working dir (the tree view's `Summarize the branch` option). No pre-existing rewind marker is needed. A pick that would strand a tool pair moves the marker to the step's last result, so the kernel keeps it (the kernel's P4 rule).
 """
 shell = "bash"
 mode = "fork"
