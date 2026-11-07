@@ -316,7 +316,7 @@ in
 
   actions."summarize-prompt" = {
     description = ''
-      One-shot with a custom prompt (the tree view's `Summarize with custom prompt` option): open the editor for one instruction line (the same prompt flow as the send action; a blank file cancels and appends no marker), then append a rewind marker at the picked event and run the kernel's compact binary with --branch and --prompt in the session's recorded working dir.
+      One-shot with a custom prompt (the tree view's `Summarize with custom prompt` option): open the editor for one instruction line (the same prompt flow as the send action; a blank file cancels and appends no marker), then append a rewind marker at the picked event and run the kernel's compact binary with --branch and --prompt in the session's recorded working dir. A pick that would strand a tool pair moves the marker to the step's last result, so the kernel keeps it (the kernel's P4 rule).
     '';
     shell = "bash";
     mode = "fork";
